@@ -1,0 +1,20 @@
+{
+  "name": "restmon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RestMon - REST API Monitoring and Orchestration Platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "echo 'Select a workspace to run dev'",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
