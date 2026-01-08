@@ -1,0 +1,8 @@
+logging:
+  level: "debug"
+  dir: "./logs/api"
+  maxSize: "1m"
+  maxFiles: "5d"
+
+server:
+  port: 3000

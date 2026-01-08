@@ -19,18 +19,28 @@ This is a monorepo containing:
 ### Prerequisites
 - Node.js >= 18.0.0
 - npm >= 9.0.0
-- PostgreSQL >= 14
-- Docker (for running Temporal locally)
+- PostgreSQL >= 14 (via **Podman** or Docker)
+- **Podman** (recommended) OR Docker Desktop
+- Temporal (via Podman or Docker)
 
-### Installation
+### Quick Start
 
+**Option 1: Automated Setup (Recommended)**
+```powershell
+# Run the setup script (first time only)
+.\setup.ps1
+
+# Start all dev servers in separate windows
+.\start-dev.ps1
+```
+
+**Option 2: Manual Setup**
 ```bash
 # Install all dependencies
 npm install
 
 # Set up environment variables
 cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env
 cp apps/worker/.env.example apps/worker/.env
 
 # Start Temporal (via Docker)
@@ -39,7 +49,7 @@ docker-compose up -d
 # Run database migrations
 npm run migrate -w apps/api
 
-# Start development servers
+# Start development servers (in separate terminals)
 npm run dev -w apps/web    # Frontend on http://localhost:5173
 npm run dev -w apps/api    # API on http://localhost:3000
 npm run dev -w apps/worker # Worker

@@ -286,3 +286,19 @@ export interface Signal {
     timestamp: Date;
     correlationKeys?: Record<string, string>;
 }
+
+// ============================================================================
+// Worker Management
+// ============================================================================
+
+export interface Worker {
+    id: string;
+    name?: string;
+    hostname: string;
+    ipAddress?: string;
+    status: 'ONLINE' | 'OFFLINE' | 'DISABLED';
+    workerGroup: string;
+    lastSeen: Date;
+    createdAt: Date;
+    updatedAt: Date;
+}
