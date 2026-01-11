@@ -49,16 +49,20 @@ async function executeTask(execution: any) {
 
     logger.info(`🚀 Executing task: ${name} (ID: ${task.id}, Execution ID: ${id})`);
 
-    // Mark as running
-    await axios.patch(`${API_URL}/worker/executions/${id}/start`, { hostname: HOSTNAME });
-
     try {
-        const response = await axios({
+        // Mark as running
+        await axios.patch(`${API_URL}/worker/executions/${id}/start`, { hostname: HOSTNAME });
+
+        const input = {
             method,
             url,
             headers: headers || {},
             data: body || undefined,
             timeout: timeout || 30000,
+        };
+
+        const response = await axios({
+            ...input,
             validateStatus: () => true,
         });
 
@@ -66,6 +70,7 @@ async function executeTask(execution: any) {
 
         // Complete execution
         await axios.post(`${API_URL}/worker/executions/${id}/complete`, {
+            input,
             result: {
                 status: response.status,
                 data: response.data,

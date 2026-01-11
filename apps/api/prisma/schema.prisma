@@ -56,6 +56,7 @@ model Task {
   outputMutation     Json?   // OutputMutation
   statusMappings     Json?   // StatusMapping[]
   retryPolicy        Json?   // RetryPolicy
+  sanityChecks      Json?   // SanityCheck[]
   
   tags      String[]
   createdAt DateTime @default(now())
@@ -78,6 +79,7 @@ model TaskExecution {
   workflowExecution   WorkflowExecution? @relation(fields: [workflowExecutionId], references: [id])
 
   status    String   // PENDING, RUNNING, COMPLETED, FAILED
+  input     Json?    // HttpRequestConfig (actual sent)
   result    Json?    // HttpResponse
   error     String?
   startedAt DateTime @default(now())
@@ -194,4 +196,15 @@ model WorkflowExecution {
   @@index([workflowId])
   @@index([status])
   @@index([startedAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  description String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
 }

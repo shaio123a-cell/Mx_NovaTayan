@@ -1,10 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
+import { LoggerService } from '../common/logger/logger.service';
 
 @Injectable()
 export class TasksService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private logger: LoggerService
+    ) {
+        this.logger.setContext(TasksService.name);
+    }
 
     async create(createTaskDto: CreateTaskDto, ownerId: string) {
         const { method, url, headers, body, timeout, scope, tags, ...rest } = createTaskDto;
@@ -104,5 +110,22 @@ export class TasksService {
             orderBy: { startedAt: 'desc' },
             take: 10,
         });
+    }
+
+    async getImpact(taskId: string) {
+        const workflows = await this.prisma.workflow.findMany();
+        
+        const impactedWorkflows = workflows.filter((wf: any) => {
+            const nodes = wf.nodes as any[];
+            return nodes.some(n => n.taskId === taskId);
+        });
+
+        return {
+            count: impactedWorkflows.length,
+            workflows: impactedWorkflows.map(wf => ({
+                id: wf.id,
+                name: wf.name
+            })).slice(0, 10) // Only first 10 for UI
+        };
     }
 }

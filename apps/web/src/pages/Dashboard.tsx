@@ -64,6 +64,19 @@ function Dashboard() {
                                 >
                                     Run Now
                                 </button>
+                                <button
+                                    onClick={() => {
+                                        if (window.confirm(`Are you sure you want to delete workflow "${wf.name}"? This will also delete all its history.`)) {
+                                            workflowsApi.deleteWorkflow(wf.id).then(() => {
+                                                alert('Workflow deleted');
+                                                window.location.reload();
+                                            })
+                                        }
+                                    }}
+                                    className="bg-red-900/40 hover:bg-red-700 text-red-400 hover:text-white px-3 py-1 rounded text-sm transition-all shadow-sm border border-red-900/50"
+                                >
+                                    Delete
+                                </button>
                             </div>
                         </div>
                     ))}

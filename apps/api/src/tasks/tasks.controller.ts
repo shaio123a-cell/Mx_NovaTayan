@@ -43,4 +43,9 @@ export class TasksController {
     getExecutions(@Param('id') id: string) {
         return this.tasksService.getExecutions(id);
     }
+
+    @Get(':id/impact')
+    getImpact(@Param('id') id: string) {
+        return this.tasksService.getImpact(id);
+    }
 }

@@ -1,8 +1,45 @@
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ListTodo, Network, History, ShieldCheck, Activity } from 'lucide-react';
+import { 
+    LayoutDashboard, 
+    ListTodo, 
+    Network, 
+    ShieldCheck, 
+    Activity, 
+    Settings,
+    Cpu,
+    HelpCircle,
+    Component,
+    ChevronRight
+} from 'lucide-react';
 
-export function Sidebar() {
+interface NavItemData {
+    icon: any;
+    label: string;
+    path: string;
+    children?: { label: string; path: string; icon: any }[];
+}
+
+interface SidebarProps {
+    isOpen: boolean; // Controls whether sidebar is visible at all
+}
+
+export function Sidebar({ isOpen }: SidebarProps) {
     const location = useLocation();
+    const [expandedParents, setExpandedParents] = useState<string[]>(['Administration']);
+    
+    // Auto-expand/collapse toggle is handled by the Header, 
+    // but the Sidebar should also support a "slim" vs "full" state.
+    // However, the user wants "side by side" and "expand/collapse".
+    // I will interpret "isSidebarOpen" from App.tsx as the "Expanded" vs "Slim" state.
+    // If NOT isOpen, we show SLIM (icons only).
+    // If isOpen, we show FULL (labels).
+
+    const toggleParent = (label: string) => {
+        setExpandedParents(prev => 
+            prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
+        );
+    };
 
     const isActive = (path: string) => {
         if (path === '/' && location.pathname === '/') return true;
@@ -10,77 +47,150 @@ export function Sidebar() {
         return false;
     };
 
-    const navItems = [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-        { icon: ListTodo, label: 'Tasks', path: '/tasks' },
+    const allItems: NavItemData[] = [
+        { icon: LayoutDashboard, label: 'Home', path: '/' },
+        { icon: Component, label: 'Dashboards', path: '/history' },
         { icon: Network, label: 'Designer', path: '/designer' },
-        { icon: History, label: 'History', path: '/history' },
+        { icon: ListTodo, label: 'Tasks', path: '/tasks' },
+        { 
+            icon: ShieldCheck, 
+            label: 'Administration', 
+            path: '/admin',
+            children: [
+                { label: 'Overview', path: '/admin', icon: Activity },
+                { label: 'Workers', path: '/admin/workers', icon: Cpu },
+                { label: 'Settings', path: '/admin/settings', icon: Settings },
+            ]
+        },
     ];
 
-    const adminItems = [
-        { icon: ShieldCheck, label: 'Admin', path: '/admin' },
-    ];
+    const helpItem = { icon: HelpCircle, label: 'Help', path: '/help' };
+
+    // Strict Widths
+    const widthClass = isOpen ? 'w-[240px]' : 'w-[52px]';
 
     return (
-        <div className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col h-screen sticky top-0 shrink-0">
-            {/* Logo Area */}
-            <div className="p-6 border-b border-gray-800 flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center shadow-lg shadow-primary-900/50">
-                    <Activity className="text-white w-5 h-5" />
-                </div>
-                <div>
-                    <h1 className="font-bold text-lg tracking-tight text-white">RestMon</h1>
-                    <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest">Orchestrator</p>
+        <aside 
+            className={`bg-[#111217] flex flex-col h-full shrink-0 transition-all duration-300 border-r border-[#202226] overflow-hidden ${widthClass}`}
+        >
+            {/* Logo Section */}
+            <div className={`h-12 flex items-center shrink-0 border-b border-[#202226] transition-all duration-300 ${isOpen ? 'px-4' : 'px-3 justify-center'}`}>
+                <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 bg-[#f05a28] rounded flex items-center justify-center shrink-0 shadow-lg">
+                        <Activity className="text-white w-3.5 h-3.5" />
+                    </div>
+                    {isOpen && (
+                        <span className="font-bold text-[#f2f5f5] text-sm tracking-tight truncate animate-in fade-in duration-500">RestMon</span>
+                    )}
                 </div>
             </div>
 
-            {/* Main Navigation */}
-            <div className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
-                <div className="px-3 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest">Menu</div>
-                {navItems.map((item) => (
-                    <NavItem
-                        key={item.path}
-                        item={item}
-                        active={isActive(item.path)}
+            {/* Navigation Scroll Area */}
+            <div className="flex-1 overflow-y-auto mt-2 no-scrollbar overflow-x-hidden">
+                <nav className={`flex-1 transition-all duration-300 ${isOpen ? 'px-2' : 'px-1'}`}>
+                    {allItems.map((item) => (
+                        <SidebarItem 
+                            key={item.label}
+                            item={item}
+                            active={isActive(item.path)}
+                            isParentOpen={expandedParents.includes(item.label)}
+                            onToggleParent={() => toggleParent(item.label)}
+                            isAnyChildActive={item.children?.some(c => isActive(c.path)) || false}
+                            checkActive={isActive}
+                            isSidebarExpanded={isOpen}
+                        />
+                    ))}
+                </nav>
+
+                <nav className={`mt-auto border-t border-[#202226] pt-4 pb-4 transition-all duration-300 ${isOpen ? 'px-2' : 'px-1'}`}>
+                    <SidebarItem 
+                        item={helpItem}
+                        active={isActive(helpItem.path)}
+                        isParentOpen={false}
+                        onToggleParent={() => {}}
+                        isAnyChildActive={false}
+                        checkActive={isActive}
+                        isSidebarExpanded={isOpen}
                     />
-                ))}
-
-                <div className="my-6 border-t border-gray-800" />
-
-                <div className="px-3 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest">System</div>
-                {adminItems.map((item) => (
-                    <NavItem
-                        key={item.path}
-                        item={item}
-                        active={isActive(item.path)}
-                    />
-                ))}
+                </nav>
             </div>
-
-            {/* Version / Footer */}
-            <div className="p-4 border-t border-gray-800">
-                <div className="bg-gray-800/50 rounded-lg p-3">
-                    <div className="text-xs text-gray-400 font-mono">v1.2.0-beta</div>
-                    <div className="text-[10px] text-gray-600 mt-1">Connected to local-cluster</div>
-                </div>
-            </div>
-        </div>
+        </aside>
     );
 }
 
-function NavItem({ item, active }: { item: any, active: boolean }) {
+function SidebarItem({ 
+    item, 
+    active, 
+    isParentOpen,
+    onToggleParent,
+    isAnyChildActive,
+    checkActive,
+    isSidebarExpanded
+}: any) {
     const Icon = item.icon;
+    const hasChildren = item.children && item.children.length > 0;
+    const displayActive = active || isAnyChildActive;
+
     return (
-        <Link
-            to={item.path}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group ${active
-                    ? 'bg-primary-600/10 text-primary-400 font-bold border border-primary-600/20'
-                    : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                }`}
-        >
-            <Icon className={`w-5 h-5 ${active ? 'text-primary-400' : 'text-gray-500 group-hover:text-gray-300'}`} />
-            <span>{item.label}</span>
-            {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-500 shadow-[0_0_8px_rgba(var(--primary-500),0.8)]" />}
-        </Link>
+        <div className="mb-1">
+            <Link
+                to={item.path || '#'}
+                onClick={(e) => {
+                    if (hasChildren && isSidebarExpanded) {
+                        e.preventDefault();
+                        onToggleParent();
+                    }
+                }}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded transition-all group relative ${
+                    displayActive 
+                        ? 'bg-[rgba(240,90,40,0.12)] text-white' 
+                        : 'text-[#d8d9da] hover:bg-[#1e2023] hover:text-white'
+                } ${!isSidebarExpanded && 'justify-center px-0'}`}
+                title={!isSidebarExpanded ? item.label : undefined}
+            >
+                {/* Active strip */}
+                {displayActive && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-[#f05a28]" />
+                )}
+
+                <Icon size={18} className={`${displayActive ? 'text-[#f05a28]' : 'text-[#9fa7b0] group-hover:text-white'} shrink-0`} />
+                
+                {isSidebarExpanded && (
+                    <>
+                        <span className="text-[13px] font-medium truncate animate-in fade-in slide-in-from-left-2 duration-300">{item.label}</span>
+                        {hasChildren && (
+                            <ChevronRight 
+                                size={14} 
+                                className={`ml-auto transition-transform ${isParentOpen ? 'rotate-90' : ''} ${displayActive ? 'text-white' : 'text-[#464c54]'}`} 
+                            />
+                        )}
+                    </>
+                )}
+            </Link>
+
+            {/* Sub-menu (Expanded only when sidebar is expanded) */}
+            {hasChildren && isParentOpen && isSidebarExpanded && (
+                <div className="mt-0.5 ml-4 pl-3 border-l border-[#202226] space-y-1 animate-in slide-in-from-top-1 duration-200">
+                    {item.children.map((child: any) => {
+                        const ChildIcon = child.icon;
+                        const isChildActive = checkActive(child.path);
+                        return (
+                            <Link
+                                key={child.path}
+                                to={child.path}
+                                className={`flex items-center gap-3 px-3 py-1.5 rounded text-[12px] transition-all ${
+                                    isChildActive 
+                                        ? 'text-white font-semibold bg-[#1e2023]' 
+                                        : 'text-[#9fa7b0] hover:text-white hover:bg-[#1e2023]'
+                                }`}
+                            >
+                                <ChildIcon size={14} className="shrink-0" />
+                                <span className="truncate">{child.label}</span>
+                            </Link>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
     );
 }

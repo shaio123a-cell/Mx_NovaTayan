@@ -5,9 +5,12 @@ import { LoggerService } from '../common/logger/logger.service';
 
 @Injectable()
 export class WorkerService {
-    private readonly logger = new LoggerService(WorkerService.name);
-
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private logger: LoggerService
+    ) {
+        this.logger.setContext(WorkerService.name);
+    }
 
     async getNextPendingTask(hostname: string, tags: string[] = []) {
         // Fetch worker fresh from DB to get authoritative tags
@@ -19,49 +22,37 @@ export class WorkerService {
 
         // 1. Priority: Find a task targeted specifically to this worker or its tags
         try {
-            let task = await this.prisma.taskExecution.findFirst({
+            // Find PENDING tasks that EITHER:
+            // - Targeted to this specific worker ID
+            // - Targeted to tags that this worker HAS
+            // - Targeted to NO worker and NO tags (Global)
+            const potentialTasks = await this.prisma.taskExecution.findMany({
                 where: {
                     status: 'PENDING',
                     OR: [
                         { targetWorkerId: worker.id },
+                        { targetWorkerId: null, targetTags: { isEmpty: true } },
                         { targetTags: { hasSome: worker.tags } }
                     ]
                 },
                 include: { task: true },
                 orderBy: { startedAt: 'asc' }, // FIFO
+                take: 5
             });
 
-
-            // 2. Fallback: Find a global task (no specific target) if no targeted task found
-            if (!task) {
-                const totalPending = await this.prisma.taskExecution.count({ where: { status: 'PENDING' } });
-                this.logger.log(`[Debug] Checking global tasks. Total Pending in DB: ${totalPending}`);
-
-                // Relaxed Query: Fetch ANY pending task without a worker ID, check tags in code
-                const potentialTasks = await this.prisma.taskExecution.findMany({
-                    where: {
-                        status: 'PENDING',
-                        targetWorkerId: null,
-                    },
-                    take: 5,
-                    include: { task: true },
-                    orderBy: { startedAt: 'asc' },
-                });
-
-                // Find first one with empty tags
-                task = potentialTasks.find(t => !t.targetTags || t.targetTags.length === 0);
-
-                if (task) {
-                    this.logger.log(`[Debug] Found global task via code filtering: ${task.id}`);
-                } else if (potentialTasks.length > 0) {
-                    this.logger.warn(`[Debug] Found ${potentialTasks.length} unassigned tasks but they all have tags: ${potentialTasks.map(t => t.targetTags)}`);
-                } else {
-                    this.logger.warn(`[Debug] No unassigned tasks found.`);
-                }
-            }
+            // Filtering for safety: Even if targetWorkerId matches, if it has targetTags, the worker MUST satisfy those tags.
+            const task = potentialTasks.find(t => {
+                // If the task has no tags, it's a match (if it passed the OR filter)
+                if (!t.targetTags || t.targetTags.length === 0) return true;
+                
+                // If the task HAS tags, this worker MUST have at least one of them
+                return t.targetTags.some(tag => worker.tags.includes(tag));
+            });
 
             if (task) {
                 this.logger.log(`Worker ${hostname} picked up execution ${task.id} (Target: ${task.targetWorkerId || 'Global'}, Tags: ${task.targetTags})`);
+            } else {
+                this.logger.debug(`[Debug] Worker ${hostname} checked ${potentialTasks.length} potential tasks but none matched strictly.`);
             }
 
             return task;
@@ -72,13 +63,16 @@ export class WorkerService {
     }
 
     async register(data: { hostname: string; ipAddress?: string; name?: string; tags?: string[] }) {
+        const existing = await this.prisma.worker.findUnique({ where: { hostname: data.hostname } });
+        
         return this.prisma.worker.upsert({
             where: { hostname: data.hostname },
             update: {
                 ipAddress: data.ipAddress,
                 status: 'ONLINE',
                 lastSeen: new Date(),
-                tags: data.tags || [],
+                // DO NOT update tags here if they already exist, to preserve Admin UI settings
+                tags: existing ? existing.tags : (data.tags || []),
             },
             create: {
                 hostname: data.hostname,
@@ -136,17 +130,24 @@ export class WorkerService {
         });
     }
 
-    async completeExecution(executionId: string, result: any, error?: string) {
-        const status = error ? 'FAILED' : 'COMPLETED';
-        const execution = await this.prisma.taskExecution.findUnique({ where: { id: executionId } });
-        const duration = execution ? new Date().getTime() - execution.startedAt.getTime() : 0;
+    async completeExecution(executionId: string, result: any, error?: string, input?: any) {
+        const execution = await this.prisma.taskExecution.findUnique({
+            where: { id: executionId },
+            include: { task: true }
+        });
+
+        if (!execution) throw new Error('Execution not found');
+
+        const { status, reason } = await this.evaluateStatus(execution, result, error);
+        const duration = new Date().getTime() - execution.startedAt.getTime();
 
         const updated = await this.prisma.taskExecution.update({
             where: { id: executionId },
             data: {
                 status,
                 result: result || {},
-                error: error || null,
+                error: reason || error || null,
+                input: input || null,
                 completedAt: new Date(),
                 duration,
             },
@@ -160,88 +161,239 @@ export class WorkerService {
         return updated;
     }
 
+    private async evaluateStatus(execution: any, result: any, error?: string): Promise<{ status: string; reason?: string }> {
+        if (error) return { status: 'FAILED' };
+        if (!result || result.status === undefined) return { status: 'FAILED', reason: 'Response missing status code' };
+
+        const httpStatus = result.status;
+        const task = execution.task;
+
+        // 1. Task Level Status Mappings
+        if (task.statusMappings && Array.isArray(task.statusMappings)) {
+            const mapping = task.statusMappings.find((m: any) => this.isStatusCodeMatch(httpStatus, m.pattern));
+            if (mapping) return { status: mapping.status, reason: `Status code ${httpStatus} matched pattern ${mapping.pattern}` };
+        }
+
+        // 2. Global Defaults
+        const globalSuccess = await this.prisma.systemSetting.findUnique({ where: { key: 'SUCCESS_CODES_DEFAULT' } });
+        const globalFailure = await this.prisma.systemSetting.findUnique({ where: { key: 'FAILURE_CODES_DEFAULT' } });
+
+        const successPattern = globalSuccess?.value || '200-299';
+        const failurePattern = globalFailure?.value || '400-599';
+
+        let status = 'SUCCESS';
+        let reason = `HTTP ${httpStatus}`;
+
+        if (this.isStatusCodeMatch(httpStatus, failurePattern)) {
+            status = 'FAILED';
+            reason = `HTTP ${httpStatus} matched failure pattern ${failurePattern}`;
+        } else if (!this.isStatusCodeMatch(httpStatus, successPattern)) {
+            status = 'FAILED';
+            reason = `HTTP ${httpStatus} did not match success pattern ${successPattern}`;
+        }
+
+        // 3. Regex Sanity Checks
+        if (status === 'SUCCESS' && task.sanityChecks && Array.isArray(task.sanityChecks)) {
+            const body = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
+            for (const check of task.sanityChecks) {
+                try {
+                    const regex = new RegExp(check.regex);
+                    const matches = regex.test(body);
+
+                    const failed = (check.condition === 'MUST_CONTAIN' && !matches) ||
+                        (check.condition === 'MUST_NOT_CONTAIN' && matches);
+
+                    if (failed) {
+                        const failureMsg = `Sanity Check Failed: Body ${check.condition === 'MUST_CONTAIN' ? 'missing' : 'contains'} "${check.regex}"`;
+                        this.logger.warn(`[SanityCheck] Task ${task.name} Status: ${check.severity === 'ERROR' ? 'FAILED' : 'WARNING'} - ${failureMsg}`);
+                        if (check.severity === 'ERROR') return { status: 'FAILED', reason: failureMsg };
+                    }
+                } catch (e) {
+                    this.logger.error(`[SanityCheck] Invalid regex: ${check.regex}`);
+                }
+            }
+        }
+
+        return { status, reason };
+    }
+
+    private isStatusCodeMatch(code: number, pattern: string): boolean {
+        if (!pattern) return false;
+        const parts = pattern.split(',').map(p => p.trim());
+        for (const part of parts) {
+            if (part.includes('-')) {
+                const [min, max] = part.split('-').map(Number);
+                if (code >= min && code <= max) return true;
+            } else if (!isNaN(Number(part)) && Number(part) === code) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private async handleWorkflowOrchestration(completedTask: any) {
         const { workflowExecutionId, nodeId, status } = completedTask;
 
-        // 1. Get workflow definition
+        // 1. Get workflow definition and all current task executions
         const workflowExecution = await this.prisma.workflowExecution.findUnique({
             where: { id: workflowExecutionId },
-            include: { workflow: true }
+            include: { 
+                workflow: true,
+                taskExecutionRecords: true
+            }
         });
 
         if (!workflowExecution || !workflowExecution.workflow) return;
 
         const workflow = workflowExecution.workflow;
+        const nodes = workflow.nodes as any[];
         const edges = workflow.edges as any[];
+        const taskRecords = workflowExecution.taskExecutionRecords;
 
-        // 2. Find next nodes to trigger
-        // For now, simplicity: satisfy 'ON_SUCCESS' if status is COMPLETED, 
-        // satisfay 'ON_FAILURE' if status is FAILED, satisfy 'ALWAYS' regardless.
-        const nextNodes = edges
-            .filter(edge => edge.source === nodeId)
-            .filter(edge => {
-                if (edge.condition === 'ALWAYS') return true;
-                if (edge.condition === 'ON_SUCCESS' && status === 'COMPLETED') return true;
-                if (edge.condition === 'ON_FAILURE' && status === 'FAILED') return true;
-                return false;
+        // 2. Find ALL next candidate nodes (downstream from the completed task)
+        const outgoingEdges = edges.filter(edge => edge.source === nodeId);
+        
+        for (const edge of outgoingEdges) {
+            const nextNodeId = edge.target;
+            const nextNode = nodes.find(n => n.id === nextNodeId);
+            if (!nextNode) continue;
+
+            // 3. Fan-in logic: Check if ALL predecessors for 'nextNode' are finished
+            const incomingEdges = edges.filter(e => e.target === nextNodeId);
+            const predecessorNodeIds = incomingEdges.map(e => e.source);
+            
+            const predecessorRecords = taskRecords.filter(r => predecessorNodeIds.includes(r.nodeId));
+            
+            // Check if all predecessors have an execution record and are finished
+            const allFinished = predecessorNodeIds.every(pid => {
+                const record = taskRecords.find(r => r.nodeId === pid);
+                return record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(record.status);
             });
 
-        // 3. Trigger next tasks
-        const nodes = workflow.nodes as any[];
-        for (const edge of nextNodes) {
-            const nextNode = nodes.find(n => n.id === edge.target);
-            if (nextNode) {
-                // Determine targeting for the next task
-                // 1. If the node has explicit targeting, use it.
-                // 2. If not, AND the workflow execution is pinned (Fan-out child), use the pinned worker.
-                let targetWorkerId = nextNode.targetWorkerId;
-                let targetTags = nextNode.targetTags || [];
+            if (!allFinished) {
+                this.logger.debug(`[Orchestration] Node ${nextNodeId} waiting for other predecessors. Finished: ${predecessorRecords.length}/${predecessorNodeIds.length}`);
+                continue; // Wait for other branches
+            }
 
-                if (!targetWorkerId && workflowExecution.targetWorkerId) {
-                    targetWorkerId = workflowExecution.targetWorkerId;
+            // 4. Check Failure Strategies: Should we actually trigger this node?
+            // A node runs if:
+            // - It matches the edge condition (e.g. ALWAYS, ON_SUCCESS)
+            // - AND the specific predecessor that just finished (completedTask) is either SUCCESS or set to CONTINUE_ON_FAIL
+            // - AND ALL predecessors that failed were set to CONTINUE_ON_FAIL
+            
+            const blocker = predecessorRecords.find(r => {
+                const nodeDef = nodes.find(n => n.id === r.nodeId);
+                const strategy = nodeDef?.failureStrategy || 'SUCCESS_REQUIRED';
+                return r.status !== 'SUCCESS' && strategy === 'SUCCESS_REQUIRED';
+            });
+
+            if (blocker) {
+                this.logger.warn(`[Orchestration] Node ${nextNodeId} BLOCKED because predecessor ${blocker.nodeId} failed with SUCCESS_REQUIRED`);
+                continue;
+            }
+
+            // Additional check for the specific edge that leads to this trigger
+            // (e.g. if the user explicitly set an ON_FAILURE branch, we should respect it)
+            // But with the new "Failure Strategy" on the node level, it usually implies the link is "Standard"
+            if (edge.condition === 'ON_SUCCESS' && status !== 'SUCCESS') {
+                const nodeDef = nodes.find(n => n.id === nodeId);
+                if (nodeDef?.failureStrategy !== 'CONTINUE_ON_FAIL') {
+                    continue;
+                }
+            }
+
+            // 5. Trigger the task
+            // Determine targeting
+            let targetWorkerId = nextNode.targetWorkerId;
+            let targetTags = (nextNode.targetTags && nextNode.targetTags.length > 0)
+                ? nextNode.targetTags
+                : (workflow.tags || []);
+
+            if (!targetWorkerId && workflowExecution.targetWorkerId) {
+                targetWorkerId = workflowExecution.targetWorkerId;
+            }
+
+            // Strict Worker Check
+            let initialStatus = 'PENDING';
+            if (targetTags.length > 0) {
+                const matchingWorkerCount = await this.prisma.worker.count({
+                    where: {
+                        status: 'ONLINE',
+                        tags: { hasSome: targetTags }
+                    }
+                });
+                
+                let isPinnedWorkerValid = true;
+                if (targetWorkerId) {
+                    const pinnedWorker = await this.prisma.worker.findUnique({ where: { id: targetWorkerId } });
+                    if (!pinnedWorker || (targetTags.length > 0 && !targetTags.some(tag => pinnedWorker.tags.includes(tag)))) {
+                        isPinnedWorkerValid = false;
+                    }
                 }
 
+                if (matchingWorkerCount === 0 || !isPinnedWorkerValid) {
+                    this.logger.warn(`[Orchestration] NO VALID WORKER FOUND for next node ${nextNode.id}`);
+                    initialStatus = 'NO_WORKER_FOUND';
+                }
+            }
+
+            // Ensure we don't create duplicate executions for the same node in this run
+            const existing = await this.prisma.taskExecution.findFirst({
+                where: { workflowExecutionId, nodeId: nextNode.id }
+            });
+
+            if (!existing) {
                 await this.prisma.taskExecution.create({
                     data: {
                         taskId: nextNode.taskId,
                         nodeId: nextNode.id,
                         workflowExecutionId,
-                        status: 'PENDING',
+                        status: initialStatus,
                         targetWorkerId,
                         targetTags,
+                        startedAt: new Date(), // Initialize for FIFO sorting
                     },
                 });
+                this.logger.log(`[Orchestration] Triggered next node: ${nextNode.id} (${nextNode.label})`);
             }
         }
 
-        // 4. Update workflow execution status if finished
+        // 6. Update workflow execution overall status
         await this.checkWorkflowCompletion(workflowExecutionId);
     }
 
     private async checkWorkflowCompletion(workflowExecutionId: string) {
-        const activeTasks = await this.prisma.taskExecution.count({
-            where: {
-                workflowExecutionId,
-                status: { in: ['PENDING', 'RUNNING'] }
-            }
+        const tasks = await this.prisma.taskExecution.findMany({
+            where: { workflowExecutionId }
         });
 
-        if (activeTasks === 0) {
-            // Check if any failed
-            const failedTasks = await this.prisma.taskExecution.count({
-                where: {
-                    workflowExecutionId,
-                    status: 'FAILED'
-                }
-            });
+        if (tasks.length === 0) return;
 
-            await this.prisma.workflowExecution.update({
-                where: { id: workflowExecutionId },
-                data: {
-                    status: failedTasks > 0 ? 'FAILED' : 'SUCCESS',
-                    completedAt: new Date(),
-                }
-            });
-        }
+        // Priority-based status: FAILED > TIMEOUT > NO_WORKER_FOUND > RUNNING > PENDING > SUCCESS
+        let finalStatus = 'SUCCESS';
+        
+        const hasFailed = tasks.some(t => t.status === 'FAILED');
+        const hasTimeout = tasks.some(t => t.status === 'TIMEOUT');
+        const hasNoWorker = tasks.some(t => t.status === 'NO_WORKER_FOUND');
+        const hasRunning = tasks.some(t => t.status === 'RUNNING');
+        const hasPending = tasks.some(t => t.status === 'PENDING');
+
+        // Note: Running/Pending check is strictly for the "finished" logic below,
+        // but it's also used for the status hierarchy.
+        if (hasFailed) finalStatus = 'FAILED';
+        else if (hasTimeout) finalStatus = 'TIMEOUT';
+        else if (hasNoWorker) finalStatus = 'NO_WORKER_FOUND';
+        else if (hasRunning) finalStatus = 'RUNNING';
+        else if (hasPending) finalStatus = 'PENDING';
+
+        const isFullyDone = !hasRunning && !hasPending;
+
+        await this.prisma.workflowExecution.update({
+            where: { id: workflowExecutionId },
+            data: {
+                status: finalStatus,
+                completedAt: isFullyDone ? new Date() : null,
+            }
+        });
     }
 }

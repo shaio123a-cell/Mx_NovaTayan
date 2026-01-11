@@ -5,6 +5,8 @@ import { tasksApi } from '../api/tasks'
 function Tasks() {
     const [showForm, setShowForm] = useState(false)
     const [editingTask, setEditingTask] = useState<any>(null)
+    const [statusMappings, setStatusMappings] = useState<any[]>([])
+    const [sanityChecks, setSanityChecks] = useState<any[]>([])
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
     const queryClient = useQueryClient()
 
@@ -71,6 +73,8 @@ function Tasks() {
             body: formData.get('body') as string || undefined,
             timeout: Number(formData.get('timeout')) || undefined,
             workerGroup: formData.get('workerGroup') as string || 'default',
+            statusMappings: statusMappings.length > 0 ? statusMappings : undefined,
+            sanityChecks: sanityChecks.length > 0 ? sanityChecks : undefined,
         }
 
         if (editingTask) {
@@ -82,6 +86,8 @@ function Tasks() {
 
     const handleEdit = (task: any) => {
         setEditingTask(task)
+        setStatusMappings(task.statusMappings || [])
+        setSanityChecks(task.sanityChecks || [])
         setShowForm(true)
     }
 
@@ -146,7 +152,106 @@ function Tasks() {
                                 <textarea name="body" defaultValue={editingTask?.command?.body} rows={2} className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 font-mono text-xs outline-none" placeholder='{"foo": "bar"}' />
                             </div>
                         </div>
-                        <div className="md:col-span-2">
+                        
+                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-gray-700/50">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Custom Status Mappings</label>
+                                <div className="space-y-2">
+                                    {statusMappings.map((m, i) => (
+                                        <div key={i} className="flex gap-2 items-center bg-gray-900/50 p-2 rounded-lg border border-gray-700">
+                                            <input 
+                                                placeholder="Code (e.g. 201-204)" 
+                                                className="bg-transparent text-xs w-24 outline-none"
+                                                value={m.pattern}
+                                                onChange={(e) => {
+                                                    const newMappings = [...statusMappings];
+                                                    newMappings[i].pattern = e.target.value;
+                                                    setStatusMappings(newMappings);
+                                                }}
+                                            />
+                                            <select 
+                                                className="bg-transparent text-xs outline-none text-gray-400"
+                                                value={m.status}
+                                                onChange={(e) => {
+                                                    const newMappings = [...statusMappings];
+                                                    newMappings[i].status = e.target.value;
+                                                    setStatusMappings(newMappings);
+                                                }}
+                                            >
+                                                <option value="SUCCESS">SUCCESS</option>
+                                                <option value="FAILED">FAILED</option>
+                                            </select>
+                                            <button type="button" onClick={() => setStatusMappings(statusMappings.filter((_, idx) => idx !== i))} className="text-gray-600 hover:text-red-400 ml-auto">✕</button>
+                                        </div>
+                                    ))}
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setStatusMappings([...statusMappings, { pattern: '', status: 'SUCCESS' }])}
+                                        className="text-[10px] font-bold text-primary-500 hover:text-primary-400"
+                                    >
+                                        + Add Mapping
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Sanity Checks (Regex)</label>
+                                <div className="space-y-2">
+                                    {sanityChecks.map((c, i) => (
+                                        <div key={i} className="bg-gray-900/50 p-3 rounded-lg border border-gray-700 space-y-2">
+                                            <div className="flex gap-2 items-center">
+                                                <input 
+                                                    placeholder="Regex..." 
+                                                    className="bg-transparent text-xs flex-1 outline-none font-mono"
+                                                    value={c.regex}
+                                                    onChange={(e) => {
+                                                        const newChecks = [...sanityChecks];
+                                                        newChecks[i].regex = e.target.value;
+                                                        setSanityChecks(newChecks);
+                                                    }}
+                                                />
+                                                <button type="button" onClick={() => setSanityChecks(sanityChecks.filter((_, idx) => idx !== i))} className="text-gray-600 hover:text-red-400">✕</button>
+                                            </div>
+                                            <div className="flex gap-4">
+                                                <select 
+                                                    className="bg-transparent text-[10px] outline-none text-gray-500"
+                                                    value={c.condition}
+                                                    onChange={(e) => {
+                                                        const newChecks = [...sanityChecks];
+                                                        newChecks[i].condition = e.target.value;
+                                                        setSanityChecks(newChecks);
+                                                    }}
+                                                >
+                                                    <option value="MUST_CONTAIN">MUST CONTAIN</option>
+                                                    <option value="MUST_NOT_CONTAIN">MUST NOT CONTAIN</option>
+                                                </select>
+                                                <select 
+                                                    className="bg-transparent text-[10px] outline-none text-gray-500 font-bold"
+                                                    value={c.severity}
+                                                    onChange={(e) => {
+                                                        const newChecks = [...sanityChecks];
+                                                        newChecks[i].severity = e.target.value;
+                                                        setSanityChecks(newChecks);
+                                                    }}
+                                                >
+                                                    <option value="ERROR" className="text-red-500">SEVERITY: ERROR</option>
+                                                    <option value="WARNING" className="text-yellow-500">SEVERITY: WARNING</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setSanityChecks([...sanityChecks, { regex: '', condition: 'MUST_CONTAIN', severity: 'ERROR' }])}
+                                        className="text-[10px] font-bold text-primary-500 hover:text-primary-400"
+                                    >
+                                        + Add Sanity Check
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="md:col-span-2 pt-4">
                             <button type="submit" disabled={createMutation.isPending || updateMutation.isPending} className="w-full bg-primary-600 hover:bg-primary-700 py-3 rounded-lg font-bold shadow-lg transition-all active:scale-[0.99]">
                                 {editingTask ? 'Apply Changes' : 'Create Task'}
                             </button>
@@ -243,11 +348,20 @@ function LatestStatus({ taskId }: { taskId: string }) {
     const latest = executions?.[0]
     if (!latest) return <span className="text-gray-600 text-xs italic">Never run</span>
 
+    const styles: any = {
+        SUCCESS: 'bg-green-500',
+        FAILED: 'bg-red-500',
+        TIMEOUT: 'bg-orange-500',
+        NO_WORKER_FOUND: 'bg-gray-500',
+        RUNNING: 'bg-blue-500 animate-pulse',
+        PENDING: 'bg-yellow-500',
+    }
+
     return (
         <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${latest.status === 'COMPLETED' ? 'bg-green-500' : latest.status === 'FAILED' ? 'bg-red-500' : 'bg-blue-500 animate-pulse'}`} />
+            <span className={`w-2 h-2 rounded-full ${styles[latest.status] || 'bg-gray-500'}`} />
             <span className="text-xs text-gray-300">
-                {latest.status === 'COMPLETED' ? `HTTP ${latest.result?.status || 200}` : latest.status}
+                {latest.status === 'SUCCESS' ? `HTTP ${latest.result?.status || 200}` : latest.status.replace(/_/g, ' ')}
             </span>
         </div>
     )
@@ -268,8 +382,14 @@ function TaskExecutions({ taskId }: { taskId: string }) {
                 {executions.map((ex: any) => (
                     <div key={ex.id} className="group relative flex items-center justify-between bg-gray-800/80 p-3 rounded-lg border border-gray-700/50 hover:border-gray-600 transition-all">
                         <div className="flex items-center gap-4">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${ex.status === 'COMPLETED' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-500'}`}>
-                                {ex.status}
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                ex.status === 'SUCCESS' ? 'bg-green-500/20 text-green-400' : 
+                                ex.status === 'FAILED' ? 'bg-red-500/20 text-red-500' :
+                                ex.status === 'TIMEOUT' ? 'bg-orange-500/20 text-orange-400' :
+                                ex.status === 'NO_WORKER_FOUND' ? 'bg-gray-500/20 text-gray-400' :
+                                'bg-blue-500/20 text-blue-400'
+                            }`}>
+                                {ex.status.replace(/_/g, ' ')}
                             </span>
                             <span className="text-xs text-gray-400 font-mono">
                                 {new Date(ex.startedAt).toLocaleString()}

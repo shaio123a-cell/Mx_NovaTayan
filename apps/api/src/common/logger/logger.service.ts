@@ -7,9 +7,9 @@ import * as path from 'path';
 @Injectable()
 export class LoggerService implements NestLoggerService {
     private logger: winston.Logger;
+    private context: string = 'API';
 
-    constructor(context?: string, configService?: ConfigService) {
-        // If instantiated manually (outside DI), fallback to defaults
+    constructor(configService?: ConfigService) {
         const config = configService ? {
             dir: configService.get('logging.dir'),
             level: configService.get('logging.level'),
@@ -31,18 +31,17 @@ export class LoggerService implements NestLoggerService {
                 winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
                 winston.format.json()
             ),
-            defaultMeta: { service: 'api', context },
+            defaultMeta: { service: 'api' },
             transports: [
-                // Console transport
                 new winston.transports.Console({
                     format: winston.format.combine(
                         winston.format.colorize(),
                         winston.format.printf(({ timestamp, level, message, context, ...meta }) => {
-                            return `${timestamp} [${level}]${context ? ` [${context}]` : ''} ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ''}`;
+                            const ctx = context || this.context;
+                            return `${timestamp} [${level}]${ctx ? ` [${ctx}]` : ''} ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ''}`;
                         })
                     ),
                 }),
-                // Daily rotate file transport
                 new winston.transports.DailyRotateFile({
                     filename: path.join(logDir, 'api-%DATE%.log'),
                     datePattern: 'YYYY-MM-DD',
@@ -54,23 +53,33 @@ export class LoggerService implements NestLoggerService {
         });
     }
 
+    setContext(context: string) {
+        this.context = context;
+    }
+
     log(message: any, ...optionalParams: any[]) {
-        this.logger.info(message, ...optionalParams);
+        const context = typeof optionalParams[0] === 'string' ? optionalParams[0] : this.context;
+        this.logger.info(message, { context });
     }
 
     error(message: any, ...optionalParams: any[]) {
-        this.logger.error(message, ...optionalParams);
+        const stack = typeof optionalParams[0] === 'string' ? optionalParams[0] : undefined;
+        const context = typeof optionalParams[1] === 'string' ? optionalParams[1] : this.context;
+        this.logger.error(message, { stack, context });
     }
 
     warn(message: any, ...optionalParams: any[]) {
-        this.logger.warn(message, ...optionalParams);
+        const context = typeof optionalParams[0] === 'string' ? optionalParams[0] : this.context;
+        this.logger.warn(message, { context });
     }
 
-    debug?(message: any, ...optionalParams: any[]) {
-        this.logger.debug(message, ...optionalParams);
+    debug(message: any, ...optionalParams: any[]) {
+        const context = typeof optionalParams[0] === 'string' ? optionalParams[0] : this.context;
+        this.logger.debug(message, { context });
     }
 
-    verbose?(message: any, ...optionalParams: any[]) {
-        this.logger.verbose(message, ...optionalParams);
+    verbose(message: any, ...optionalParams: any[]) {
+        const context = typeof optionalParams[0] === 'string' ? optionalParams[0] : this.context;
+        this.logger.verbose(message, { context });
     }
 }

@@ -1,9 +1,15 @@
 import { Controller, Get, Post, Body, Param, Patch, Query } from '@nestjs/common';
 import { WorkerService } from './worker.service';
+import { LoggerService } from '../common/logger/logger.service';
 
 @Controller('worker')
 export class WorkerController {
-    constructor(private readonly workerService: WorkerService) { }
+    constructor(
+        private readonly workerService: WorkerService,
+        private readonly logger: LoggerService
+    ) {
+        this.logger.setContext(WorkerController.name);
+    }
 
     @Post('register')
     register(@Body() body: { hostname: string; ipAddress?: string; name?: string; tags?: string[] }) {
@@ -30,7 +36,7 @@ export class WorkerController {
         @Query('hostname') hostname: string,
         @Query('tags') tags?: string | string[]
     ) {
-        console.log(`[WorkerController] Received poll request from ${hostname} with tags: ${tags}`);
+        this.logger.log(`Received poll request from ${hostname} with tags: ${tags}`);
         // Convert tags to string array if it comes as a single string
         const tagArray = Array.isArray(tags) ? tags : (tags ? [tags] : []);
         return this.workerService.getNextPendingTask(hostname, tagArray);
@@ -47,8 +53,8 @@ export class WorkerController {
     @Post('executions/:id/complete')
     complete(
         @Param('id') id: string,
-        @Body() body: { result?: any; error?: string }
+        @Body() body: { result?: any; error?: string; input?: any }
     ) {
-        return this.workerService.completeExecution(id, body.result, body.error);
+        return this.workerService.completeExecution(id, body.result, body.error, body.input);
     }
 }

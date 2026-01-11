@@ -76,7 +76,13 @@ export const tasksApi = {
 
     // Get task executions
     getTaskExecutions: async (taskId: string): Promise<any[]> => {
-        const response = await fetch(`${API_BASE_URL}/tasks/${taskId}/executions`); // Need to add this to backend
+        const response = await fetch(`${API_BASE_URL}/tasks/${taskId}/executions`);
         return handleResponse(response);
     },
+
+    // Get task impact assessment
+    getTaskImpact: async (taskId: string): Promise<{ count: number, workflows: { id: string, name: string }[] }> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/${taskId}/impact`);
+        return handleResponse(response);
+    }
 };

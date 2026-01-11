@@ -7,7 +7,9 @@ import { TasksModule } from './tasks/tasks.module';
 import { WorkerModule } from './worker/worker.module';
 import { WorkflowsModule } from './workflows/workflows.module';
 import { LoggerModule } from './common/logger/logger.module';
+import { SettingsModule } from './settings/settings.module';
 import { loadConfig } from './common/config/configuration';
+import { BackgroundService } from './common/background/background.service';
 
 @Module({
     imports: [
@@ -19,8 +21,10 @@ import { loadConfig } from './common/config/configuration';
         TasksModule,
         WorkerModule,
         WorkflowsModule,
+        LoggerModule,
+        SettingsModule,
     ],
     controllers: [AppController],
-    providers: [AppService],
+    providers: [AppService, BackgroundService],
 })
 export class AppModule { }

@@ -1,28 +1,42 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
+import { LoggerService } from '../common/logger/logger.service';
 
 @Injectable()
 export class WorkflowsService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private logger: LoggerService
+    ) {
+        this.logger.setContext(WorkflowsService.name);
+    }
 
     async create(createWorkflowDto: CreateWorkflowDto, ownerId: string) {
-        // Sanitize input to remove legacy 'workerGroup'
-        const { workerGroup, ...rest } = createWorkflowDto as any;
+        const data = createWorkflowDto as any;
+        
+        // Map the legacy 'workerGroup' string to the 'tags' array if tags aren't provided
+        const workflowTags = data.tags || (data.workerGroup ? [data.workerGroup] : []);
 
-        // Also strip 'workerGroup' from nodes if present
-        const sanitizedNodes = (rest.nodes || []).map((node: any) => {
-            const { workerGroup, ...nodeRest } = node;
-            return nodeRest;
+        // Sanitize nodes to ensure they use targetTags/targetWorkerId correctly
+        const processedNodes = (data.nodes || []).map((node: any) => {
+            return {
+                ...node,
+                // Ensure targetTags is an array from potential workerGroup string
+                targetTags: node.targetTags || (node.workerGroup ? [node.workerGroup] : []),
+            };
         });
 
         return this.prisma.workflow.create({
             data: {
-                ...rest,
+                name: data.name,
+                description: data.description,
+                scope: data.scope || 'GLOBAL',
                 ownerId,
-                nodes: sanitizedNodes,
-                edges: rest.edges || [],
-                scope: rest.scope || 'GLOBAL',
+                nodes: processedNodes,
+                edges: data.edges || [],
+                tags: workflowTags,
+                enabled: data.enabled ?? false,
             },
         });
     }
@@ -48,9 +62,25 @@ export class WorkflowsService {
 
     async update(id: string, updateWorkflowDto: UpdateWorkflowDto) {
         await this.findOne(id);
+        const data = updateWorkflowDto as any;
+
+        // Map tags/nodes if they exist in the update
+        const updateData: any = { ...data };
+
+        if (data.workerGroup !== undefined || data.tags !== undefined) {
+            updateData.tags = data.tags || (data.workerGroup ? [data.workerGroup] : []);
+        }
+
+        if (data.nodes) {
+            updateData.nodes = data.nodes.map((node: any) => ({
+                ...node,
+                targetTags: node.targetTags || (node.workerGroup ? [node.workerGroup] : []),
+            }));
+        }
+
         return this.prisma.workflow.update({
             where: { id },
-            data: updateWorkflowDto,
+            data: updateData,
         });
     }
 
@@ -98,8 +128,7 @@ export class WorkflowsService {
 
     async enqueueExecution(workflowId: string, triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', userId?: string) {
         const workflow = await this.findOne(workflowId);
-
-        // 1. Create WorkflowExecution
+        this.logger.log(`[Trace] Enqueuing execution for workflow: ${workflow.name} (${workflowId})`);
         const execution = await this.prisma.workflowExecution.create({
             data: {
                 workflowId,
@@ -114,11 +143,21 @@ export class WorkflowsService {
         });
 
         // 2. Identify start nodes (nodes with no incoming edges)
-        const nodes = workflow.nodes as any[];
-        const edges = workflow.edges as any[];
+        let nodes = workflow.nodes as any;
+        let edges = workflow.edges as any;
 
-        const targetNodeIds = new Set(edges.map(e => e.target));
-        const startNodes = nodes.filter(n => !targetNodeIds.has(n.id));
+        // Ensure nodes and edges are arrays (sometimes JSON might be stringified twice or stored as object)
+        if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+        if (typeof edges === 'string') edges = JSON.parse(edges);
+        if (!Array.isArray(nodes)) nodes = Object.values(nodes || {});
+        this.logger.log(`[Trace] Raw Nodes Data: ${JSON.stringify(nodes)}`);
+        this.logger.log(`[Trace] Raw Edges Data: ${JSON.stringify(edges)}`);
+        this.logger.log(`[Trace] Workflow nodes length: ${nodes.length}, edges length: ${edges.length}`);
+
+        const targetNodeIds = new Set(edges.map((e: any) => e.target));
+        const startNodes = nodes.filter((n: any) => !targetNodeIds.has(n.id));
+        
+        this.logger.log(`[Trace] Identified ${startNodes.length} start nodes: ${startNodes.map(n => n.id).join(', ')}`);
 
         // 3. Fan-out / Broadcast Logic
         // Check if the workflow itself is targeted or if we proceed with single execution
@@ -138,11 +177,8 @@ export class WorkflowsService {
                 }
             });
 
-            if (workers.length === 0) {
-                // Fallback: Just one pending execution that might wait for a worker?
-                // Or failing immediately? Let's just create one standard execution.
-            } else {
-                // Create N executions, one per worker
+            if (workers.length > 1) {
+                // Create N executions, one per worker (Broadcast)
                 const executions = [];
                 for (const worker of workers) {
                     const childExecution = await this.prisma.workflowExecution.create({
@@ -161,7 +197,6 @@ export class WorkflowsService {
                     });
 
                     // Create start tasks for this child execution
-                    // They will inherit the childExecution.targetWorkerId
                     for (const node of startNodes) {
                         await this.prisma.taskExecution.create({
                             data: {
@@ -170,40 +205,82 @@ export class WorkflowsService {
                                 workflowExecutionId: childExecution.id,
                                 status: 'PENDING',
                                 targetWorkerId: worker.id, // Explicitly target this worker
-                                targetTags: [],
                             },
                         });
                     }
                     executions.push(childExecution);
                 }
 
-                // Mark the "Parent" execution as COMPLETED (it was just a router)
+                // Mark the "Parent" execution as SUCCESS (it was just a router)
                 await this.prisma.workflowExecution.update({
                     where: { id: execution.id },
-                    data: { status: 'COMPLETED', completedAt: new Date() }
+                    data: { status: 'SUCCESS', completedAt: new Date() }
                 });
 
                 return {
                     parent: execution,
                     children: executions
                 };
+            } else if (workers.length === 1) {
+                // Only one worker found - pin the PARENT execution to it instead of fanning out.
+                // This prevents redundant "Master + Child" entries in progress history.
+                await this.prisma.workflowExecution.update({
+                    where: { id: execution.id },
+                    data: { targetWorkerId: workers[0].id }
+                });
+                
+                this.logger.log(`[Trace] Single worker found for tags [${targetTags.join(', ')}]. Pinning execution ${execution.id} to worker ${workers[0].id}`);
             }
         }
 
         // Standard Single Execution (No Workflow-level Fan-out)
+        this.logger.log(`[Trace] Processing ${startNodes.length} start nodes for execution ${execution.id}`);
+        let startedCount = 0;
+
         for (const node of startNodes) {
-            await this.prisma.taskExecution.create({
-                data: {
-                    taskId: node.taskId,
-                    nodeId: node.id,
-                    workflowExecutionId: execution.id,
-                    status: 'PENDING',
-                    targetWorkerId: node.targetWorkerId,
-                    targetTags: node.targetTags || [],
-                },
-            });
+            try {
+                // Resolution Logic: Explicit Node Tags > Workflow Default Tags
+                const nodeTags = (node.targetTags && node.targetTags.length > 0) 
+                    ? node.targetTags 
+                    : (workflow.tags || []);
+
+                this.logger.log(`[Trace] Resolving tags for node ${node.id}: [${nodeTags.join(', ')}]`);
+
+                // Strict Worker Check:
+                let initialStatus = 'PENDING';
+                if (nodeTags.length > 0) {
+                    const matchingWorkerCount = await this.prisma.worker.count({
+                        where: {
+                            status: 'ONLINE',
+                            tags: { hasSome: nodeTags }
+                        }
+                    });
+                    
+                    if (matchingWorkerCount === 0) {
+                        this.logger.warn(`[Trace] NO WORKER FOUND for node ${node.id} with tags [${nodeTags.join(', ')}]`);
+                        initialStatus = 'NO_WORKER_FOUND';
+                    }
+                }
+
+                const taskExec = await this.prisma.taskExecution.create({
+                    data: {
+                        taskId: node.taskId,
+                        nodeId: node.id,
+                        workflowExecutionId: execution.id,
+                        status: initialStatus,
+                        targetWorkerId: node.targetWorkerId,
+                        targetTags: nodeTags,
+                    },
+                });
+                
+                this.logger.log(`[Trace] Created TaskExecution successfully: ${taskExec.id}`);
+                startedCount++;
+            } catch (err: any) {
+                this.logger.error(`[Trace] CRITICAL: Failed to create TaskExecution for node ${node.id}: ${err.message}`, err.stack);
+            }
         }
 
+        this.logger.log(`[Trace] Workflow execution ${execution.id} started with ${startedCount} tasks.`);
         return execution;
     }
 
@@ -226,6 +303,7 @@ export class WorkflowsService {
         return this.prisma.workflowExecution.findUnique({
             where: { id },
             include: {
+                workflow: true,
                 taskExecutionRecords: {
                     include: { task: true },
                     orderBy: { startedAt: 'asc' }

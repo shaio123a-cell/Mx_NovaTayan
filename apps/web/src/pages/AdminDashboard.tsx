@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Server, Activity, Settings, Users, Database, Shield, Radio, Key } from 'lucide-react';
+import { Server, Activity, Settings, Users, Database, Radio, Key } from 'lucide-react';
 
 export default function AdminDashboard() {
     const sections = [
@@ -46,6 +46,13 @@ export default function AdminDashboard() {
         {
             title: "Configuration",
             items: [
+                {
+                    icon: Settings,
+                    label: "System Settings",
+                    desc: "Configure global HTTP success/failure defaults and system rules.",
+                    path: "/admin/settings",
+                    color: "text-blue-500"
+                },
                 {
                     icon: Key,
                     label: "Access Tokens",

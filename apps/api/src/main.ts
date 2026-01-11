@@ -4,8 +4,11 @@ import { LoggerService } from './common/logger/logger.service';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
+    const logger = new LoggerService();
+    logger.setContext('System');
+    
     const app = await NestFactory.create(AppModule, {
-        logger: new LoggerService('System'),
+        logger,
     });
 
     // Global filters
