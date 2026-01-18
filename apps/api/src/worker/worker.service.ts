@@ -138,15 +138,18 @@ export class WorkerService {
 
         if (!execution) throw new Error('Execution not found');
 
-        const { status, reason } = await this.evaluateStatus(execution, result, error);
+        const { status, reason, sanityResults } = await this.evaluateStatus(execution, result, error);
         const duration = new Date().getTime() - execution.startedAt.getTime();
 
         const updated = await this.prisma.taskExecution.update({
             where: { id: executionId },
             data: {
                 status,
-                result: result || {},
-                error: reason || error || null,
+                result: {
+                    ...(result || {}),
+                    sanityResults: sanityResults || []
+                },
+                error: status === 'SUCCESS' ? null : (reason || error || null),
                 input: input || null,
                 completedAt: new Date(),
                 duration,
@@ -161,17 +164,18 @@ export class WorkerService {
         return updated;
     }
 
-    private async evaluateStatus(execution: any, result: any, error?: string): Promise<{ status: string; reason?: string }> {
+    private async evaluateStatus(execution: any, result: any, error?: string): Promise<{ status: string; reason?: string; sanityResults?: any[] }> {
         if (error) return { status: 'FAILED' };
         if (!result || result.status === undefined) return { status: 'FAILED', reason: 'Response missing status code' };
 
         const httpStatus = result.status;
         const task = execution.task;
+        const sanityResults: any[] = [];
 
         // 1. Task Level Status Mappings
         if (task.statusMappings && Array.isArray(task.statusMappings)) {
             const mapping = task.statusMappings.find((m: any) => this.isStatusCodeMatch(httpStatus, m.pattern));
-            if (mapping) return { status: mapping.status, reason: `Status code ${httpStatus} matched pattern ${mapping.pattern}` };
+            if (mapping) return { status: mapping.status, reason: `Status code ${httpStatus} matched pattern ${mapping.pattern}`, sanityResults: [] };
         }
 
         // 2. Global Defaults
@@ -193,7 +197,7 @@ export class WorkerService {
         }
 
         // 3. Regex Sanity Checks
-        if (status === 'SUCCESS' && task.sanityChecks && Array.isArray(task.sanityChecks)) {
+        if (task.sanityChecks && Array.isArray(task.sanityChecks)) {
             const body = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
             for (const check of task.sanityChecks) {
                 try {
@@ -203,18 +207,27 @@ export class WorkerService {
                     const failed = (check.condition === 'MUST_CONTAIN' && !matches) ||
                         (check.condition === 'MUST_NOT_CONTAIN' && matches);
 
+                    sanityResults.push({
+                        ...check,
+                        passed: !failed
+                    });
+
                     if (failed) {
                         const failureMsg = `Sanity Check Failed: Body ${check.condition === 'MUST_CONTAIN' ? 'missing' : 'contains'} "${check.regex}"`;
                         this.logger.warn(`[SanityCheck] Task ${task.name} Status: ${check.severity === 'ERROR' ? 'FAILED' : 'WARNING'} - ${failureMsg}`);
-                        if (check.severity === 'ERROR') return { status: 'FAILED', reason: failureMsg };
+                        if (check.severity === 'ERROR') {
+                            status = 'FAILED';
+                            reason = failureMsg;
+                        }
                     }
                 } catch (e) {
                     this.logger.error(`[SanityCheck] Invalid regex: ${check.regex}`);
+                    sanityResults.push({ ...check, passed: false, error: 'Invalid Regex' });
                 }
             }
         }
 
-        return { status, reason };
+        return { status, reason, sanityResults };
     }
 
     private isStatusCodeMatch(code: number, pattern: string): boolean {

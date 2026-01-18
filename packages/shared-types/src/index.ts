@@ -94,6 +94,14 @@ export interface StatusMapping {
     mappedStatus: 'SUCCESS' | 'FAILURE' | 'DEGRADED';
 }
 
+export interface TaskGroup {
+    id: string;
+    name: string;
+    description?: string;
+    createdAt: Date;
+    updatedAt: Date;
+}
+
 export interface Task {
     id: string;
     name: string;
@@ -118,6 +126,7 @@ export interface Task {
 
     // Metadata
     tags?: string[];
+    groups?: TaskGroup[];
     createdAt: Date;
     updatedAt: Date;
 }

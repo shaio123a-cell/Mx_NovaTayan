@@ -29,19 +29,24 @@ const getStatusStyles = (status: string) => {
 function ExecutionNode({ data }: any) {
     const { bg, border, icon } = getStatusStyles(data.status);
     const [showMenu, setShowMenu] = useState(false);
+    const isEditing = data.isEditing;
     
     return (
         <div 
             style={{ 
                 background: bg, 
-                border: `2px solid ${border}`, 
+                border: isEditing ? '3px solid #f05a28' : `2px solid ${border}`, 
                 borderRadius: '12px', 
                 minWidth: '220px',
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.4)',
+                boxShadow: isEditing 
+                    ? '0 0 20px rgba(240, 90, 40, 0.4), 0 10px 15px -3px rgba(0, 0, 0, 0.4)' 
+                    : '0 10px 15px -3px rgba(0, 0, 0, 0.4)',
                 overflow: 'visible', // Allow menu to overflow
                 position: 'relative',
                 opacity: data.status ? 1 : 0.5,
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
+                transform: isEditing ? 'scale(1.05)' : 'scale(1)',
+                zIndex: isEditing ? 50 : 1
             }}
             className="group"
         >
@@ -131,7 +136,7 @@ function ExecutionNode({ data }: any) {
                     <div 
                         onClick={(e) => {
                             e.stopPropagation();
-                            data.onEditTask(data.taskId);
+                            data.onEditTask(data.id);
                             setShowMenu(false);
                         }}
                         style={{ padding: '10px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#d8d9da', borderTop: '1px solid #222' }}
@@ -154,12 +159,13 @@ const nodeTypes = {
 interface Props {
     workflow: any;
     taskExecutions: any[];
+    editingTaskId?: string | null;
     onNodeClick?: (nodeId: string) => void;
     onInspect?: (nodeId: string) => void;
     onEditTask?: (taskId: string) => void;
 }
 
-export function ExecutionVisualizer({ workflow, taskExecutions, onNodeClick, onInspect, onEditTask }: Props) {
+export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, onNodeClick, onInspect, onEditTask }: Props) {
     const nodes = useMemo(() => {
         if (!workflow?.nodes) return [];
         return (workflow.nodes as any[]).map((n: any) => {
@@ -175,12 +181,13 @@ export function ExecutionVisualizer({ workflow, taskExecutions, onNodeClick, onI
                     status: record?.status,
                     duration: record?.duration,
                     httpStatus: record?.result?.status,
+                    isEditing: editingTaskId === n.taskId,
                     onInspect: onInspect || (() => {}),
                     onEditTask: onEditTask || (() => {})
                 }
             } as Node;
         });
-    }, [workflow, taskExecutions, onInspect, onEditTask]);
+    }, [workflow, taskExecutions, editingTaskId, onInspect, onEditTask]);
 
     const edges = useMemo(() => {
         if (!workflow?.edges) return [];

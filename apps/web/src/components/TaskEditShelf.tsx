@@ -1,141 +1,340 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { useState, useEffect } from 'react'
-import { X, AlertTriangle, Save, Info } from 'lucide-react'
+import { X, AlertTriangle } from 'lucide-react'
 
 interface Props {
-    taskId: string;
+    taskId?: string | null;
     onClose: () => void;
 }
 
 export function TaskEditShelf({ taskId, onClose }: Props) {
     const queryClient = useQueryClient()
+    const [activeTab, setActiveTab] = useState<'details' | 'config' | 'history'>('details')
+    const isEditing = !!taskId
+
+    // Form State
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
+    const [method, setMethod] = useState('GET')
     const [url, setUrl] = useState('')
+    const [headers, setHeaders] = useState<string>('{}')
+    const [body, setBody] = useState<string>('')
+    const [timeout, setTimeout] = useState<number>(30000)
+    const [tags, setTags] = useState<string[]>([])
+    const [statusMappings, setStatusMappings] = useState<any[]>([])
+    const [sanityChecks, setSanityChecks] = useState<any[]>([])
+    const [groupIds, setGroupIds] = useState<string[]>([])
 
+    // Fetch existing data
     const { data: task, isLoading: isTaskLoading } = useQuery({
         queryKey: ['task', taskId],
-        queryFn: () => tasksApi.getTask(taskId),
-        enabled: !!taskId
+        queryFn: () => tasksApi.getTask(taskId!),
+        enabled: isEditing
     })
 
-    const { data: impact, isLoading: isImpactLoading } = useQuery({
+    const { data: groups } = useQuery({
+        queryKey: ['task-groups'],
+        queryFn: tasksApi.getGroups
+    })
+
+    const { data: impact } = useQuery({
         queryKey: ['task-impact', taskId],
-        queryFn: () => tasksApi.getTaskImpact(taskId),
-        enabled: !!taskId
+        queryFn: () => tasksApi.getTaskImpact(taskId!),
+        enabled: isEditing
     })
 
     useEffect(() => {
-        if (task) {
+        if (task && isEditing) {
             setName(task.name)
             setDescription(task.description || '')
-            setUrl((task as any).command?.url || '')
+            const cmd = (task as any).command || {}
+            setUrl(cmd.url || '')
+            setMethod(cmd.method || 'GET')
+            setHeaders(JSON.stringify(cmd.headers || {}, null, 2))
+            setBody(cmd.body || '')
+            setTimeout(cmd.timeout || 30000)
+            setTags(task.tags || [])
+            setStatusMappings((task as any).statusMappings || [])
+            setSanityChecks((task as any).sanityChecks || [])
+            setGroupIds(((task as any).groups || []).map((g: any) => g.id))
         }
-    }, [task])
+    }, [task, isEditing])
 
-    const updateMutation = useMutation({
-        mutationFn: (data: any) => tasksApi.updateTask(taskId, data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['tasks'] })
-            queryClient.invalidateQueries({ queryKey: ['workflow-execution'] })
-            onClose()
+    const handleSave = () => {
+        try {
+            const data = {
+                name, description, method, url, 
+                headers: JSON.parse(headers), 
+                body, timeout, tags, statusMappings, sanityChecks,
+                groupIds
+            }
+            if (isEditing) tasksApi.updateTask(taskId!, data).then(() => { queryClient.invalidateQueries({ queryKey: ['tasks'] }); onClose(); })
+            else tasksApi.createTask(data).then(() => { queryClient.invalidateQueries({ queryKey: ['tasks'] }); onClose(); })
+        } catch (e) {
+            alert('Invalid Headers JSON')
         }
-    })
-
-    if (isTaskLoading || isImpactLoading) {
-        return (
-            <div className="fixed inset-y-0 right-0 w-96 bg-gray-900 border-l border-gray-700 shadow-2xl z-[100] p-6 flex items-center justify-center">
-                <div className="animate-spin text-primary-400 text-2xl">⌛</div>
-            </div>
-        )
     }
 
-    return (
-        <div className="fixed inset-y-0 right-0 w-96 bg-gray-900 border-l border-gray-700 shadow-2xl z-[100] flex flex-col animate-slide-in-right">
-            <div className="p-4 bg-gray-800 border-b border-gray-700 flex justify-between items-center px-6">
-                <div>
-                    <h3 className="font-bold text-gray-200">Edit Task</h3>
-                    <p className="text-[10px] text-gray-500 uppercase font-mono">{taskId}</p>
-                </div>
-                <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
-                    <X size={18} />
-                </button>
-            </div>
+    if (isEditing && isTaskLoading) return null;
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {/* Impact Assessment Warning */}
-                {impact && impact.count > 0 && (
-                    <div className="bg-orange-900/20 border border-orange-500/20 p-4 rounded-xl space-y-2">
-                        <div className="flex items-center gap-2 text-orange-400 font-bold text-xs uppercase tracking-wider">
-                            <AlertTriangle size={14} /> Critical Impact
-                        </div>
-                        <p className="text-xs text-orange-200/70 leading-relaxed">
-                            Editing this task affects <strong>{impact.count}</strong> workflows.
-                        </p>
-                        <div className="bg-black/20 p-2 rounded-lg">
-                            <ul className="text-[10px] text-orange-300/50 space-y-1">
-                                {impact.workflows.map((wf: any) => (
-                                    <li key={wf.id}>• {wf.name}</li>
-                                ))}
-                                {impact.count > 10 && <li>...and {impact.count - 10} more</li>}
-                            </ul>
-                        </div>
+    return (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999999, display: 'flex', justifyContent: 'flex-end' }}>
+            {/* Backdrop */}
+            <div 
+                style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}
+                onClick={onClose}
+            />
+
+            {/* Main Drawer */}
+            <div 
+                style={{ 
+                    position: 'relative', 
+                    width: '520px', 
+                    height: '100%', 
+                    backgroundColor: 'white', 
+                    boxShadow: '-10px 0 30px rgba(0,0,0,0.2)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    animation: 'slide-in-right 0.3s ease-out'
+                }}
+            >
+                {/* Header */}
+                <div style={{ padding: '24px 32px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827' }}>
+                            {isEditing ? 'TASK FORM - EDIT MODE' : 'CREATE NEW TASK'}
+                        </h2>
+                    </div>
+                    <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '8px', borderRadius: '50%', display: 'flex' }}>
+                        <X size={24} color="#999" />
+                    </button>
+                </div>
+
+                {/* Warning Impact */}
+                {isEditing && impact && impact.count > 0 && (
+                    <div style={{ margin: '16px 32px 0 32px', padding: '12px 16px', backgroundColor: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', color: '#92400e', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <AlertTriangle size={16} />
+                        Warning: <b>{impact.count} workflows</b> use this task.
                     </div>
                 )}
 
-                <div className="space-y-4">
-                    <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Task Name</label>
-                        <input 
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className="w-full bg-black/30 border border-gray-700 rounded-lg p-2.5 text-sm text-gray-200 focus:border-primary-500 outline-none transition-all"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Description</label>
-                        <textarea 
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            className="w-full bg-black/30 border border-gray-700 rounded-lg p-2.5 text-sm text-gray-200 focus:border-primary-500 outline-none transition-all h-20 resize-none"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">URL</label>
-                        <input 
-                            value={url}
-                            onChange={(e) => setUrl(e.target.value)}
-                            className="w-full bg-black/30 border border-gray-700 rounded-lg p-2.5 text-sm font-mono text-primary-400 focus:border-primary-500 outline-none transition-all"
-                        />
-                    </div>
+                {/* Tabs */}
+                <div style={{ display: 'flex', padding: '0 32px', borderBottom: '1px solid #eee', marginTop: '16px' }}>
+                    <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />
+                    <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />
                 </div>
 
-                <div className="bg-blue-900/10 border border-blue-500/10 p-4 rounded-xl flex gap-3">
-                    <Info size={16} className="text-blue-400 shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-blue-300/60 leading-relaxed">
-                        Changes to shared tasks will be applied immediately across all executions that haven't picked up this task yet.
-                    </p>
+                {/* Content Area */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '32px', display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                    {activeTab === 'details' && (
+                        <>
+                            <MaterialInput label="Task Name" value={name} onChange={setName} />
+                            
+                            <div style={{ marginTop: '-16px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Assign to Groups (Folders)</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                                    {groups?.map((g: any) => (
+                                        <button
+                                            key={g.id}
+                                            type="button"
+                                            onClick={() => {
+                                                if (groupIds.includes(g.id)) setGroupIds(groupIds.filter(id => id !== g.id));
+                                                else setGroupIds([...groupIds, g.id]);
+                                            }}
+                                            style={{
+                                                padding: '4px 12px',
+                                                borderRadius: '16px',
+                                                fontSize: '11px',
+                                                fontWeight: 'bold',
+                                                border: '1px solid #1976D2',
+                                                backgroundColor: groupIds.includes(g.id) ? '#1976D2' : 'white',
+                                                color: groupIds.includes(g.id) ? 'white' : '#1976D2',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            {g.name}
+                                        </button>
+                                    ))}
+                                    <button 
+                                        type="button"
+                                        onClick={() => {
+                                            const name = prompt('Enter new folder name:');
+                                            if (name) tasksApi.createGroup(name).then(() => queryClient.invalidateQueries({ queryKey: ['task-groups'] }));
+                                        }}
+                                        style={{ padding: '4px 12px', borderRadius: '16px', fontSize: '11px', fontWeight: 'bold', border: '1px dotted #999', backgroundColor: 'transparent', color: '#999', cursor: 'pointer' }}
+                                    >
+                                        + NEW FOLDER
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div style={{ display: 'flex', gap: '20px' }}>
+                                <div style={{ flex: 1 }}>
+                                    <MaterialSelect label="HTTP Method" value={method} onChange={setMethod} options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH']} />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <MaterialInput label="Timeout (ms)" value={timeout.toString()} onChange={(val: string) => setTimeout(Number(val))} type="number" />
+                                </div>
+                            </div>
+
+                            <MaterialInput label="Endpoint URL" value={url} onChange={setUrl} placeholder="https://..." />
+                            
+                            <MaterialTextArea label="Request Headers (JSON)" value={headers} onChange={setHeaders} height="120px" mono />
+                            
+                            <MaterialTextArea label="Payload Content (Body)" value={body} onChange={setBody} height="160px" mono />
+
+                            <MaterialInput label="Task Description" value={description} onChange={setDescription} />
+                        </>
+                    )}
+
+                    {activeTab === 'config' && (
+                        <>
+                            <div>
+                                <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Sanity Policies</h4>
+                                {sanityChecks.map((c, i) => (
+                                    <div key={i} style={{ padding: '16px', border: '1px solid #eee', borderRadius: '12px', marginBottom: '12px', backgroundColor: '#fafafa', position: 'relative' }}>
+                                        <input value={c.regex} onChange={e => {
+                                            const n = [...sanityChecks]; n[i].regex = e.target.value; setSanityChecks(n);
+                                        }} style={{ width: '100%', border: 'none', background: 'transparent', borderBottom: '1px solid #ddd', outline: 'none', fontFamily: 'monospace', fontSize: '13px', marginBottom: '12px' }} placeholder="Regex Pattern" />
+                                        <div style={{ display: 'flex', gap: '12px' }}>
+                                            <select value={c.condition} onChange={e => {
+                                                const n = [...sanityChecks]; n[i].condition = e.target.value; setSanityChecks(n);
+                                            }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                                                <option value="MUST_CONTAIN">MUST CONTAIN</option>
+                                                <option value="MUST_NOT_CONTAIN">MUST NOT CONTAIN</option>
+                                            </select>
+                                            <select value={c.severity} onChange={e => {
+                                                const n = [...sanityChecks]; n[i].severity = e.target.value; setSanityChecks(n);
+                                            }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', color: '#dc2626' }}>
+                                                <option value="ERROR">ERROR</option>
+                                                <option value="WARNING">WARNING</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                ))}
+                                <button onClick={() => setSanityChecks([...sanityChecks, { regex: '', condition: 'MUST_CONTAIN', severity: 'ERROR' }])} style={{ color: '#1976D2', fontSize: '12px', fontWeight: 'bold', border: 'none', background: 'transparent', cursor: 'pointer' }}>+ ADD POLICY</button>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                {/* Footer */}
+                <div style={{ padding: '24px 32px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '24px', backgroundColor: 'white' }}>
+                    <button 
+                        onClick={onClose}
+                        style={{ background: 'transparent', border: 'none', color: '#1976D2', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', letterSpacing: '1px' }}
+                    >
+                        CANCEL
+                    </button>
+                    <button 
+                        onClick={handleSave}
+                        style={{ backgroundColor: '#1976D2', border: 'none', color: 'white', padding: '10px 24px', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}
+                    >
+                        SAVE TASK
+                    </button>
                 </div>
             </div>
 
-            <div className="p-4 bg-gray-800 border-t border-gray-700 flex gap-3 px-6">
-                <button 
-                    onClick={() => updateMutation.mutate({ name, description, url })}
-                    disabled={updateMutation.isPending}
-                    className="flex-1 bg-primary-600 hover:bg-primary-500 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
-                >
-                    <Save size={16} /> Save Changes
-                </button>
-                <button 
-                    onClick={onClose}
-                    className="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 font-bold text-gray-300 rounded-lg transition-all"
-                >
-                    Cancel
-                </button>
-            </div>
+            <style>{`
+                @keyframes slide-in-right {
+                    from { transform: translateX(100%); }
+                    to { transform: translateX(0); }
+                }
+                .material-label {
+                    position: absolute;
+                    top: -8px;
+                    left: 12px;
+                    background: white;
+                    padding: 0 4px;
+                    font-size: 11px;
+                    color: #999;
+                    font-weight: 500;
+                    z-index: 10;
+                }
+                .material-box {
+                    width: 100%;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    padding: 12px 16px;
+                    font-size: 14px;
+                    outline: none;
+                    transition: border-color 0.2s;
+                }
+                .material-box:focus {
+                    border-color: #1976D2;
+                }
+            `}</style>
+        </div>
+    )
+}
+
+function TabButton({ active, onClick, label }: any) {
+    return (
+        <button 
+            onClick={onClick}
+            style={{ 
+                flex: 1, 
+                padding: '16px 0', 
+                border: 'none', 
+                background: 'transparent', 
+                fontSize: '12px', 
+                fontWeight: 'bold', 
+                textTransform: 'uppercase', 
+                letterSpacing: '1px',
+                color: active ? '#1976D2' : '#999',
+                borderBottom: active ? '2px solid #1976D2' : '2px solid transparent',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+            }}
+        >
+            {label}
+        </button>
+    )
+}
+
+function MaterialInput({ label, value, onChange, placeholder, type = 'text' }: any) {
+    return (
+        <div style={{ position: 'relative' }}>
+            <label className="material-label">{label}</label>
+            <input 
+                type={type} 
+                value={value} 
+                onChange={(e) => onChange(e.target.value)} 
+                placeholder={placeholder}
+                className="material-box"
+            />
+        </div>
+    )
+}
+
+function MaterialTextArea({ label, value, onChange, height = '100px', mono = false }: any) {
+    return (
+        <div style={{ position: 'relative' }}>
+            <label className="material-label">{label}</label>
+            <textarea 
+                value={value} 
+                onChange={(e) => onChange(e.target.value)} 
+                style={{ height, resize: 'none', fontFamily: mono ? 'monospace' : 'inherit' }}
+                className="material-box"
+            />
+        </div>
+    )
+}
+
+function MaterialSelect({ label, value, onChange, options }: any) {
+    return (
+        <div style={{ position: 'relative' }}>
+            <label className="material-label">{label}</label>
+            <select 
+                value={value} 
+                onChange={(e) => onChange(e.target.value)} 
+                className="material-box"
+                style={{ fontWeight: 'bold' }}
+            >
+                {options.map((o: string) => <option key={o} value={o}>{o}</option>)}
+            </select>
         </div>
     )
 }

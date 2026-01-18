@@ -45,6 +45,23 @@ export class WorkflowsService {
         return this.prisma.workflow.findMany({
             where: ownerId ? { ownerId } : undefined,
             orderBy: { createdAt: 'desc' },
+            include: {
+                executions: {
+                    orderBy: { startedAt: 'desc' },
+                    take: 10,
+                    select: {
+                        id: true,
+                        status: true,
+                        duration: true,
+                        startedAt: true,
+                        taskExecutionRecords: {
+                            select: {
+                                status: true
+                            }
+                        }
+                    }
+                }
+            }
         });
     }
 

@@ -3,13 +3,13 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', 'Roboto', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #0b0c10;
+  color-scheme: light;
+  color: #111827;
+  background-color: #F5F5F5;
 }
 
 /* Global Reset - Ensuring the App fills the viewport */
@@ -23,14 +23,14 @@ html, body, #root {
 
 /* React Flow - n8n style customization */
 .react-flow__background {
-  background-color: #0b0c10;
+  background-color: #f9fafb;
 }
 
 .react-flow__node {
   border-radius: 8px;
-  background: #111217;
-  border: 1px solid #202226;
-  color: #fff;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  color: #1f2937;
 }
 
 .react-flow__node.selected {

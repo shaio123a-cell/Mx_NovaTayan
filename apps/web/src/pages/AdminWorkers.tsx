@@ -20,7 +20,7 @@ function AdminWorkers() {
 
     const updateTagsMutation = useMutation({
         mutationFn: ({ id, tags }: { id: string; tags: string[] }) =>
-            workersApi.updateWorker(id, { tags }),
+            workersApi.updateWorker(id, { tags } as any),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['workers'] });
             setEditingTagsWorker(null);

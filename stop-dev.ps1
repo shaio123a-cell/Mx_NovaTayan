@@ -32,10 +32,10 @@ if ($pwshProcesses) {
     }
 }
 
-# Stop Podman pod
-Write-Host "Stopping Podman containers..." -ForegroundColor Cyan
-if (Test-Path "$PSScriptRoot\stop-podman.ps1") {
-    & "$PSScriptRoot\stop-podman.ps1"
-}
+### Stop Podman pod
+#Write-Host "Stopping Podman containers..." -ForegroundColor Cyan
+#if (Test-Path "$PSScriptRoot\stop-podman.ps1") {
+#    & "$PSScriptRoot\stop-podman.ps1"
+#}
 
 Write-Host "Cleanup complete!" -ForegroundColor Green

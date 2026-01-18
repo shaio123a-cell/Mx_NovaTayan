@@ -48,4 +48,19 @@ export class TasksController {
     getImpact(@Param('id') id: string) {
         return this.tasksService.getImpact(id);
     }
+
+    @Get('groups/all')
+    findAllGroups() {
+        return this.tasksService.findAllGroups();
+    }
+
+    @Post('groups')
+    createGroup(@Body() data: { name: string; description?: string }) {
+        return this.tasksService.createGroup(data.name, data.description);
+    }
+
+    @Delete('groups/:id')
+    deleteGroup(@Param('id') id: string) {
+        return this.tasksService.deleteGroup(id);
+    }
 }

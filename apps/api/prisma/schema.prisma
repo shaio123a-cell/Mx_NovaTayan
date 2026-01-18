@@ -64,8 +64,20 @@ model Task {
 
   // Relations
   executions TaskExecution[]
+  groups     TaskGroup[]     @relation("TaskToGroup")
 
   @@map("tasks")
+}
+
+model TaskGroup {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  tasks       Task[]   @relation("TaskToGroup")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("task_groups")
 }
 
 model TaskExecution {

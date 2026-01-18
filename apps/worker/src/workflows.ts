@@ -64,7 +64,7 @@ export async function executeWorkflow(workflowConfig: {
     results: Array<any>;
 }> {
     // Placeholder - will implement graph execution logic
-    const results = [];
+    const results: any[] = [];
 
     return {
         workflowId: workflowConfig.workflowId,

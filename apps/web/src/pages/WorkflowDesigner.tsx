@@ -344,44 +344,71 @@ function WorkflowDesigner() {
                 {/* Palette */}
                 <div style={{ width: '300px', background: '#111217', borderRadius: '16px', border: '1px solid #202226', display: 'flex', flexDirection: 'column', padding: '20px' }}>
                     <h3 style={{ fontSize: '11px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '16px' }}>Task Library</h3>
-                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {tasks?.map((task: any) => {
-                            const selected = isTaskInWorkflow(task.id)
-                            return (
-                                <div 
-                                    key={task.id}
-                                    onClick={() => toggleTaskSelection(task)}
-                                    style={{ 
-                                        padding: '12px', 
-                                        background: selected ? 'rgba(240,90,40,0.05)' : '#0b0c10', 
-                                        border: `1px solid ${selected ? '#f05a28' : '#202226'}`, 
-                                        borderRadius: '12px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '12px',
-                                        transition: 'all 0.2s'
-                                    }}
-                                >
-                                    <div style={{ 
-                                        width: '24px', 
-                                        height: '24px', 
-                                        borderRadius: '6px', 
-                                        background: selected ? '#f05a28' : 'transparent',
-                                        border: `2px solid ${selected ? '#f05a28' : '#202226'}`,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                    }}>
-                                        {selected && <Check size={14} color="#fff" strokeWidth={4} />}
+                    
+                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        {(() => {
+                            const grouped: Record<string, any[]> = {}
+                            tasks?.forEach((t: any) => {
+                                const tg = t.groups || []
+                                if (tg.length === 0) {
+                                    if (!grouped['Global']) grouped['Global'] = []
+                                    grouped['Global'].push(t)
+                                } else {
+                                    tg.forEach((g: any) => {
+                                        if (!grouped[g.name]) grouped[g.name] = []
+                                        grouped[g.name].push(t)
+                                    })
+                                }
+                            })
+
+                            return Object.entries(grouped).sort(([a], [b]) => a === 'Global' ? -1 : b === 'Global' ? 1 : a.localeCompare(b)).map(([groupName, groupTasks]) => (
+                                <div key={groupName} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#f05a28', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', opacity: 0.6 }}>
+                                        <div style={{ height: '1px', flex: 1, background: 'rgba(240,90,40,0.1)' }} />
+                                        {groupName}
+                                        <div style={{ height: '1px', flex: 1, background: 'rgba(240,90,40,0.1)' }} />
                                     </div>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase' }}>{task.command?.method}</div>
-                                        <div style={{ fontSize: '13px', fontWeight: 'bold', color: selected ? '#fff' : '#d8d9da', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.name}</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        {groupTasks.map((task: any) => {
+                                            const selected = isTaskInWorkflow(task.id)
+                                            return (
+                                                <div 
+                                                    key={task.id}
+                                                    onClick={() => toggleTaskSelection(task)}
+                                                    style={{ 
+                                                        padding: '10px 12px', 
+                                                        background: selected ? 'rgba(240,90,40,0.05)' : '#0b0c10', 
+                                                        border: `1px solid ${selected ? '#f05a28' : '#202226'}`, 
+                                                        borderRadius: '10px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '12px',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    <div style={{ 
+                                                        width: '18px', 
+                                                        height: '18px', 
+                                                        borderRadius: '4px', 
+                                                        background: selected ? '#f05a28' : 'transparent',
+                                                        border: `1px solid ${selected ? '#f05a28' : '#202226'}`,
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center'
+                                                    }}>
+                                                        {selected && <Check size={10} color="#fff" strokeWidth={4} />}
+                                                    </div>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: selected ? '#fff' : '#d8d9da', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.name}</div>
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 </div>
-                            )
-                        })}
+                            ))
+                        })()}
                     </div>
                 </div>
 

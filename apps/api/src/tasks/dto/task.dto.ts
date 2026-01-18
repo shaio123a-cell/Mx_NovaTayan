@@ -49,6 +49,10 @@ export class CreateTaskDto {
     @IsArray()
     @IsOptional()
     tags?: string[];
+
+    @IsArray()
+    @IsOptional()
+    groupIds?: string[];
 }
 
 export class UpdateTaskDto {
@@ -85,5 +89,5 @@ export class UpdateTaskDto {
 
     @IsArray()
     @IsOptional()
-    tags?: string[];
+    groupIds?: string[];
 }

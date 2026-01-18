@@ -84,5 +84,24 @@ export const tasksApi = {
     getTaskImpact: async (taskId: string): Promise<{ count: number, workflows: { id: string, name: string }[] }> => {
         const response = await fetch(`${API_BASE_URL}/tasks/${taskId}/impact`);
         return handleResponse(response);
+    },
+
+    // Task Groups (Folders)
+    getGroups: async (): Promise<any[]> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/groups/all`);
+        return handleResponse(response);
+    },
+
+    createGroup: async (name: string, description?: string): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/groups`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description }),
+        });
+        return handleResponse(response);
+    },
+
+    deleteGroup: async (id: string): Promise<void> => {
+        await fetch(`${API_BASE_URL}/tasks/groups/${id}`, { method: 'DELETE' });
     }
 };

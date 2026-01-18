@@ -44,8 +44,8 @@ function App() {
                     height: '100vh', 
                     width: '100vw', 
                     overflow: 'hidden',
-                    background: '#0b0c10',
-                    color: '#d8d9da'
+                    background: '#F5F5F5',
+                    color: '#111827'
                 }}>
                     
                     {/* Pillar 1: Sidebar (Static width, fixed position in flow) */}
@@ -74,8 +74,8 @@ function App() {
                             flex: 1, 
                             overflowY: 'auto', 
                             overflowX: 'hidden',
-                            padding: '32px',
-                            background: '#0b0c10'
+                            padding: '40px',
+                            background: '#F5F5F5'
                         }}>
                             <Routes>
                                 <Route path="/" element={<Dashboard />} />
