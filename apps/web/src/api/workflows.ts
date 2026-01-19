@@ -15,6 +15,10 @@ export const workflowsApi = {
         const response = await fetch(`${API_BASE_URL}/workflows`);
         return handleResponse(response);
     },
+    getSystemStats: async (): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/stats`);
+        return handleResponse(response);
+    },
 
     getWorkflow: async (id: string): Promise<Workflow> => {
         const response = await fetch(`${API_BASE_URL}/workflows/${id}`);
@@ -78,5 +82,11 @@ export const workflowsApi = {
             const text = await response.text();
             throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
         }
+    },
+    terminateExecution: async (id: string): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/executions/${id}/terminate`, {
+            method: 'POST',
+        });
+        return handleResponse(response);
     },
 };

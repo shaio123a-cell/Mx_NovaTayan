@@ -328,4 +328,58 @@ export class WorkflowsService {
             }
         });
     }
+
+    async getSystemStats() {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        const [workflowsCount, tasksCount, failures24h] = await Promise.all([
+            this.prisma.workflow.count(),
+            this.prisma.task.count(),
+            this.prisma.workflowExecution.count({
+                where: {
+                    status: 'FAILED',
+                    startedAt: { gte: yesterday }
+                }
+            })
+        ]);
+
+        return {
+            totalWorkflows: workflowsCount,
+            totalTasks: tasksCount,
+            failures24h
+        };
+    }
+    async terminateExecution(id: string) {
+        const execution = await this.prisma.workflowExecution.findUnique({
+            where: { id },
+            include: { taskExecutionRecords: true }
+        });
+
+        if (!execution) throw new NotFoundException('Execution not found');
+
+        // Mark execution as FAILED
+        await this.prisma.workflowExecution.update({
+            where: { id },
+            data: { 
+                status: 'FAILED',
+                completedAt: new Date()
+            }
+        });
+
+        // Mark all PENDING/RUNNING tasks as FAILED
+        await this.prisma.taskExecution.updateMany({
+            where: { 
+                workflowExecutionId: id,
+                status: { in: ['PENDING', 'RUNNING'] }
+            },
+            data: { 
+                status: 'FAILED',
+                completedAt: new Date(),
+                error: 'Terminated by user'
+            }
+        });
+
+        return { success: true };
+    }
 }

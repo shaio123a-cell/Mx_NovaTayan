@@ -288,32 +288,38 @@ export class WorkerService {
                 continue; // Wait for other branches
             }
 
-            // 4. Check Failure Strategies: Should we actually trigger this node?
-            // A node runs if:
-            // - It matches the edge condition (e.g. ALWAYS, ON_SUCCESS)
-            // - AND the specific predecessor that just finished (completedTask) is either SUCCESS or set to CONTINUE_ON_FAIL
-            // - AND ALL predecessors that failed were set to CONTINUE_ON_FAIL
-            
-            const blocker = predecessorRecords.find(r => {
-                const nodeDef = nodes.find(n => n.id === r.nodeId);
-                const strategy = nodeDef?.failureStrategy || 'SUCCESS_REQUIRED';
-                return r.status !== 'SUCCESS' && strategy === 'SUCCESS_REQUIRED';
-            });
+            // 4. Check Failure Strategies & Edge Conditions: Should we actually trigger this node?
+            const strategy = nodes.find(n => n.id === nodeId)?.failureStrategy || 'SUCCESS_REQUIRED';
 
-            if (blocker) {
-                this.logger.warn(`[Orchestration] Node ${nextNodeId} BLOCKED because predecessor ${blocker.nodeId} failed with SUCCESS_REQUIRED`);
+            // Check if the specific edge that leads to this trigger matches the current status
+            const condition = edge.condition || 'ALWAYS';
+            const statusMatch = condition === 'ALWAYS' || 
+                                (condition === 'ON_SUCCESS' && status === 'SUCCESS') ||
+                                (condition === 'ON_FAILURE' && status !== 'SUCCESS');
+
+            if (!statusMatch) {
+                this.logger.debug(`[Orchestration] Edge ${edge.id} skipped - status ${status} does not match condition ${condition}`);
                 continue;
             }
 
-            // Additional check for the specific edge that leads to this trigger
-            // (e.g. if the user explicitly set an ON_FAILURE branch, we should respect it)
-            // But with the new "Failure Strategy" on the node level, it usually implies the link is "Standard"
-            if (edge.condition === 'ON_SUCCESS' && status !== 'SUCCESS') {
-                const nodeDef = nodes.find(n => n.id === nodeId);
-                if (nodeDef?.failureStrategy !== 'CONTINUE_ON_FAIL') {
-                    continue;
-                }
+            // If task failed and strategy is SUCCESS_REQUIRED, we don't proceed even if edge is ON_FAILURE / ALWAYS
+            if (status !== 'SUCCESS' && strategy === 'SUCCESS_REQUIRED') {
+                this.logger.warn(`[Orchestration] Node ${nextNodeId} BLOCKED because predecessor ${nodeId} failed with SUCCESS_REQUIRED`);
+                continue;
             }
+
+            const blocker = predecessorRecords.find(r => {
+                const nodeDef = nodes.find(n => n.id === r.nodeId);
+                const strat = nodeDef?.failureStrategy || 'SUCCESS_REQUIRED';
+                return r.status !== 'SUCCESS' && strat === 'SUCCESS_REQUIRED';
+            });
+
+            if (blocker) {
+                this.logger.warn(`[Orchestration] Node ${nextNodeId} BLOCKED because some predecessor failed with SUCCESS_REQUIRED`);
+                continue;
+            }
+
+
 
             // 5. Trigger the task
             // Determine targeting
@@ -376,11 +382,14 @@ export class WorkerService {
     }
 
     private async checkWorkflowCompletion(workflowExecutionId: string) {
-        const tasks = await this.prisma.taskExecution.findMany({
-            where: { workflowExecutionId }
+        const execution = await this.prisma.workflowExecution.findUnique({
+            where: { id: workflowExecutionId },
+            include: { taskExecutionRecords: true }
         });
 
-        if (tasks.length === 0) return;
+        if (!execution || execution.taskExecutionRecords.length === 0) return;
+
+        const tasks = execution.taskExecutionRecords;
 
         // Priority-based status: FAILED > TIMEOUT > NO_WORKER_FOUND > RUNNING > PENDING > SUCCESS
         let finalStatus = 'SUCCESS';
@@ -391,8 +400,6 @@ export class WorkerService {
         const hasRunning = tasks.some(t => t.status === 'RUNNING');
         const hasPending = tasks.some(t => t.status === 'PENDING');
 
-        // Note: Running/Pending check is strictly for the "finished" logic below,
-        // but it's also used for the status hierarchy.
         if (hasFailed) finalStatus = 'FAILED';
         else if (hasTimeout) finalStatus = 'TIMEOUT';
         else if (hasNoWorker) finalStatus = 'NO_WORKER_FOUND';
@@ -400,12 +407,16 @@ export class WorkerService {
         else if (hasPending) finalStatus = 'PENDING';
 
         const isFullyDone = !hasRunning && !hasPending;
+        const now = new Date();
+        const startedAt = execution.startedAt ? new Date(execution.startedAt) : now;
+        const duration = isFullyDone ? Math.max(0, now.getTime() - startedAt.getTime()) : null;
 
         await this.prisma.workflowExecution.update({
             where: { id: workflowExecutionId },
             data: {
                 status: finalStatus,
-                completedAt: isFullyDone ? new Date() : null,
+                completedAt: isFullyDone ? now : null,
+                duration: duration
             }
         });
     }

@@ -24,40 +24,40 @@ export default function AdminSettings() {
 
     return (
         <div className="max-w-4xl mx-auto p-8">
-            <div className="flex items-center gap-4 mb-8">
-                <div className="p-3 rounded-xl bg-primary-600/10 text-primary-500">
+            <div className="flex items-center gap-6 mb-10">
+                <div className="p-4 rounded-2xl bg-blue-50 text-[#1976D2] border border-blue-100 shadow-sm">
                     <SettingsIcon className="w-8 h-8" />
                 </div>
                 <div>
-                    <h1 className="text-3xl font-bold">Global Settings</h1>
-                    <p className="text-gray-400">Manage system-wide defaults for task orchestration</p>
+                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight">System Defaults</h1>
+                    <p className="text-gray-500 mt-1">Configure global orchestration rules and status code definitions.</p>
                 </div>
             </div>
 
-            <div className="space-y-6">
-                <div className="bg-gray-800/50 rounded-2xl border border-gray-700 overflow-hidden shadow-xl">
-                    <div className="p-6 border-b border-gray-700 bg-gray-900/30">
-                        <h3 className="font-bold flex items-center gap-2">
-                            <span>🛠️</span> HTTP Success/Failure Mapping
+            <div className="space-y-8">
+                <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                    <div className="p-8 border-b border-gray-50 bg-gray-50/50">
+                        <h3 className="font-bold text-gray-900 flex items-center gap-3">
+                            <span className="text-lg">📡</span> Global Status Mappings
                         </h3>
-                        <p className="text-xs text-gray-500 mt-1">Define how HTTP status codes are interpreted by the worker engine.</p>
+                        <p className="text-[11px] font-medium text-gray-400 mt-1 uppercase tracking-wider">Engine interpretation rules</p>
                     </div>
                     
-                    <div className="p-6 divide-y divide-gray-700 space-y-6">
+                    <div className="p-8 divide-y divide-gray-50 space-y-8">
                         {settings?.map((setting: any) => (
-                            <div key={setting.key} className="pt-6 first:pt-0">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div key={setting.key} className="pt-8 first:pt-0">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                                     <div className="flex-1">
-                                        <label className="block text-sm font-bold text-gray-200 mb-1">
+                                        <label className="block text-sm font-black text-gray-800 mb-1 uppercase tracking-wide">
                                             {setting.key.replace(/_/g, ' ')}
                                         </label>
-                                        <p className="text-xs text-gray-500">{setting.description}</p>
+                                        <p className="text-sm text-gray-500 font-medium">{setting.description}</p>
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-4">
                                         <input
                                             type="text"
                                             defaultValue={setting.value}
-                                            className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm font-mono focus:ring-1 focus:ring-primary-500 outline-none w-48"
+                                            className="bg-white border border-gray-200 rounded-xl px-5 py-3 text-sm font-bold font-mono text-[#1976D2] focus:border-[#1976D2] focus:ring-1 focus:ring-blue-100 outline-none w-56 shadow-inner"
                                             onBlur={(e) => {
                                                 if (e.target.value !== setting.value) {
                                                     handleSave(setting.key, e.target.value)
@@ -65,10 +65,10 @@ export default function AdminSettings() {
                                             }}
                                         />
                                         <button 
-                                            className="p-2 text-gray-500 hover:text-primary-500 transition-colors"
-                                            title="Saved automatically on blur"
+                                            className="p-3 text-gray-300 hover:text-[#1976D2] transition-colors bg-gray-50 rounded-lg"
+                                            title="Auto-saved on blur"
                                         >
-                                            <Save className="w-4 h-4" />
+                                            <Save className="w-5 h-5" />
                                         </button>
                                     </div>
                                 </div>
@@ -77,15 +77,26 @@ export default function AdminSettings() {
                     </div>
                 </div>
 
-                <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 flex gap-3">
-                    <Info className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
-                    <div className="text-xs text-blue-300/80 leading-relaxed">
-                        <p className="font-bold text-blue-400 mb-1">Pattern Guide:</p>
-                        <ul className="list-disc list-inside space-y-1">
-                            <li>Specific code: <code>200</code></li>
-                            <li>Comma separated: <code>200, 201, 204</code></li>
-                            <li>Ranges: <code>200-299</code></li>
-                        </ul>
+                <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-6 flex gap-4">
+                    <div className="bg-white p-2 rounded-lg shadow-sm border border-blue-50">
+                        <Info className="w-5 h-5 text-[#1976D2] shrink-0" />
+                    </div>
+                    <div className="text-sm text-[#1976D2] leading-relaxed">
+                        <p className="font-black uppercase tracking-wider text-[11px] mb-2 opacity-70">Syntax Documentation</p>
+                        <div className="flex gap-8">
+                            <div className="flex items-center gap-2">
+                                <span className="w-1 h-1 bg-[#1976D2] rounded-full" />
+                                <span className="font-medium text-xs">Literal: <code>200</code></span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-1 h-1 bg-[#1976D2] rounded-full" />
+                                <span className="font-medium text-xs">Set: <code>200, 201, 204</code></span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-1 h-1 bg-[#1976D2] rounded-full" />
+                                <span className="font-medium text-xs">Range: <code>200-299</code></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

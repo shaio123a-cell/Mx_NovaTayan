@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { workflowsApi } from '../api/workflows'
-import { tasksApi } from '../api/tasks'
+
 import { Link } from 'react-router-dom'
 
 function Dashboard() {
@@ -9,17 +9,18 @@ function Dashboard() {
         queryFn: workflowsApi.getWorkflows,
     })
 
-    const { data: tasks } = useQuery({
-        queryKey: ['tasks'],
-        queryFn: tasksApi.getTasks,
+    const { data: stats } = useQuery({
+        queryKey: ['system-stats'],
+        queryFn: workflowsApi.getSystemStats,
+        refetchInterval: 30000
     })
 
     return (
         <div className="max-w-6xl mx-auto">
             <div className="flex justify-between items-center mb-10">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Dashboard</h1>
-                    <p className="text-gray-500 mt-1">Overview of your automation system and performance.</p>
+                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Dashboard Overview</h1>
+                    <p className="text-gray-500 mt-1">Real-time monitoring of your automation system performance.</p>
                 </div>
                 <Link to="/designer" className="bg-[#1976D2] hover:bg-[#1565C0] text-white px-6 py-3 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform hover:-translate-y-0.5">
                     + New Workflow
@@ -29,15 +30,15 @@ function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
                 <div className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-all">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-[0.1em] mb-3">Total Workflows</h3>
-                    <p className="text-5xl font-black text-[#1976D2] tracking-tighter">{workflows?.length || 0}</p>
+                    <p className="text-5xl font-black text-[#1976D2] tracking-tighter">{stats?.totalWorkflows || 0}</p>
                 </div>
                 <div className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-all">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-[0.1em] mb-3">Active Tasks</h3>
-                    <p className="text-5xl font-black text-green-600 tracking-tighter">{tasks?.length || 0}</p>
+                    <p className="text-5xl font-black text-green-600 tracking-tighter">{stats?.totalTasks || 0}</p>
                 </div>
                 <div className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-all">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-[0.1em] mb-3">Failures (24h)</h3>
-                    <p className="text-5xl font-black text-red-500 tracking-tighter">0</p>
+                    <p className="text-5xl font-black text-red-500 tracking-tighter">{stats?.failures24h || 0}</p>
                 </div>
             </div>
 

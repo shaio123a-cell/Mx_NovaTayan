@@ -1,17 +1,19 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { workflowsApi } from '../api/workflows'
 import { useState } from 'react'
 import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
 import { TaskEditShelf } from '../components/TaskEditShelf'
-import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, AlertTriangle, Database, Globe, Search, X, Clock } from 'lucide-react'
+import { CheckCircle, AlertCircle, AlertTriangle, X, Clock, Play, Square, RefreshCcw } from 'lucide-react'
 
 function WorkflowExecutionDetail() {
     const { id } = useParams()
     const [selectedTask, setSelectedTask] = useState<any>(null)
     const [showInspector, setShowInspector] = useState(false)
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
-    const [expandedSections, setExpandedSections] = useState<string[]>(['output', 'sanity'])
+
+
+    const queryClient = useQueryClient();
 
     const { data: execution, isLoading } = useQuery({
         queryKey: ['workflow-execution', id],
@@ -19,11 +21,19 @@ function WorkflowExecutionDetail() {
         refetchInterval: (query) => (['RUNNING', 'PENDING'].includes(query.state.data?.status) ? 3000 : false)
     })
 
-    const toggleSection = (section: string) => {
-        setExpandedSections(prev => 
-            prev.includes(section) ? prev.filter(s => s !== section) : [...prev, section]
-        )
-    }
+    const terminateMutation = useMutation({
+        mutationFn: () => workflowsApi.terminateExecution(id!),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['workflow-execution', id] });
+        }
+    });
+
+    const runMutation = useMutation({
+        mutationFn: () => workflowsApi.executeWorkflow(execution.workflowId),
+        onSuccess: () => alert('New execution started! See history.')
+    });
+
+
 
     if (isLoading) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
     if (!execution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
@@ -54,6 +64,33 @@ function WorkflowExecutionDetail() {
                         <div className="text-right">
                             <div className="text-[10px] font-mono text-gray-500 uppercase">Started At</div>
                             <div className="text-xs font-bold text-gray-300">{new Date(execution.startedAt).toLocaleString()}</div>
+                        </div>
+                        <div className="h-8 w-px bg-gray-800" />
+                        <div className="flex items-center gap-3">
+                            {['RUNNING', 'PENDING'].includes(execution.status) ? (
+                                <button 
+                                    onClick={() => terminateMutation.mutate()}
+                                    disabled={terminateMutation.isPending}
+                                    className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"
+                                >
+                                    <Square size={14} fill="currentColor" /> Terminate
+                                </button>
+                            ) : (
+                                <button 
+                                    onClick={() => runMutation.mutate()}
+                                    disabled={runMutation.isPending}
+                                    className="px-4 py-2 bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/20 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"
+                                >
+                                    <Play size={14} fill="currentColor" /> Run Again
+                                </button>
+                            )}
+                            <button 
+                                onClick={() => queryClient.invalidateQueries({ queryKey: ['workflow-execution', id] })}
+                                className="p-2 bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 rounded-lg transition-all"
+                                title="Refresh data"
+                            >
+                                <RefreshCcw size={16} className={isLoading ? 'animate-spin' : ''} />
+                            </button>
                         </div>
                     </div>
                 </div>

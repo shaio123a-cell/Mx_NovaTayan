@@ -1,11 +1,11 @@
 import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { workflowsApi } from '../api/workflows'
 import { Link } from 'react-router-dom'
-import { Trash2, RefreshCcw, Clock, ChevronRight, ChevronDown, Activity } from 'lucide-react'
+import { RefreshCcw, ChevronRight, ChevronDown } from 'lucide-react'
 
 function WorkflowExecutions() {
-    const queryClient = useQueryClient();
+
     const [refreshInterval, setRefreshInterval] = useState<number>(60000);
     const [collapsedWorkflows, setCollapsedWorkflows] = useState<string[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
@@ -16,12 +16,7 @@ function WorkflowExecutions() {
         refetchInterval: refreshInterval
     })
 
-    const deleteMutation = useMutation({
-        mutationFn: workflowsApi.deleteWorkflowExecution,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['workflow-executions'] });
-        }
-    });
+
 
     const groupedHistory = useMemo(() => {
         if (!executions) return {};

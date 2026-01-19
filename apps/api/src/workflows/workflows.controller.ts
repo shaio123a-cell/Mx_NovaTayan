@@ -6,6 +6,11 @@ import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
 export class WorkflowsController {
     constructor(private readonly workflowsService: WorkflowsService) { }
 
+    @Get('stats')
+    getStats() {
+        return this.workflowsService.getSystemStats();
+    }
+
     @Post()
     create(@Body() createWorkflowDto: CreateWorkflowDto) {
         // TODO: Get ownerId from authenticated user
@@ -52,6 +57,11 @@ export class WorkflowsController {
     @Post(':id/execute')
     execute(@Param('id') id: string) {
         return this.workflowsService.enqueueExecution(id);
+    }
+
+    @Post('executions/:id/terminate')
+    terminate(@Param('id') id: string) {
+        return this.workflowsService.terminateExecution(id);
     }
 
     @Get(':id/executions')

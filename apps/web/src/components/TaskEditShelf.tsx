@@ -191,31 +191,60 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
 
                     {activeTab === 'config' && (
                         <>
-                            <div>
-                                <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Sanity Policies</h4>
-                                {sanityChecks.map((c, i) => (
-                                    <div key={i} style={{ padding: '16px', border: '1px solid #eee', borderRadius: '12px', marginBottom: '12px', backgroundColor: '#fafafa', position: 'relative' }}>
-                                        <input value={c.regex} onChange={e => {
-                                            const n = [...sanityChecks]; n[i].regex = e.target.value; setSanityChecks(n);
-                                        }} style={{ width: '100%', border: 'none', background: 'transparent', borderBottom: '1px solid #ddd', outline: 'none', fontFamily: 'monospace', fontSize: '13px', marginBottom: '12px' }} placeholder="Regex Pattern" />
-                                        <div style={{ display: 'flex', gap: '12px' }}>
-                                            <select value={c.condition} onChange={e => {
-                                                const n = [...sanityChecks]; n[i].condition = e.target.value; setSanityChecks(n);
-                                            }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
-                                                <option value="MUST_CONTAIN">MUST CONTAIN</option>
-                                                <option value="MUST_NOT_CONTAIN">MUST NOT CONTAIN</option>
-                                            </select>
-                                            <select value={c.severity} onChange={e => {
-                                                const n = [...sanityChecks]; n[i].severity = e.target.value; setSanityChecks(n);
-                                            }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', color: '#dc2626' }}>
-                                                <option value="ERROR">ERROR</option>
-                                                <option value="WARNING">WARNING</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                ))}
-                                <button onClick={() => setSanityChecks([...sanityChecks, { regex: '', condition: 'MUST_CONTAIN', severity: 'ERROR' }])} style={{ color: '#1976D2', fontSize: '12px', fontWeight: 'bold', border: 'none', background: 'transparent', cursor: 'pointer' }}>+ ADD POLICY</button>
-                            </div>
+                            <div style={{ marginBottom: '32px' }}>
+                                <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Status Code Mappings</h4>
+                                {statusMappings.map((m, i) => (
+                                     <div key={i} style={{ display: 'flex', gap: '12px', marginBottom: '12px', alignItems: 'center' }}>
+                                         <input 
+                                             value={m.pattern} 
+                                             onChange={e => {
+                                                 const n = [...statusMappings]; n[i].pattern = e.target.value; setStatusMappings(n);
+                                             }} 
+                                             style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #eee', fontSize: '13px' }} 
+                                             placeholder="Codes (e.g. 200, 201-204)" 
+                                         />
+                                         <select 
+                                             value={m.status} 
+                                             onChange={e => {
+                                                 const n = [...statusMappings]; n[i].status = e.target.value; setStatusMappings(n);
+                                             }} 
+                                             style={{ padding: '10px', borderRadius: '4px', border: '1px solid #eee', fontSize: '13px', fontWeight: 'bold' }}
+                                         >
+                                             <option value="SUCCESS">SUCCESS</option>
+                                             <option value="FAILED">FAILED</option>
+                                         </select>
+                                         <button onClick={() => setStatusMappings(statusMappings.filter((_, idx) => idx !== i))} style={{ border: 'none', background: 'transparent', color: '#999', cursor: 'pointer' }}>✕</button>
+                                     </div>
+                                 ))}
+                                 <button onClick={() => setStatusMappings([...statusMappings, { pattern: '', status: 'SUCCESS' }])} style={{ color: '#1976D2', fontSize: '12px', fontWeight: 'bold', border: 'none', background: 'transparent', cursor: 'pointer' }}>+ ADD MAPPING</button>
+                             </div>
+
+                             <div>
+                                 <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Sanity Policies</h4>
+                                 {sanityChecks.map((c, i) => (
+                                     <div key={i} style={{ padding: '16px', border: '1px solid #eee', borderRadius: '12px', marginBottom: '12px', backgroundColor: '#fafafa', position: 'relative' }}>
+                                         <button onClick={() => setSanityChecks(sanityChecks.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: '12px', right: '12px', border: 'none', background: 'transparent', color: '#999', cursor: 'pointer' }}>✕</button>
+                                         <input value={c.regex} onChange={e => {
+                                             const n = [...sanityChecks]; n[i].regex = e.target.value; setSanityChecks(n);
+                                         }} style={{ width: 'calc(100% - 24px)', border: 'none', background: 'transparent', borderBottom: '1px solid #ddd', outline: 'none', fontFamily: 'monospace', fontSize: '13px', marginBottom: '12px' }} placeholder="Regex Pattern" />
+                                         <div style={{ display: 'flex', gap: '12px' }}>
+                                             <select value={c.condition} onChange={e => {
+                                                 const n = [...sanityChecks]; n[i].condition = e.target.value; setSanityChecks(n);
+                                             }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', padding: '4px' }}>
+                                                 <option value="MUST_CONTAIN">MUST CONTAIN</option>
+                                                 <option value="MUST_NOT_CONTAIN">MUST NOT CONTAIN</option>
+                                             </select>
+                                             <select value={c.severity} onChange={e => {
+                                                 const n = [...sanityChecks]; n[i].severity = e.target.value; setSanityChecks(n);
+                                             }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', color: '#dc2626', padding: '4px' }}>
+                                                 <option value="ERROR">ERROR</option>
+                                                 <option value="WARNING">WARNING</option>
+                                             </select>
+                                         </div>
+                                     </div>
+                                 ))}
+                                 <button onClick={() => setSanityChecks([...sanityChecks, { regex: '', condition: 'MUST_CONTAIN', severity: 'ERROR' }])} style={{ color: '#1976D2', fontSize: '12px', fontWeight: 'bold', border: 'none', background: 'transparent', cursor: 'pointer' }}>+ ADD POLICY</button>
+                             </div>
                         </>
                     )}
                 </div>

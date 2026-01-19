@@ -9,15 +9,19 @@ import ReactFlow, {
     addEdge,
     Connection,
     BackgroundVariant,
+    Position,
+    getBezierPath,
+    EdgeText,
+    ReactFlowProvider,
+    useReactFlow,
     Node,
     Handle,
-    Position,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { workflowsApi } from '../api/workflows'
-import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity } from 'lucide-react'
+import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil } from 'lucide-react'
 
 const initialNodes: Node[] = []
 const initialEdges: any[] = []
@@ -149,11 +153,84 @@ function N8nTaskNode({ data }: any) {
     )
 }
 
+function CustomEdge({
+    id,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    style = {},
+    markerEnd,
+    data,
+}: any) {
+    const { setEdges } = useReactFlow();
+    const [edgePath, labelX, labelY] = getBezierPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+    });
+
+    const condition = data?.condition || 'ALWAYS';
+    const label = condition === 'ALWAYS' ? 'Run Always' : condition === 'ON_SUCCESS' ? 'On Success' : 'On Failure';
+    const color = condition === 'ALWAYS' ? '#94a3b8' : condition === 'ON_SUCCESS' ? '#22c55e' : '#ef4444';
+
+    const onEdgeClick = (evt: any) => {
+        evt.stopPropagation();
+        const nextCondition = condition === 'ALWAYS' ? 'ON_SUCCESS' : condition === 'ON_SUCCESS' ? 'ON_FAILURE' : 'ALWAYS';
+        setEdges((eds) =>
+            eds.map((edge) => {
+                if (edge.id === id) {
+                    return {
+                        ...edge,
+                        data: { ...edge.data, condition: nextCondition },
+                        label: nextCondition === 'ALWAYS' ? '' : nextCondition.replace('ON_', ''),
+                        style: { ...edge.style, stroke: nextCondition === 'ALWAYS' ? '#94a3b8' : nextCondition === 'ON_SUCCESS' ? '#22c55e' : '#ef4444' }
+                    };
+                }
+                return edge;
+            })
+        );
+    };
+
+    return (
+        <>
+            <path
+                id={id}
+                style={{ ...style, stroke: color, strokeWidth: 2 }}
+                className="react-flow__edge-path"
+                d={edgePath}
+                markerEnd={markerEnd}
+            />
+            <EdgeText
+                x={labelX}
+                y={labelY}
+                label={label}
+                labelStyle={{ fill: 'white', fontWeight: 700, fontSize: 10 }}
+                labelShowBg
+                labelBgStyle={{ fill: color, rx: 4, ry: 4 }}
+                labelBgPadding={[6, 4]}
+                onClick={onEdgeClick}
+                style={{ cursor: 'pointer' }}
+                title={condition === 'ALWAYS' ? "Depends on previous task failure strategy" : ""}
+            />
+        </>
+    );
+}
+
 const nodeTypes = {
     taskNode: N8nTaskNode,
 }
 
-function WorkflowDesigner() {
+const edgeTypes = {
+    custom: CustomEdge,
+}
+
+function WorkflowDesignerContent() {
     const [searchParams] = useSearchParams()
     const workflowId = searchParams.get('id')
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
@@ -162,8 +239,10 @@ function WorkflowDesigner() {
     const [workflowTags, setWorkflowTags] = useState<string[]>(['default'])
     const queryClient = useQueryClient()
     const initializedRef = useRef<string | null>(null)
+    const reactFlowWrapper = useRef<HTMLDivElement>(null)
+    const { project } = useReactFlow();
 
-    const { data: tasks } = useQuery({
+    const { data: tasks, isLoading: isLoadingTasks } = useQuery({
         queryKey: ['tasks'],
         queryFn: tasksApi.getTasks,
     })
@@ -204,14 +283,25 @@ function WorkflowDesigner() {
                 id: e.id,
                 source: e.source,
                 target: e.target,
+                type: 'custom',
+                data: { condition: e.condition || 'ALWAYS' },
                 animated: true,
-                style: { stroke: '#464c54', strokeWidth: 2 },
+                style: { 
+                    stroke: (e.condition === 'ON_SUCCESS' ? '#22c55e' : e.condition === 'ON_FAILURE' ? '#ef4444' : '#94a3b8'), 
+                    strokeWidth: 2 
+                },
             })))
         }
     }, [existingWorkflow, tasks])
 
     const onConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#464c54', strokeWidth: 2 } }, eds)),
+        (params: Connection) => setEdges((eds) => addEdge({ 
+            ...params, 
+            type: 'custom',
+            data: { condition: 'ALWAYS' },
+            animated: true, 
+            style: { stroke: '#94a3b8', strokeWidth: 2 } 
+        }, eds)),
         [setEdges],
     )
 
@@ -247,76 +337,116 @@ function WorkflowDesigner() {
                 id: e.id,
                 source: e.source,
                 target: e.target,
-                condition: 'ON_SUCCESS'
+                condition: e.data?.condition || 'ALWAYS'
             })),
             scope: 'GLOBAL'
         }
         saveMutation.mutate(workflowData)
     }
 
+    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ 'Global': true })
+
+    const groupedTasks = (() => {
+        const grouped: Record<string, any[]> = {}
+        tasks?.forEach((t: any) => {
+            const tg = t.groups || []
+            if (tg.length === 0) {
+                if (!grouped['Global']) grouped['Global'] = []
+                grouped['Global'].push(t)
+            } else {
+                tg.forEach((g: any) => {
+                    const name = typeof g === 'string' ? g : g.name
+                    if (!grouped[name]) grouped[name] = []
+                    grouped[name].push(t)
+                })
+            }
+        })
+        return grouped
+    })()
+
+    const onDragStart = (event: any, task: any) => {
+        event.dataTransfer.setData('application/reactflow', JSON.stringify(task));
+        event.dataTransfer.effectAllowed = 'move';
+    };
+
+    const onDragOver = useCallback((event: any) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+    }, []);
+
+    const onDrop = useCallback(
+        (event: any) => {
+            event.preventDefault();
+
+            const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
+            if (!reactFlowBounds) return;
+
+            const taskData = JSON.parse(event.dataTransfer.getData('application/reactflow'));
+
+            if (!taskData) return;
+
+            const position = project({
+                x: event.clientX - reactFlowBounds.left,
+                y: event.clientY - reactFlowBounds.top,
+            });
+
+            const newNodeId = `node-${Date.now()}`;
+            const newNode: Node = {
+                id: newNodeId,
+                type: 'taskNode',
+                position,
+                data: {
+                    label: taskData.name,
+                    taskId: taskData.id,
+                    method: taskData.command?.method || 'GET',
+                    targetTags: taskData.targetTags || [],
+                    failureStrategy: 'SUCCESS_REQUIRED',
+                    onChangeTargetTags: (val: string) => {
+                        const tags = val.split(',').map(t => t.trim()).filter(Boolean);
+                        setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: tags } } : node))
+                    },
+                    onChangeFailureStrategy: (val: string) => {
+                        setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
+                    }
+                },
+            };
+
+            setNodes((nds: any) => nds.concat(newNode));
+        },
+        [project]
+    );
+
     const isTaskInWorkflow = (taskId: string) => nodes.some(n => n.data.taskId === taskId)
 
-    const toggleTaskSelection = (task: any) => {
-        if (isTaskInWorkflow(task.id)) {
-            const nodeToRemove = nodes.find(n => n.data.taskId === task.id)
-            if (nodeToRemove) {
-                setNodes(nds => nds.filter(n => n.id !== nodeToRemove.id))
-                setEdges(eds => eds.filter(e => e.source !== nodeToRemove.id && e.target !== nodeToRemove.id))
-            }
-        } else {
-            addTaskToCanvas(task)
-        }
-    }
-
-    const addTaskToCanvas = (task: any) => {
-        const newNodeId = `node-${Date.now()}`
-        const newNode: Node = {
-            id: newNodeId,
-            type: 'taskNode',
-            position: { x: Math.random() * 200 + 100, y: Math.random() * 200 + 100 },
-            data: {
-                label: task.name,
-                taskId: task.id,
-                method: task.command?.method || 'GET',
-                targetTags: task.targetTags || [],
-                failureStrategy: 'SUCCESS_REQUIRED',
-                onChangeTargetTags: (val: string) => {
-                    const tags = val.split(',').map(t => t.trim()).filter(Boolean);
-                    setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: tags } } : node))
-                },
-                onChangeFailureStrategy: (val: string) => {
-                    setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
-                }
-            },
-        }
-        setNodes((nds) => nds.concat(newNode))
-    }
-
-    if (isWfLoading) return <div style={{ color: '#fff', textAlign: 'center', padding: '100px' }}>Loading...</div>
+    if (isWfLoading || !tasks) return <div style={{ color: '#1976D2', textAlign: 'center', padding: '100px', fontWeight: 'bold' }}>Initialising Designer Engine...</div>
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '24px' }}>
             
             {/* Top Toolbar */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '16px 24px', borderRadius: '16px', border: '1px solid #eee', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ width: '40px', height: '40px', background: 'rgba(240,90,40,0.1)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifySelf: 'center', border: '1px solid rgba(240,90,40,0.2)' }}>
-                            <Network style={{ color: '#f05a28', margin: 'auto' }} size={20} />
+                        <div style={{ width: '40px', height: '40px', background: 'rgba(25,118,210,0.1)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifySelf: 'center', border: '1px solid rgba(25,118,210,0.2)' }}>
+                            <Network style={{ color: '#1976D2', margin: 'auto' }} size={20} />
                         </div>
-                        <input
-                            value={workflowName}
-                            onChange={(e) => setWorkflowName(e.target.value)}
-                            style={{ background: 'transparent', border: 'none', color: '#f2f5f5', fontSize: '24px', fontWeight: 'bold', outline: 'none', width: '300px' }}
-                        />
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input
+                                value={workflowName}
+                                onChange={(e) => setWorkflowName(e.target.value)}
+                                style={{ background: 'transparent', border: 'none', color: '#111827', fontSize: '20px', fontWeight: 'bold', outline: 'none', width: '250px' }}
+                            />
+                            <Pencil size={14} color="#999" />
+                        </div>
                     </div>
-                    <div style={{ height: '32px', width: '1px', background: '#202226' }} />
+                    <div style={{ height: '32px', width: '1px', background: '#eee' }} />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase' }}>Default Group</span>
+                        <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Global Targeting Group</span>
                         <input
                             value={workflowTags.join(', ')}
                             onChange={(e) => setWorkflowTags(e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
-                            style={{ background: '#111217', border: '1px solid #202226', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', color: '#f05a28', outline: 'none', width: '150px' }}
+                            style={{ background: '#f9fafb', border: '1px solid #eee', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', color: '#1976D2', outline: 'none', width: '150px', fontWeight: 'bold' }}
+                            placeholder="e.g. prod, linux"
                         />
                     </div>
                 </div>
@@ -324,14 +454,14 @@ function WorkflowDesigner() {
                 <div style={{ display: 'flex', gap: '12px' }}>
                     <button 
                         onClick={handleSave}
-                        style={{ background: '#1e2023', border: '1px solid #202226', color: '#d8d9da', padding: '8px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
+                        style={{ background: 'white', border: '1px solid #ddd', color: '#374151', padding: '8px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
                     >
-                        Save
+                        Save Workflow
                     </button>
                     <button 
                         onClick={() => workflowId && executeMutation.mutate(workflowId)}
                         disabled={!workflowId}
-                        style={{ background: '#f05a28', color: '#fff', border: 'none', padding: '8px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', opacity: workflowId ? 1 : 0.5 }}
+                        style={{ background: '#1976D2', color: '#fff', border: 'none', padding: '8px 28px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', opacity: workflowId ? 1 : 0.5, fontSize: '13px', boxShadow: '0 4px 6px rgba(25,118,210,0.2)' }}
                     >
                         Run Now
                     </button>
@@ -342,95 +472,115 @@ function WorkflowDesigner() {
             <div style={{ display: 'flex', flex: 1, gap: '24px', minHeight: 0 }}>
                 
                 {/* Palette */}
-                <div style={{ width: '300px', background: '#111217', borderRadius: '16px', border: '1px solid #202226', display: 'flex', flexDirection: 'column', padding: '20px' }}>
-                    <h3 style={{ fontSize: '11px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '16px' }}>Task Library</h3>
-                    
-                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        {(() => {
-                            const grouped: Record<string, any[]> = {}
-                            tasks?.forEach((t: any) => {
-                                const tg = t.groups || []
-                                if (tg.length === 0) {
-                                    if (!grouped['Global']) grouped['Global'] = []
-                                    grouped['Global'].push(t)
-                                } else {
-                                    tg.forEach((g: any) => {
-                                        if (!grouped[g.name]) grouped[g.name] = []
-                                        grouped[g.name].push(t)
-                                    })
-                                }
-                            })
+                <div style={{ width: '320px', background: 'white', borderRadius: '16px', border: '1px solid #eee', display: 'flex', flexDirection: 'column', padding: '24px', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                    <div style={{ marginBottom: '20px' }}>
+                        <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>Task Library</h3>
+                        <p style={{ fontSize: '11px', color: '#666' }}>Drag & drop tasks onto the canvas.</p>
+                    </div>
 
-                            return Object.entries(grouped).sort(([a], [b]) => a === 'Global' ? -1 : b === 'Global' ? 1 : a.localeCompare(b)).map(([groupName, groupTasks]) => (
-                                <div key={groupName} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#f05a28', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', opacity: 0.6 }}>
-                                        <div style={{ height: '1px', flex: 1, background: 'rgba(240,90,40,0.1)' }} />
-                                        {groupName}
-                                        <div style={{ height: '1px', flex: 1, background: 'rgba(240,90,40,0.1)' }} />
+                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                        {isLoadingTasks ? (
+                            <div style={{ color: '#999', fontSize: '12px' }}>Loading tasks library...</div>
+                        ) : (
+                            Object.entries(groupedTasks).sort(([a], [b]) => a === 'Global' ? -1 : b === 'Global' ? 1 : a.localeCompare(b)).map(([groupName, groupTasks]: [string, any]) => (
+                                <div key={groupName} style={{ marginBottom: '24px' }}>
+                                    <div 
+                                        onClick={() => setExpandedFolders(prev => ({ ...prev, [groupName]: !prev[groupName] }))}
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'space-between',
+                                            cursor: 'pointer',
+                                            padding: '8px 0',
+                                            borderBottom: '1px solid #f0f0f0',
+                                            marginBottom: '12px'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '14px' }}>{groupName === 'Global' ? '🌐' : '📁'}</span>
+                                            <span style={{ fontSize: '12px', fontWeight: 900, color: '#333', textTransform: 'uppercase', letterSpacing: '1px' }}>{groupName}</span>
+                                        </div>
+                                        <span style={{ color: '#ccc', fontSize: '10px' }}>{expandedFolders[groupName] ? '▼' : '▶'}</span>
                                     </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        {groupTasks.map((task: any) => {
-                                            const selected = isTaskInWorkflow(task.id)
-                                            return (
-                                                <div 
-                                                    key={task.id}
-                                                    onClick={() => toggleTaskSelection(task)}
-                                                    style={{ 
-                                                        padding: '10px 12px', 
-                                                        background: selected ? 'rgba(240,90,40,0.05)' : '#0b0c10', 
-                                                        border: `1px solid ${selected ? '#f05a28' : '#202226'}`, 
-                                                        borderRadius: '10px',
-                                                        cursor: 'pointer',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '12px',
-                                                        transition: 'all 0.2s'
-                                                    }}
-                                                >
-                                                    <div style={{ 
-                                                        width: '18px', 
-                                                        height: '18px', 
-                                                        borderRadius: '4px', 
-                                                        background: selected ? '#f05a28' : 'transparent',
-                                                        border: `1px solid ${selected ? '#f05a28' : '#202226'}`,
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center'
-                                                    }}>
-                                                        {selected && <Check size={10} color="#fff" strokeWidth={4} />}
+                                    
+                                    {expandedFolders[groupName] && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                            {groupTasks.map((task: any) => {
+                                                const selected = isTaskInWorkflow(task.id);
+                                                return (
+                                                    <div
+                                                        key={task.id}
+                                                        draggable
+                                                        onDragStart={(event) => onDragStart(event, task)}
+                                                        style={{
+                                                            padding: '12px',
+                                                            background: selected ? '#f0f7ff' : '#fafafa',
+                                                            border: `1px solid ${selected ? '#1976D2' : '#eee'}`,
+                                                            borderRadius: '10px',
+                                                            cursor: 'grab',
+                                                            fontSize: '13px',
+                                                            color: '#333',
+                                                            fontWeight: '600',
+                                                            transition: 'all 0.2s',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '10px'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            if (!selected) {
+                                                                e.currentTarget.style.background = '#f9fafb';
+                                                                e.currentTarget.style.transform = 'translateX(4px)';
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (!selected) {
+                                                                e.currentTarget.style.background = '#fafafa';
+                                                                e.currentTarget.style.transform = 'translateX(0)';
+                                                            }
+                                                        }}
+                                                    >
+                                                        <div style={{ 
+                                                            width: '8px', 
+                                                            height: '8px', 
+                                                            borderRadius: '50%', 
+                                                            background: task.command?.method === 'POST' ? '#1976D2' : task.command?.method === 'DELETE' ? '#dc2626' : '#22c55e',
+                                                            boxShadow: selected ? '0 0 8px rgba(25,118,210,0.4)' : 'none'
+                                                        }} />
+                                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.name}</span>
+                                                        {selected && <Check size={12} color="#1976D2" strokeWidth={3} />}
                                                     </div>
-                                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: selected ? '#fff' : '#d8d9da', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.name}</div>
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             ))
-                        })()}
+                        )}
                     </div>
                 </div>
 
                 {/* Canvas Area */}
-                <div style={{ flex: 1, background: '#0b0c10', borderRadius: '16px', border: '1px solid #202226', position: 'relative', overflow: 'hidden' }}>
+                <div ref={reactFlowWrapper} style={{ flex: 1, background: '#f5f5f5', borderRadius: '16px', border: '1px solid #eee', position: 'relative', overflow: 'hidden', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.03)' }}>
                     <ReactFlow
                         nodes={nodes}
                         edges={edges}
                         onNodesChange={onNodesChange}
                         onEdgesChange={onEdgesChange}
                         onConnect={onConnect}
+                        onDrop={onDrop}
+                        onDragOver={onDragOver}
                         nodeTypes={nodeTypes}
+                        edgeTypes={edgeTypes}
                         fitView
                         snapToGrid={true}
                         snapGrid={[15, 15]}
                     >
-                        <Background color="#1c1d21" gap={20} size={1} variant={BackgroundVariant.Dots} />
-                        <Controls style={{ background: '#111217', border: '1px solid #202226', borderRadius: '8px' }} />
+                        <Background color="#ddd" gap={20} size={1} variant={BackgroundVariant.Dots} />
+                        <Controls style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }} />
                         <MiniMap 
-                            style={{ background: '#111217', border: '1px solid #202226', borderRadius: '12px' }} 
-                            nodeColor="#f05a28"
-                            maskColor="rgba(11, 12, 16, 0.7)"
+                            style={{ background: 'white', border: '1px solid #eee', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }} 
+                            nodeColor="#1976D2"
+                            maskColor="rgba(255, 255, 255, 0.7)"
                         />
                     </ReactFlow>
                 </div>
@@ -439,4 +589,10 @@ function WorkflowDesigner() {
     )
 }
 
-export default WorkflowDesigner
+export default function WorkflowDesigner() {
+    return (
+        <ReactFlowProvider>
+            <WorkflowDesignerContent />
+        </ReactFlowProvider>
+    );
+}

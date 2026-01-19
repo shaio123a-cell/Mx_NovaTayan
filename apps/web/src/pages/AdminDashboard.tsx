@@ -75,28 +75,28 @@ export default function AdminDashboard() {
 
     return (
         <div className="max-w-7xl mx-auto p-8">
-            <h1 className="text-3xl font-bold mb-2">Administration</h1>
-            <p className="text-gray-400 mb-8">Manage system settings, workers, and configurations.</p>
+            <h1 className="text-3xl font-bold mb-2 text-gray-900 tracking-tight">System Control</h1>
+            <p className="text-gray-500 mb-10">Manage fleet distribution, global settings, and connectivity.</p>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
                 {sections.map((section, idx) => (
                     <div key={idx} className="space-y-6">
-                        <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest border-b border-gray-700 pb-2">
+                        <h3 className="text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100 pb-3">
                             {section.title}
                         </h3>
-                        <div className="grid gap-4">
+                        <div className="grid gap-5">
                             {section.items.map((item, i) => (
                                 <Link
                                     to={item.pending ? '#' : item.path}
                                     key={i}
-                                    className={`flex items-start gap-4 p-4 rounded-xl border border-gray-800 bg-gray-800/50 hover:bg-gray-800 hover:border-gray-700 transition-all ${item.pending ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] shadow-lg'}`}
+                                    className={`flex items-start gap-5 p-6 rounded-2xl border transition-all ${item.pending ? 'opacity-40 cursor-not-allowed border-gray-50 bg-gray-50/30' : 'bg-white border-gray-100 hover:border-[#1976D2] hover:shadow-xl hover:-translate-y-1 shadow-sm'}`}
                                 >
-                                    <div className={`p-3 rounded-lg bg-gray-900 ${item.color}`}>
-                                        <item.icon className="w-6 h-6" />
+                                    <div className={`p-3 rounded-xl bg-gray-50 ${item.color.replace('blue-400', '[#1976D2]').replace('indigo-400', 'indigo-600').replace('green-400', 'green-600').replace('emerald-400', 'emerald-600').replace('yellow-400', 'yellow-600').replace('orange-400', 'orange-600')}`}>
+                                        <item.icon className="w-5 h-5" />
                                     </div>
                                     <div>
-                                        <h4 className="font-bold text-gray-200">{item.label}</h4>
-                                        <p className="text-sm text-gray-500 mt-1 leading-relaxed">
+                                        <h4 className="font-bold text-gray-900 text-base">{item.label}</h4>
+                                        <p className="text-sm text-gray-500 mt-1 leading-relaxed font-medium">
                                             {item.desc}
                                         </p>
                                     </div>

@@ -7,6 +7,8 @@ import ReactFlow, {
     Node,
     Edge,
     BackgroundVariant,
+    getBezierPath,
+    EdgeText,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye } from 'lucide-react'
@@ -84,6 +86,23 @@ function ExecutionNode({ data }: any) {
                         </div>
                     )}
                 </div>
+
+                {/* Failure Strategy Indicator */}
+                <div style={{ 
+                    marginTop: '8px', 
+                    fontSize: '9px', 
+                    color: data.failureStrategy === 'CONTINUE_ON_FAIL' ? '#10b981' : '#f97316',
+                    fontWeight: 'bold',
+                    textTransform: 'uppercase',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '2px 6px',
+                    background: 'rgba(0,0,0,0.2)',
+                    borderRadius: '4px'
+                }}>
+                    {data.failureStrategy === 'CONTINUE_ON_FAIL' ? 'Continue on Fail' : 'Stop on Fail'}
+                </div>
             </div>
 
             {/* 3-Dots Menu Button */}
@@ -152,8 +171,61 @@ function ExecutionNode({ data }: any) {
     )
 }
 
+function ExecutionEdge({
+    id,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    style = {},
+    markerEnd,
+    data,
+}: any) {
+    const [edgePath, labelX, labelY] = getBezierPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+    });
+
+    const condition = data?.condition || 'ALWAYS';
+    const label = condition === 'ALWAYS' ? 'Run Always' : condition === 'ON_SUCCESS' ? 'On Success' : 'On Failure';
+    const color = data?.isActive 
+        ? (condition === 'ON_SUCCESS' ? '#10b981' : condition === 'ON_FAILURE' ? '#ef4444' : '#3b82f6')
+        : '#2d2e35';
+
+    return (
+        <>
+            <path
+                id={id}
+                style={{ ...style, stroke: color, strokeWidth: data?.isActive ? 3 : 2, opacity: data?.isActive ? 1 : 0.3 }}
+                className="react-flow__edge-path"
+                d={edgePath}
+                markerEnd={markerEnd}
+            />
+            <EdgeText
+                x={labelX}
+                y={labelY}
+                label={label}
+                labelStyle={{ fill: 'white', fontWeight: 700, fontSize: 9 }}
+                labelShowBg
+                labelBgStyle={{ fill: color, rx: 4, ry: 4, opacity: data?.isActive ? 1 : 0.4 }}
+                labelBgPadding={[4, 2]}
+            />
+        </>
+    );
+}
+
 const nodeTypes = {
     executionNode: ExecutionNode
+};
+
+const edgeTypes = {
+    executionEdge: ExecutionEdge
 };
 
 interface Props {
@@ -181,6 +253,7 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                     status: record?.status,
                     duration: record?.duration,
                     httpStatus: record?.result?.status,
+                    failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
                     isEditing: editingTaskId === n.taskId,
                     onInspect: onInspect || (() => {}),
                     onEditTask: onEditTask || (() => {})
@@ -191,16 +264,37 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
 
     const edges = useMemo(() => {
         if (!workflow?.edges) return [];
-        return (workflow.edges as any[]).map((e: any) => ({
-            id: e.id,
-            source: e.source,
-            target: e.target,
-            animated: taskExecutions.some(r => r.nodeId === e.source && r.status === 'RUNNING'),
-            style: { 
-                stroke: taskExecutions.some(r => r.nodeId === e.source && r.status === 'SUCCESS') ? '#10b981' : '#464c54', 
-                strokeWidth: 3 
-            }
-        } as Edge));
+        return (workflow.edges as any[]).map((e: any) => {
+            const sourceNode = (workflow.nodes as any[]).find(n => n.id === e.source);
+            const sourceRecord = taskExecutions.find(r => r.nodeId === e.source);
+            
+            const strategy = sourceNode?.failureStrategy || 'SUCCESS_REQUIRED';
+            const isSourceFinished = sourceRecord && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(sourceRecord.status);
+            
+            // A path is "active" if:
+            // 1. Source is finished
+            // 2. Edge condition is met
+            // 3. AND if source failed, strategy MUST be CONTINUE_ON_FAIL
+            const conditionMet = sourceRecord && (
+                (e.condition === 'ON_SUCCESS' && sourceRecord.status === 'SUCCESS') ||
+                (e.condition === 'ON_FAILURE' && sourceRecord.status !== 'SUCCESS') ||
+                (e.condition === 'ALWAYS')
+            );
+
+            const isActive = isSourceFinished && conditionMet && (sourceRecord.status === 'SUCCESS' || strategy === 'CONTINUE_ON_FAIL');
+
+            return {
+                id: e.id,
+                source: e.source,
+                target: e.target,
+                type: 'executionEdge',
+                animated: sourceRecord?.status === 'RUNNING',
+                data: { 
+                    condition: e.condition || 'ALWAYS',
+                    isActive: isActive
+                }
+            } as Edge;
+        });
     }, [workflow, taskExecutions]);
 
     return (
@@ -209,6 +303,7 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 fitView
                 nodesConnectable={false}
                 nodesDraggable={true}
