@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { transform } from '../../../packages/shared-xform/xform_engine';
 import * as dotenv from 'dotenv';
 import * as os from 'os';
 import { logger } from './common/logger/logger';
@@ -44,10 +45,13 @@ async function sendHeartbeat() {
 
 async function executeTask(execution: any) {
     const { id, task } = execution;
-    const { name, command } = task;
+    const { name, command, outputProcessingSpec, outputProcessingVars } = task;
     const { method, url, headers, body, timeout } = command;
 
     logger.info(`🚀 Executing task: ${name} (ID: ${task.id}, Execution ID: ${id})`);
+    if (outputProcessingSpec) {
+        logger.info(`🔄 Output mutation enabled for task: ${name}`);
+    }
 
     try {
         // Mark as running
@@ -66,6 +70,21 @@ async function executeTask(execution: any) {
             validateStatus: () => true,
         });
 
+        let mutatedOutput = null;
+        if (outputProcessingSpec) {
+            try {
+                mutatedOutput = await transform(
+                    outputProcessingSpec,
+                    response.data,
+                    outputProcessingVars || {},
+                    { limit: 100 }
+                );
+                logger.info(`🧬 Output mutated for task: ${name}`);
+            } catch (mutationError) {
+                logger.error(`⚠️ Output mutation failed: ${mutationError.message}`);
+            }
+        }
+
         logger.info(`✅ Task ${name} completed with status ${response.status}`);
 
         // Complete execution
@@ -73,8 +92,10 @@ async function executeTask(execution: any) {
             input,
             result: {
                 status: response.status,
-                data: response.data,
+                data: mutatedOutput || response.data,
                 headers: response.headers,
+                outputMutation: !!outputProcessingSpec,
+                outputMutationError: mutatedOutput === null && !!outputProcessingSpec ? 'Mutation failed' : undefined
             }
         });
     } catch (error: any) {

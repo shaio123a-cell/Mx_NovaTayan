@@ -1,5 +1,9 @@
 {
     "compilerOptions": {
+        "baseUrl": ".",
+        "paths": {
+            "shared-xform/*": ["../../packages/shared-xform/*"]
+        },
         "target": "ES2020",
         "useDefineForClassFields": true,
         "lib": [

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DirtyStateProvider, useDirtyState } from './context/DirtyStateContext'
@@ -104,6 +104,7 @@ function AppContent() {
                         <Route path="/" element={<Dashboard />} />
                         <Route path="/tasks" element={<Tasks />} />
                         <Route path="/designer" element={<WorkflowDesigner />} />
+                        <Route path="/output-processing" element={<Suspense fallback={<div>Loading...</div>}>{React.createElement(React.lazy(() => import('./pages/OutputProcessing')))}</Suspense>} />
                         <Route path="/history" element={<WorkflowExecutions />} />
                         <Route path="/workflows/history/:id" element={<WorkflowExecutionDetail />} />
                         <Route path="/admin" element={<AdminDashboard />} />
