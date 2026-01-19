@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { workflowsApi } from '../api/workflows'
 import { useState } from 'react'
 import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
@@ -28,14 +28,37 @@ function WorkflowExecutionDetail() {
         }
     });
 
+    const navigate = useNavigate();
+
+    const { data: history } = useQuery({
+        queryKey: ['workflow-history', execution?.workflowId],
+        queryFn: () => workflowsApi.getWorkflowExecutions(execution!.workflowId),
+        enabled: !!execution?.workflowId,
+        refetchInterval: 30000
+    });
+
     const runMutation = useMutation({
         mutationFn: () => workflowsApi.executeWorkflow(execution.workflowId),
         onSuccess: () => alert('New execution started! See history.')
     });
 
+    const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
 
+    const handleNavigate = (newId: string) => {
+        setNavigationHistory(prev => [...prev, id!]);
+        navigate(`/workflows/history/${newId}`);
+    };
 
-    if (isLoading) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
+    const handleBack = () => {
+        const prev = [...navigationHistory];
+        const lastId = prev.pop();
+        setNavigationHistory(prev);
+        if (lastId) {
+            navigate(`/workflows/history/${lastId}`);
+        } else {
+            navigate('/history');
+        }
+    };    if (isLoading) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
     if (!execution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
 
     return (
@@ -44,9 +67,12 @@ function WorkflowExecutionDetail() {
                 {/* Header Header */}
                 <div className="bg-gray-900 border-b border-gray-800 p-4 px-8 flex justify-between items-center bg-gradient-to-r from-gray-900 via-gray-900 to-gray-800 shadow-xl z-20">
                     <div className="flex items-center gap-6">
-                        <Link to="/history" className="bg-gray-800 hover:bg-gray-700 p-2 rounded-lg text-gray-400 transition-all border border-gray-700 hover:scale-105">
+                        <button 
+                            onClick={handleBack}
+                            className="bg-gray-800 hover:bg-gray-700 p-2 rounded-lg text-gray-400 transition-all border border-gray-700 hover:scale-105"
+                        >
                             ←
-                        </Link>
+                        </button>
                         <div>
                             <div className="flex items-center gap-3">
                                 <h2 className="text-xl font-bold text-gray-100">{execution.workflowName}</h2>
@@ -65,6 +91,14 @@ function WorkflowExecutionDetail() {
                             <div className="text-[10px] font-mono text-gray-500 uppercase">Started At</div>
                             <div className="text-xs font-bold text-gray-300">{new Date(execution.startedAt).toLocaleString()}</div>
                         </div>
+                        <div className="h-8 w-px bg-gray-800" />
+                        
+                        <ExecutionHistoryGraph 
+                            executions={history || []} 
+                            currentId={id!} 
+                            onNavigate={handleNavigate}
+                        />
+
                         <div className="h-8 w-px bg-gray-800" />
                         <div className="flex items-center gap-3">
                             {['RUNNING', 'PENDING'].includes(execution.status) ? (
@@ -269,11 +303,77 @@ function WorkflowExecutionDetail() {
     )
 }
 
+function ExecutionHistoryGraph({ executions, currentId, onNavigate }: { executions: any[], currentId: string, onNavigate: (id: string) => void }) {
+    const data = [...executions].reverse();
+    const maxDuration = Math.max(...data.map(ex => ex.duration || 0), 100);
+    
+    // Status colors mapping to match dashboard
+    const colors: Record<string, string> = {
+        SUCCESS: '#10b981',
+        FAILED: '#ef4444',
+        MAJOR: '#f97316',
+        MINOR: '#fbbf24',
+        WARNING: '#fbbf24',
+        INFORMATION: '#3b82f6',
+        RUNNING: '#3b82f6',
+        PENDING: '#eab308',
+        TIMEOUT: '#f97316',
+    };
+
+    return (
+        <div className="flex flex-col items-center gap-2 mr-4">
+            <div className="flex items-end gap-[3px] h-12">
+                {data.slice(-20).map((ex) => {
+                    const isCurrent = ex.id === currentId;
+                    const height = Math.max(10, ((ex.duration || 0) / maxDuration) * 40);
+                    const tasks = ex.taskExecutionRecords || [];
+                    const stats = {
+                        success: tasks.filter((t: any) => t.status === 'SUCCESS').length,
+                        fail: tasks.filter((t: any) => ['FAILED', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'TIMEOUT'].includes(t.status)).length
+                    };
+                    
+                    const tooltip = `
+Run ID: ${ex.id.split('-')[0]}
+Status: ${ex.status}
+Duration: ${ex.duration || 0}ms
+Tasks: ${stats.success} Success, ${stats.fail} Issues
+Started: ${new Date(ex.startedAt).toLocaleString()}
+                    `.trim();
+
+                    return (
+                        <div
+                            key={ex.id}
+                            onClick={() => onNavigate(ex.id)}
+                            className={`w-3 rounded-t-sm cursor-pointer transition-all hover:opacity-100 relative group
+                                ${isCurrent ? 'ring-2 ring-white ring-offset-2 ring-offset-gray-900 scale-y-110 opacity-100' : 'opacity-60'}
+                            `}
+                            style={{ 
+                                height: `${height}px`, 
+                                backgroundColor: colors[ex.status] || '#464c54',
+                                minHeight: '6px'
+                            }}
+                            title={tooltip}
+                        >
+                            {/* Digital glow effect on hover */}
+                            <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-20 transition-opacity" />
+                        </div>
+                    );
+                })}
+            </div>
+            <div className="text-[8px] font-mono text-gray-500 uppercase tracking-tighter">Execution Timeline (Last 20)</div>
+        </div>
+    );
+}
+
 function StatusBadge({ status, size = 'sm' }: { status: string, size?: 'sm' | 'lg' }) {
     const getStyles = (s: string) => {
         switch (s) {
             case 'SUCCESS': return 'bg-green-500/20 text-green-400 border-green-500/20';
             case 'FAILED': return 'bg-red-500/20 text-red-500 border-red-500/20';
+            case 'MAJOR': return 'bg-orange-500/20 text-orange-500 border-orange-500/20';
+            case 'MINOR': return 'bg-yellow-500/20 text-yellow-500 border-yellow-500/20';
+            case 'WARNING': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/20';
+            case 'INFORMATION': return 'bg-blue-500/20 text-blue-400 border-blue-500/20';
             case 'TIMEOUT': return 'bg-red-500/10 text-orange-500 border-red-500/20';
             case 'NO_WORKER_FOUND': return 'bg-gray-500/10 text-gray-500 border-gray-700';
             case 'RUNNING': return 'bg-blue-500/20 text-blue-400 border-blue-500/20 animate-pulse';

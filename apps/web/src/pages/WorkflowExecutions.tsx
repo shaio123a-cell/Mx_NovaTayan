@@ -180,11 +180,15 @@ function Cube({ execution }: { execution: any }) {
     if (!execution) return <div className="w-3.5 h-3.5 rounded-sm bg-gray-100" />
 
     const colors: any = {
-        SUCCESS: '#4caf50',
-        FAILED: '#f44336',
-        RUNNING: '#2196f3',
-        PENDING: '#ff9800',
-        TIMEOUT: '#ff9800',
+        SUCCESS: '#10b981',
+        FAILED: '#ef4444',
+        MAJOR: '#f97316',
+        MINOR: '#fbbf24',
+        WARNING: '#eab308',
+        INFORMATION: '#3b82f6',
+        RUNNING: '#3b82f6',
+        PENDING: '#eab308',
+        TIMEOUT: '#f97316',
     }
 
     const tasks = execution.taskExecutionRecords || [];
@@ -212,7 +216,7 @@ No Worker: ${counts.NO_WORKER}
         <Link 
             to={`/workflows/history/${execution.id}`}
             className="w-3.5 h-3.5 rounded-sm cursor-help transition-transform hover:scale-125 hover:z-10"
-            style={{ backgroundColor: colors[execution.status] || '#9e9e9e' }}
+            style={{ backgroundColor: colors[execution.status?.toUpperCase()] || '#9e9e9e' }}
             title={tooltip}
         />
     )
@@ -222,8 +226,13 @@ function StatusBadge({ status }: { status: string }) {
     const styles: any = {
         SUCCESS: 'bg-green-100 text-green-700',
         FAILED: 'bg-red-100 text-red-700',
+        MAJOR: 'bg-orange-100 text-orange-700',
+        MINOR: 'bg-amber-100 text-amber-700',
+        WARNING: 'bg-yellow-100 text-yellow-700',
+        INFORMATION: 'bg-blue-100 text-blue-700',
         RUNNING: 'bg-blue-100 text-blue-700 animate-pulse',
         PENDING: 'bg-amber-100 text-amber-700',
+        TIMEOUT: 'bg-red-100 text-red-700',
     }
 
     return (

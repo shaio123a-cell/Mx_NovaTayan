@@ -138,7 +138,28 @@ export class WorkerService {
 
         if (!execution) throw new Error('Execution not found');
 
-        const { status, reason, sanityResults } = await this.evaluateStatus(execution, result, error);
+        let { status, reason, sanityResults } = await this.evaluateStatus(execution, result, error);
+
+        // Apply failureStatusOverride if this is part of a workflow and failed
+        if (status === 'FAILED' && execution.workflowExecutionId && execution.nodeId) {
+            try {
+                const wfEx = await this.prisma.workflowExecution.findUnique({
+                    where: { id: execution.workflowExecutionId },
+                    include: { workflow: true }
+                });
+                if (wfEx?.workflow?.nodes) {
+                    const nodes = wfEx.workflow.nodes as any[];
+                    const node = nodes.find(n => n.id === execution.nodeId);
+                    if (node?.failureStatusOverride && node.failureStatusOverride !== 'FAILED') {
+                        this.logger.log(`[Trace] Applying status override: FAILED -> ${node.failureStatusOverride} for node ${execution.nodeId}`);
+                        status = node.failureStatusOverride;
+                    }
+                }
+            } catch (err) {
+                this.logger.error(`[Trace] Failed to fetch status override: ${err.message}`);
+            }
+        }
+
         const duration = new Date().getTime() - execution.startedAt.getTime();
 
         const updated = await this.prisma.taskExecution.update({
@@ -280,7 +301,7 @@ export class WorkerService {
             // Check if all predecessors have an execution record and are finished
             const allFinished = predecessorNodeIds.every(pid => {
                 const record = taskRecords.find(r => r.nodeId === pid);
-                return record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(record.status);
+                return record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION'].includes(record.status);
             });
 
             if (!allFinished) {
@@ -391,17 +412,25 @@ export class WorkerService {
 
         const tasks = execution.taskExecutionRecords;
 
-        // Priority-based status: FAILED > TIMEOUT > NO_WORKER_FOUND > RUNNING > PENDING > SUCCESS
+        // Priority-based status: FAILED > MAJOR > MINOR > TIMEOUT > WARNING > INFORMATION > NO_WORKER_FOUND > RUNNING > PENDING > SUCCESS
         let finalStatus = 'SUCCESS';
         
         const hasFailed = tasks.some(t => t.status === 'FAILED');
+        const hasMajor = tasks.some(t => t.status === 'MAJOR');
+        const hasMinor = tasks.some(t => t.status === 'MINOR');
         const hasTimeout = tasks.some(t => t.status === 'TIMEOUT');
+        const hasWarning = tasks.some(t => t.status === 'WARNING');
+        const hasInformation = tasks.some(t => t.status === 'INFORMATION');
         const hasNoWorker = tasks.some(t => t.status === 'NO_WORKER_FOUND');
         const hasRunning = tasks.some(t => t.status === 'RUNNING');
         const hasPending = tasks.some(t => t.status === 'PENDING');
 
         if (hasFailed) finalStatus = 'FAILED';
+        else if (hasMajor) finalStatus = 'MAJOR';
+        else if (hasMinor) finalStatus = 'MINOR';
         else if (hasTimeout) finalStatus = 'TIMEOUT';
+        else if (hasWarning) finalStatus = 'WARNING';
+        else if (hasInformation) finalStatus = 'INFORMATION';
         else if (hasNoWorker) finalStatus = 'NO_WORKER_FOUND';
         else if (hasRunning) finalStatus = 'RUNNING';
         else if (hasPending) finalStatus = 'PENDING';

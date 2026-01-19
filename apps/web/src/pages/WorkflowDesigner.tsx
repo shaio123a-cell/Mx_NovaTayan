@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import ReactFlow, {
     MiniMap,
     Controls,
@@ -22,6 +22,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { workflowsApi } from '../api/workflows'
 import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil } from 'lucide-react'
+import { useDirtyState } from '../context/DirtyStateContext'
 
 const initialNodes: Node[] = []
 const initialEdges: any[] = []
@@ -51,20 +52,21 @@ function N8nTaskNode({ data }: any) {
             borderRadius: '12px', 
             minWidth: '240px',
             boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.4)',
-            overflow: 'hidden',
             position: 'relative'
         }} className="hover:border-primary-500/50 transition-all group">
             
-            {/* Input Port (n8n flavor) */}
+            {/* Input Port (n8n flavor) - Now Blue and Larger */}
             <Handle
                 type="target"
                 position={Position.Left}
                 style={{ 
-                    background: '#f05a28', 
-                    width: '10px', 
-                    height: '10px', 
-                    border: '2px solid #111217',
-                    left: '-6px'
+                    background: '#3b82f6', 
+                    width: '16px', 
+                    height: '16px', 
+                    border: '3px solid white',
+                    left: '-10px',
+                    boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)',
+                    zIndex: 1000
                 }}
             />
 
@@ -87,6 +89,28 @@ function N8nTaskNode({ data }: any) {
                         <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{data.method}</div>
                         <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#f2f5f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
                     </div>
+                    {/* Delete Toggle */}
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            data.onDelete(data.id);
+                        }}
+                        style={{ 
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#464c54',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px'
+                        }}
+                        className="hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                        title="Remove task"
+                    >
+                        <Trash2 size={14} />
+                    </button>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -130,23 +154,52 @@ function N8nTaskNode({ data }: any) {
                             onChange={(e) => data.onChangeFailureStrategy(e.target.value)}
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <option value="SUCCESS_REQUIRED">Success Required To Continue</option>
+                            <option value="SUCCESS_REQUIRED">Stop On Failure</option>
                             <option value="CONTINUE_ON_FAIL">Continue On Failure</option>
+                        </select>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Status on Failure</label>
+                        <select
+                            style={{ 
+                                background: '#0b0c10', 
+                                border: '1px solid #202226', 
+                                borderRadius: '6px', 
+                                padding: '4px 4px', 
+                                fontSize: '10px', 
+                                color: '#d8d9da',
+                                outline: 'none',
+                                width: '100%',
+                                cursor: 'pointer'
+                            }}
+                            className="focus:border-primary-500"
+                            value={data.failureStatusOverride || 'FAILED'}
+                            onChange={(e) => data.onChangeFailureStatusOverride(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <option value="FAILED">Failed (Default)</option>
+                            <option value="MAJOR">Major</option>
+                            <option value="MINOR">Minor</option>
+                            <option value="WARNING">Warning</option>
+                            <option value="INFORMATION">Information</option>
                         </select>
                     </div>
                 </div>
             </div>
 
-            {/* Output Port (n8n flavor) */}
+            {/* Output Port (n8n flavor) - Now Blue and Larger */}
             <Handle
                 type="source"
                 position={Position.Right}
                 style={{ 
-                    background: '#f05a28', 
-                    width: '10px', 
-                    height: '10px', 
-                    border: '2px solid #111217',
-                    right: '-6px'
+                    background: '#3b82f6', 
+                    width: '16px', 
+                    height: '16px', 
+                    border: '3px solid white',
+                    right: '-10px',
+                    boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)',
+                    zIndex: 1000
                 }}
             />
         </div>
@@ -231,12 +284,15 @@ const edgeTypes = {
 }
 
 function WorkflowDesignerContent() {
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams()
     const workflowId = searchParams.get('id')
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
     const [workflowName, setWorkflowName] = useState('My Workflow')
     const [workflowTags, setWorkflowTags] = useState<string[]>(['default'])
+    const { isDirty, setIsDirty, setShowDirtyModal, setPendingAction } = useDirtyState();
+    const [searchQuery, setSearchQuery] = useState('');
     const queryClient = useQueryClient()
     const initializedRef = useRef<string | null>(null)
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -265,17 +321,29 @@ function WorkflowDesignerContent() {
                 type: 'taskNode',
                 position: n.position,
                 data: {
+                    id: n.id,
                     label: n.label,
                     taskId: n.taskId,
                     method: tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET',
                     targetTags: n.targetTags || [],
                     failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
+                    failureStatusOverride: n.failureStatusOverride || 'FAILED',
+                    onDelete: (id: string) => {
+                        setNodes(nds => nds.filter(node => node.id !== id));
+                        setIsDirty(true);
+                    },
                     onChangeTargetTags: (val: string) => {
                         const tags = val.split(',').map(t => t.trim()).filter(Boolean);
                         setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, targetTags: tags } } : node))
+                        setIsDirty(true);
                     },
                     onChangeFailureStrategy: (val: string) => {
                         setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
+                        setIsDirty(true);
+                    },
+                    onChangeFailureStatusOverride: (val: string) => {
+                        setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, failureStatusOverride: val } } : node))
+                        setIsDirty(true);
                     }
                 }
             })))
@@ -291,17 +359,40 @@ function WorkflowDesignerContent() {
                     strokeWidth: 2 
                 },
             })))
+            setTimeout(() => setIsDirty(false), 50); // Small delay to prevent initial load marking as dirty
         }
     }, [existingWorkflow, tasks])
 
+    useEffect(() => {
+        const handleSaveRequest = () => {
+            handleSave();
+        };
+        window.addEventListener('DESIGNER_SAVE_REQUESTED', handleSaveRequest);
+        
+        const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (isDirty) {
+                event.preventDefault();
+                event.returnValue = ''; // Standard for browser prompts
+            }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => {
+            window.removeEventListener('DESIGNER_SAVE_REQUESTED', handleSaveRequest);
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+    }, [isDirty, nodes, edges, workflowName, workflowTags]);
+
     const onConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge({ 
-            ...params, 
-            type: 'custom',
-            data: { condition: 'ALWAYS' },
-            animated: true, 
-            style: { stroke: '#94a3b8', strokeWidth: 2 } 
-        }, eds)),
+        (params: Connection) => {
+            setEdges((eds) => addEdge({ 
+                ...params, 
+                type: 'custom',
+                data: { condition: 'ALWAYS' },
+                animated: true, 
+                style: { stroke: '#94a3b8', strokeWidth: 2 } 
+            }, eds));
+            setIsDirty(true);
+        },
         [setEdges],
     )
 
@@ -312,6 +403,7 @@ function WorkflowDesignerContent() {
         onSuccess: () => {
             alert('Workflow saved!')
             queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            setIsDirty(false);
         },
         onError: (err: any) => alert(`Save failed: ${err.message}`),
     })
@@ -331,7 +423,8 @@ function WorkflowDesignerContent() {
                 position: n.position,
                 label: n.data.label,
                 targetTags: n.data.targetTags || [],
-                failureStrategy: n.data.failureStrategy || 'SUCCESS_REQUIRED'
+                failureStrategy: n.data.failureStrategy || 'SUCCESS_REQUIRED',
+                failureStatusOverride: n.data.failureStatusOverride || 'FAILED'
             })),
             edges: edges.map(e => ({
                 id: e.id,
@@ -344,11 +437,24 @@ function WorkflowDesignerContent() {
         saveMutation.mutate(workflowData)
     }
 
+    const handleCancel = () => {
+        if (isDirty) {
+            setShowDirtyModal(true);
+            setPendingAction(() => () => navigate('/'));
+        } else {
+            navigate('/');
+        }
+    };
+
     const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ 'Global': true })
 
     const groupedTasks = (() => {
         const grouped: Record<string, any[]> = {}
-        tasks?.forEach((t: any) => {
+        const filtered = tasks?.filter((t: any) => 
+            t.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (t.command?.method || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        filtered?.forEach((t: any) => {
             const tg = t.groups || []
             if (tg.length === 0) {
                 if (!grouped['Global']) grouped['Global'] = []
@@ -377,13 +483,12 @@ function WorkflowDesignerContent() {
     const onDrop = useCallback(
         (event: any) => {
             event.preventDefault();
-
             const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
             if (!reactFlowBounds) return;
 
-            const taskData = JSON.parse(event.dataTransfer.getData('application/reactflow'));
-
-            if (!taskData) return;
+            const taskDataStr = event.dataTransfer.getData('application/reactflow');
+            if (!taskDataStr) return;
+            const taskData = JSON.parse(taskDataStr);
 
             const position = project({
                 x: event.clientX - reactFlowBounds.left,
@@ -396,24 +501,37 @@ function WorkflowDesignerContent() {
                 type: 'taskNode',
                 position,
                 data: {
+                    id: newNodeId,
                     label: taskData.name,
                     taskId: taskData.id,
                     method: taskData.command?.method || 'GET',
                     targetTags: taskData.targetTags || [],
                     failureStrategy: 'SUCCESS_REQUIRED',
+                    failureStatusOverride: 'FAILED',
+                    onDelete: (id: string) => {
+                        setNodes(nds => nds.filter(node => node.id !== id));
+                        setIsDirty(true);
+                    },
                     onChangeTargetTags: (val: string) => {
                         const tags = val.split(',').map(t => t.trim()).filter(Boolean);
                         setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: tags } } : node))
+                        setIsDirty(true);
                     },
                     onChangeFailureStrategy: (val: string) => {
                         setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
+                        setIsDirty(true);
+                    },
+                    onChangeFailureStatusOverride: (val: string) => {
+                        setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, failureStatusOverride: val } } : node))
+                        setIsDirty(true);
                     }
                 },
             };
 
             setNodes((nds: any) => nds.concat(newNode));
+            setIsDirty(true);
         },
-        [project]
+        [project, setNodes]
     );
 
     const isTaskInWorkflow = (taskId: string) => nodes.some(n => n.data.taskId === taskId)
@@ -427,13 +545,13 @@ function WorkflowDesignerContent() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '16px 24px', borderRadius: '16px', border: '1px solid #eee', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ width: '40px', height: '40px', background: 'rgba(25,118,210,0.1)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifySelf: 'center', border: '1px solid rgba(25,118,210,0.2)' }}>
-                            <Network style={{ color: '#1976D2', margin: 'auto' }} size={20} />
+                        <div style={{ width: '40px', height: '40px', background: 'rgba(25,118,210,0.1)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(25,118,210,0.2)' }}>
+                            <Network style={{ color: '#1976D2' }} size={20} />
                         </div>
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <input
                                 value={workflowName}
-                                onChange={(e) => setWorkflowName(e.target.value)}
+                                onChange={(e) => { setWorkflowName(e.target.value); setIsDirty(true); }}
                                 style={{ background: 'transparent', border: 'none', color: '#111827', fontSize: '20px', fontWeight: 'bold', outline: 'none', width: '250px' }}
                             />
                             <Pencil size={14} color="#999" />
@@ -444,14 +562,26 @@ function WorkflowDesignerContent() {
                         <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Global Targeting Group</span>
                         <input
                             value={workflowTags.join(', ')}
-                            onChange={(e) => setWorkflowTags(e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
+                            onChange={(e) => { setWorkflowTags(e.target.value.split(',').map(t => t.trim()).filter(Boolean)); setIsDirty(true); }}
                             style={{ background: '#f9fafb', border: '1px solid #eee', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', color: '#1976D2', outline: 'none', width: '150px', fontWeight: 'bold' }}
                             placeholder="e.g. prod, linux"
                         />
                     </div>
                 </div>
                 
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    {isDirty && (
+                        <div style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginRight: '8px' }}>
+                            <div className="animate-pulse" style={{ width: '8px', height: '8px', background: '#f59e0b', borderRadius: '50%' }} />
+                            Unsaved Changes
+                        </div>
+                    )}
+                    <button 
+                        onClick={handleCancel}
+                        style={{ background: 'transparent', border: '1px solid #ddd', color: '#6b7280', padding: '8px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
+                    >
+                        Cancel
+                    </button>
                     <button 
                         onClick={handleSave}
                         style={{ background: 'white', border: '1px solid #ddd', color: '#374151', padding: '8px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
@@ -476,6 +606,30 @@ function WorkflowDesignerContent() {
                     <div style={{ marginBottom: '20px' }}>
                         <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>Task Library</h3>
                         <p style={{ fontSize: '11px', color: '#666' }}>Drag & drop tasks onto the canvas.</p>
+                    </div>
+
+                    <div style={{ marginBottom: '16px' }}>
+                        <div style={{ position: 'relative' }}>
+                            <input 
+                                type="text"
+                                placeholder="Search tasks..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px',
+                                    paddingLeft: '32px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #eee',
+                                    fontSize: '13px',
+                                    background: '#f9f9f9',
+                                    outline: 'none'
+                                }}
+                            />
+                            <div style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#999' }}>
+                                <Network size={14} />
+                            </div>
+                        </div>
                     </div>
 
                     <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -503,7 +657,7 @@ function WorkflowDesignerContent() {
                                         <span style={{ color: '#ccc', fontSize: '10px' }}>{expandedFolders[groupName] ? '▼' : '▶'}</span>
                                     </div>
                                     
-                                    {expandedFolders[groupName] && (
+                                    {(expandedFolders[groupName] || searchQuery.length > 0) && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             {groupTasks.map((task: any) => {
                                                 const selected = isTaskInWorkflow(task.id);
@@ -559,13 +713,13 @@ function WorkflowDesignerContent() {
                     </div>
                 </div>
 
-                {/* Canvas Area */}
-                <div ref={reactFlowWrapper} style={{ flex: 1, background: '#f5f5f5', borderRadius: '16px', border: '1px solid #eee', position: 'relative', overflow: 'hidden', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.03)' }}>
+                {/* Canvas Area - White Background with Dots */}
+                <div ref={reactFlowWrapper} style={{ flex: 1, background: 'white', borderRadius: '16px', border: '1px solid #eee', position: 'relative', overflow: 'hidden', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.03)' }}>
                     <ReactFlow
                         nodes={nodes}
                         edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
+                        onNodesChange={(changes) => { onNodesChange(changes); setIsDirty(true); }}
+                        onEdgesChange={(changes) => { onEdgesChange(changes); setIsDirty(true); }}
                         onConnect={onConnect}
                         onDrop={onDrop}
                         onDragOver={onDragOver}
@@ -575,7 +729,7 @@ function WorkflowDesignerContent() {
                         snapToGrid={true}
                         snapGrid={[15, 15]}
                     >
-                        <Background color="#ddd" gap={20} size={1} variant={BackgroundVariant.Dots} />
+                        <Background color="#1976D2" gap={25} size={1.5} variant={BackgroundVariant.Dots} style={{ opacity: 0.3 }} />
                         <Controls style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }} />
                         <MiniMap 
                             style={{ background: 'white', border: '1px solid #eee', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }} 

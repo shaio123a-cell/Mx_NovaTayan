@@ -11,7 +11,7 @@ import ReactFlow, {
     EdgeText,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye } from 'lucide-react'
+import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle } from 'lucide-react'
 
 /**
  * Node color mapping based on status
@@ -20,10 +20,14 @@ const getStatusStyles = (status: string) => {
     switch (status) {
         case 'SUCCESS': return { bg: '#064e3b', border: '#10b981', icon: <CheckCircle size={14} className="text-green-400" /> };
         case 'FAILED': return { bg: '#450a0a', border: '#ef4444', icon: <AlertTriangle size={14} className="text-red-400" /> };
+        case 'MAJOR': return { bg: '#4d1b0d', border: '#f97316', icon: <AlertTriangle size={14} className="text-orange-500" /> };
+        case 'MINOR': return { bg: '#3f2e06', border: '#fbbf24', icon: <AlertTriangle size={14} className="text-yellow-500" /> };
+        case 'WARNING': return { bg: '#3f2e06', border: '#fbbf24', icon: <AlertCircle size={14} className="text-yellow-400" /> };
+        case 'INFORMATION': return { bg: '#0c2159', border: '#3b82f6', icon: <Eye size={14} className="text-blue-400" /> };
         case 'TIMEOUT': return { bg: '#450a0a', border: '#f97316', icon: <Clock size={14} className="text-orange-400" /> };
         case 'NO_WORKER_FOUND': return { bg: '#1c1d21', border: '#464c54', icon: <UserX size={14} className="text-gray-400" /> };
         case 'RUNNING': return { bg: '#1e3a8a', border: '#3b82f6', icon: <Play size={14} className="text-blue-400 animate-pulse" /> };
-        case 'PENDING': return { bg: '#422006', border: '#eab308', icon: <Clock size={14} className="text-yellow-400" /> };
+        case 'PENDING': return { bg: '#2e1907', border: '#eab308', icon: <Clock size={14} className="text-yellow-600" /> };
         default: return { bg: '#111217', border: '#202226', icon: <Terminal size={14} className="text-gray-400" /> };
     }
 }
@@ -298,7 +302,7 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
     }, [workflow, taskExecutions]);
 
     return (
-        <div style={{ width: '100%', height: '600px', background: '#0b0c10', borderRadius: '16px', border: '1px solid #202226', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ width: '100%', height: '600px', background: 'white', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'relative' }}>
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -310,7 +314,7 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                 elementsSelectable={true}
                 onNodeClick={(_, node) => onNodeClick?.(node.id)}
             >
-                <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1c1d21" />
+                <Background variant={BackgroundVariant.Lines} gap={0} size={0} color="transparent" />
                 <Controls />
             </ReactFlow>
         </div>

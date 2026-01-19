@@ -304,8 +304,9 @@ export class WorkflowsService {
     async getExecutions(workflowId: string) {
         return this.prisma.workflowExecution.findMany({
             where: { workflowId },
+            include: { taskExecutionRecords: true },
             orderBy: { startedAt: 'desc' },
-            take: 10,
+            take: 20,
         });
     }
 

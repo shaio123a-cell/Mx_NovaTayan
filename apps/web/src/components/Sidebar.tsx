@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useDirtyState } from '../context/DirtyStateContext';
 import { 
     LayoutDashboard, 
     ListTodo, 
@@ -26,6 +27,8 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen }: SidebarProps) {
     const location = useLocation();
+    const navigate = useNavigate();
+    const { isDirty, setShowDirtyModal, setPendingAction } = useDirtyState();
     const [expandedParents, setExpandedParents] = useState<string[]>(['Administration']);
     
     // Auto-expand/collapse toggle is handled by the Header, 
@@ -98,6 +101,11 @@ export function Sidebar({ isOpen }: SidebarProps) {
                             isAnyChildActive={item.children?.some(c => isActive(c.path)) || false}
                             checkActive={isActive}
                             isSidebarExpanded={isOpen}
+                            // Pass down global dirty state to avoid multiple useDirtyState calls if needed
+                            isDirty={isDirty}
+                            setShowDirtyModal={setShowDirtyModal}
+                            setPendingAction={setPendingAction}
+                            navigate={navigate}
                         />
                     ))}
                 </nav>
@@ -111,6 +119,10 @@ export function Sidebar({ isOpen }: SidebarProps) {
                         isAnyChildActive={false}
                         checkActive={isActive}
                         isSidebarExpanded={isOpen}
+                        isDirty={isDirty}
+                        setShowDirtyModal={setShowDirtyModal}
+                        setPendingAction={setPendingAction}
+                        navigate={navigate}
                     />
                 </nav>
             </div>
@@ -125,7 +137,11 @@ function SidebarItem({
     onToggleParent,
     isAnyChildActive,
     checkActive,
-    isSidebarExpanded
+    isSidebarExpanded,
+    isDirty,
+    setShowDirtyModal,
+    setPendingAction,
+    navigate
 }: any) {
     const Icon = item.icon;
     const hasChildren = item.children && item.children.length > 0;
@@ -136,6 +152,12 @@ function SidebarItem({
             <Link
                 to={item.path || '#'}
                 onClick={(e) => {
+                    if (isDirty) {
+                        e.preventDefault();
+                        setShowDirtyModal(true);
+                        setPendingAction(() => () => navigate(item.path));
+                        return;
+                    }
                     if (hasChildren && isSidebarExpanded) {
                         e.preventDefault();
                         onToggleParent();
@@ -178,6 +200,14 @@ function SidebarItem({
                             <Link
                                 key={child.path}
                                 to={child.path}
+                                onClick={(e) => {
+                                    if (isDirty) {
+                                        e.preventDefault();
+                                        setShowDirtyModal(true);
+                                        setPendingAction(() => () => navigate(child.path));
+                                        return;
+                                    }
+                                }}
                                 className={`flex items-center gap-3 px-3 py-1.5 rounded text-[12px] transition-all ${
                                     isChildActive 
                                         ? 'text-white font-semibold bg-[#1e2023]' 
@@ -194,3 +224,5 @@ function SidebarItem({
         </div>
     );
 }
+
+export default Sidebar;

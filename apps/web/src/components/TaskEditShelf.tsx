@@ -90,7 +90,7 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
             <div 
                 style={{ 
                     position: 'relative', 
-                    width: '520px', 
+                    width: '700px', 
                     height: '100%', 
                     backgroundColor: 'white', 
                     boxShadow: '-10px 0 30px rgba(0,0,0,0.2)',
@@ -130,6 +130,8 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                     {activeTab === 'details' && (
                         <>
                             <MaterialInput label="Task Name" value={name} onChange={setName} />
+
+                            <MaterialInput label="Task Description" value={description} onChange={setDescription} />
                             
                             <div style={{ marginTop: '-16px' }}>
                                 <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Assign to Groups (Folders)</label>
@@ -185,7 +187,6 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                             
                             <MaterialTextArea label="Payload Content (Body)" value={body} onChange={setBody} height="160px" mono />
 
-                            <MaterialInput label="Task Description" value={description} onChange={setDescription} />
                         </>
                     )}
 

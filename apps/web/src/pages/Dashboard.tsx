@@ -125,12 +125,16 @@ function Cube({ execution }: { execution: any }) {
     }
 
     const color = {
-        SUCCESS: 'bg-green-500 hover:bg-green-600',
-        FAILED: 'bg-red-500 hover:bg-red-600',
-        RUNNING: 'bg-blue-500 hover:bg-blue-600 animate-pulse',
-        PENDING: 'bg-orange-500 hover:bg-orange-600',
-        TIMEOUT: 'bg-orange-600 hover:bg-orange-700',
-    }[execution.status as string] || 'bg-gray-400';
+        SUCCESS: 'bg-[#10b981] hover:bg-[#059669]',
+        FAILED: 'bg-[#ef4444] hover:bg-[#dc2626]',
+        MAJOR: 'bg-[#f97316] hover:bg-[#ea580c]',
+        MINOR: 'bg-[#fbbf24] hover:bg-[#f59e0b]',
+        WARNING: 'bg-[#fbbf24] hover:bg-[#f59e0b]',
+        INFORMATION: 'bg-[#3b82f6] hover:bg-[#2563eb]',
+        RUNNING: 'bg-[#3b82f6] hover:bg-[#2563eb] animate-pulse',
+        PENDING: 'bg-[#eab308] hover:bg-[#ca8a04]',
+        TIMEOUT: 'bg-[#f97316] hover:bg-[#ea580c]',
+    }[execution.status?.toUpperCase() as string] || 'bg-gray-400';
 
     // Calculate task status counts
     const tasks = execution.taskExecutionRecords || [];
