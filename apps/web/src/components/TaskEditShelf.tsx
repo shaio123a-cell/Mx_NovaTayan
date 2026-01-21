@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { useState, useEffect } from 'react'
+import { XformPreview } from '../shared-xform/xform_preview.react';
+import { VariableManager } from './VariableManager';
 import { X, AlertTriangle } from 'lucide-react'
 
 interface Props {
@@ -10,7 +12,12 @@ interface Props {
 
 export function TaskEditShelf({ taskId, onClose }: Props) {
     const queryClient = useQueryClient()
-    const [activeTab, setActiveTab] = useState<'details' | 'config' | 'history'>('details')
+    const [activeTab, setActiveTab] = useState<'details' | 'config' | 'output'>('details')
+    // Output Processing State
+    const [outputSpecYaml, setOutputSpecYaml] = useState('');
+    const [outputInputText, setOutputInputText] = useState('');
+    const [outputVars, setOutputVars] = useState<Record<string, any>>({});
+    const [outputError, setOutputError] = useState<string | null>(null);
     const isEditing = !!taskId
 
     // Form State
@@ -123,6 +130,7 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                 <div style={{ display: 'flex', padding: '0 32px', borderBottom: '1px solid #eee', marginTop: '16px' }}>
                     <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />
                     <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />
+                    <TabButton active={activeTab === 'output'} onClick={() => setActiveTab('output')} label="Output Processing" />
                 </div>
 
                 {/* Content Area */}
@@ -257,6 +265,36 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                         style={{ background: 'transparent', border: 'none', color: '#1976D2', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', letterSpacing: '1px' }}
                     >
                         CANCEL
+                                            {activeTab === 'output' && (
+                                                <div>
+                                                    <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Output Processing</h4>
+                                                    <label>Transformation Spec (YAML):</label>
+                                                    <textarea
+                                                        value={outputSpecYaml}
+                                                        onChange={e => setOutputSpecYaml(e.target.value)}
+                                                        rows={8}
+                                                        style={{ width: '100%', fontFamily: 'monospace', marginBottom: 12 }}
+                                                    />
+                                                    <label>Sample Input Data:</label>
+                                                    <textarea
+                                                        value={outputInputText}
+                                                        onChange={e => setOutputInputText(e.target.value)}
+                                                        rows={4}
+                                                        style={{ width: '100%', fontFamily: 'monospace', marginBottom: 12 }}
+                                                    />
+                                                    <VariableManager value={outputVars} onChange={setOutputVars} usedNames={[]} />
+                                                    {outputError && <div style={{ color: 'red', marginBottom: 12 }}>{outputError}</div>}
+                                                    <div style={{ marginTop: 24 }}>
+                                                        <XformPreview
+                                                            specYaml={outputSpecYaml}
+                                                            inputText={outputInputText}
+                                                            vars={outputVars}
+                                                            limit={20}
+                                                            onError={(e: Error) => setOutputError(e.message)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
                     </button>
                     <button 
                         onClick={handleSave}

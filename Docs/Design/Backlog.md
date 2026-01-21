@@ -26,7 +26,6 @@ AI assist is for design-time only; runtime execution is deterministic and sandbo
 
 IMPORTANT CONSTRAINTS FOR THIS TASK
 - DO NOT scaffold a new repository or create a project tree.
-- DO NOT generate a CLI, binaries, or any global files.
 - Produce ONLY self-contained modules and integration-ready snippets that can be pasted
   into an existing app without overwriting existing files.
 - Prefix all suggested filenames with `xform_` to avoid collisions (e.g., `xform_engine.ts`).

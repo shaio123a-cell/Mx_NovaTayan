@@ -283,6 +283,114 @@ const edgeTypes = {
     custom: CustomEdge,
 }
 
+function ReactFlowCanvas({ 
+    nodes, 
+    edges, 
+    onNodesChange, 
+    onEdgesChange, 
+    onConnect, 
+    setNodes,
+    setIsDirty,
+    reactFlowWrapper 
+}: any) {
+    const reactFlowInstance = useReactFlow();
+    const projectRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (reactFlowInstance?.project) {
+            projectRef.current = reactFlowInstance.project;
+        }
+    }, [reactFlowInstance]);
+
+    const onDragOver = useCallback((event: any) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+    }, []);
+
+    const onDrop = useCallback(
+        (event: any) => {
+            event.preventDefault();
+            if (!projectRef.current) return;
+            
+            const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
+            if (!reactFlowBounds) return;
+
+            const taskDataStr = event.dataTransfer.getData('application/reactflow');
+            if (!taskDataStr) return;
+            const taskData = JSON.parse(taskDataStr);
+
+            const position = projectRef.current({
+                x: event.clientX - reactFlowBounds.left,
+                y: event.clientY - reactFlowBounds.top,
+            });
+
+            const newNodeId = `node-${Date.now()}`;
+            const newNode: Node = {
+                id: newNodeId,
+                type: 'taskNode',
+                position,
+                data: {
+                    id: newNodeId,
+                    label: taskData.name,
+                    taskId: taskData.id,
+                    method: taskData.command?.method || 'GET',
+                    targetTags: taskData.targetTags || [],
+                    failureStrategy: 'SUCCESS_REQUIRED',
+                    failureStatusOverride: 'FAILED',
+                    onDelete: (id: string) => {
+                        setNodes((nds: any) => nds.filter((node: any) => node.id !== id));
+                        setIsDirty(true);
+                    },
+                    onChangeTargetTags: (val: string) => {
+                        const tags = val.split(',').map((t: any) => t.trim()).filter(Boolean);
+                        setNodes((nds: any) => nds.map((node: any) => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: tags } } : node))
+                        setIsDirty(true);
+                    },
+                    onChangeFailureStrategy: (val: string) => {
+                        setNodes((nds: any) => nds.map((node: any) => node.id === newNodeId ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
+                        setIsDirty(true);
+                    },
+                    onChangeFailureStatusOverride: (val: string) => {
+                        setNodes((nds: any) => nds.map((node: any) => node.id === newNodeId ? { ...node, data: { ...node.data, failureStatusOverride: val } } : node))
+                        setIsDirty(true);
+                    }
+                },
+            };
+
+            setNodes((nds: any) => nds.concat(newNode));
+            setIsDirty(true);
+        },
+        [setNodes, setIsDirty, reactFlowWrapper]
+    );
+
+    return (
+        <div ref={reactFlowWrapper} style={{ flex: 1, background: 'white', borderRadius: '16px', border: '1px solid #eee', position: 'relative', overflow: 'hidden', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.03)' }}>
+            <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onDrop={onDrop}
+                onDragOver={onDragOver}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                fitView
+                snapToGrid={true}
+                snapGrid={[15, 15]}
+            >
+                <Background color="#1976D2" gap={25} size={1.5} variant={BackgroundVariant.Dots} style={{ opacity: 0.3 }} />
+                <Controls style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }} />
+                <MiniMap 
+                    style={{ background: 'white', border: '1px solid #eee', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }} 
+                    nodeColor="#1976D2"
+                    maskColor="rgba(255, 255, 255, 0.7)"
+                />
+            </ReactFlow>
+        </div>
+    );
+}
+
 function WorkflowDesignerContent() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams()
@@ -296,7 +404,6 @@ function WorkflowDesignerContent() {
     const queryClient = useQueryClient()
     const initializedRef = useRef<string | null>(null)
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
-    const { project } = useReactFlow();
 
     const { data: tasks, isLoading: isLoadingTasks } = useQuery({
         queryKey: ['tasks'],
@@ -450,10 +557,13 @@ function WorkflowDesignerContent() {
 
     const groupedTasks = (() => {
         const grouped: Record<string, any[]> = {}
-        const filtered = tasks?.filter((t: any) => 
-            t.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (t.command?.method || '').toLowerCase().includes(searchQuery.toLowerCase())
-        )
+        const filtered = tasks?.filter((t: any) => {
+            const name = t.name?.toLowerCase() ?? '';
+            const label = t.label?.toLowerCase() ?? '';
+            const method = t.command?.method?.toLowerCase() ?? '';
+            const q = searchQuery.toLowerCase();
+            return name.includes(q) || label.includes(q) || method.includes(q);
+        });
         filtered?.forEach((t: any) => {
             const tg = t.groups || []
             if (tg.length === 0) {
@@ -474,65 +584,6 @@ function WorkflowDesignerContent() {
         event.dataTransfer.setData('application/reactflow', JSON.stringify(task));
         event.dataTransfer.effectAllowed = 'move';
     };
-
-    const onDragOver = useCallback((event: any) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-    }, []);
-
-    const onDrop = useCallback(
-        (event: any) => {
-            event.preventDefault();
-            const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
-            if (!reactFlowBounds) return;
-
-            const taskDataStr = event.dataTransfer.getData('application/reactflow');
-            if (!taskDataStr) return;
-            const taskData = JSON.parse(taskDataStr);
-
-            const position = project({
-                x: event.clientX - reactFlowBounds.left,
-                y: event.clientY - reactFlowBounds.top,
-            });
-
-            const newNodeId = `node-${Date.now()}`;
-            const newNode: Node = {
-                id: newNodeId,
-                type: 'taskNode',
-                position,
-                data: {
-                    id: newNodeId,
-                    label: taskData.name,
-                    taskId: taskData.id,
-                    method: taskData.command?.method || 'GET',
-                    targetTags: taskData.targetTags || [],
-                    failureStrategy: 'SUCCESS_REQUIRED',
-                    failureStatusOverride: 'FAILED',
-                    onDelete: (id: string) => {
-                        setNodes(nds => nds.filter(node => node.id !== id));
-                        setIsDirty(true);
-                    },
-                    onChangeTargetTags: (val: string) => {
-                        const tags = val.split(',').map(t => t.trim()).filter(Boolean);
-                        setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: tags } } : node))
-                        setIsDirty(true);
-                    },
-                    onChangeFailureStrategy: (val: string) => {
-                        setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
-                        setIsDirty(true);
-                    },
-                    onChangeFailureStatusOverride: (val: string) => {
-                        setNodes(nds => nds.map(node => node.id === newNodeId ? { ...node, data: { ...node.data, failureStatusOverride: val } } : node))
-                        setIsDirty(true);
-                    }
-                },
-            };
-
-            setNodes((nds: any) => nds.concat(newNode));
-            setIsDirty(true);
-        },
-        [project, setNodes]
-    );
 
     const isTaskInWorkflow = (taskId: string) => nodes.some(n => n.data.taskId === taskId)
 
@@ -714,30 +765,16 @@ function WorkflowDesignerContent() {
                 </div>
 
                 {/* Canvas Area - White Background with Dots */}
-                <div ref={reactFlowWrapper} style={{ flex: 1, background: 'white', borderRadius: '16px', border: '1px solid #eee', position: 'relative', overflow: 'hidden', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.03)' }}>
-                    <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={(changes) => { onNodesChange(changes); setIsDirty(true); }}
-                        onEdgesChange={(changes) => { onEdgesChange(changes); setIsDirty(true); }}
-                        onConnect={onConnect}
-                        onDrop={onDrop}
-                        onDragOver={onDragOver}
-                        nodeTypes={nodeTypes}
-                        edgeTypes={edgeTypes}
-                        fitView
-                        snapToGrid={true}
-                        snapGrid={[15, 15]}
-                    >
-                        <Background color="#1976D2" gap={25} size={1.5} variant={BackgroundVariant.Dots} style={{ opacity: 0.3 }} />
-                        <Controls style={{ background: 'white', border: '1px solid #eee', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }} />
-                        <MiniMap 
-                            style={{ background: 'white', border: '1px solid #eee', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }} 
-                            nodeColor="#1976D2"
-                            maskColor="rgba(255, 255, 255, 0.7)"
-                        />
-                    </ReactFlow>
-                </div>
+                <ReactFlowCanvas
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={(changes: any) => { onNodesChange(changes); setIsDirty(true); }}
+                    onEdgesChange={(changes: any) => { onEdgesChange(changes); setIsDirty(true); }}
+                    onConnect={onConnect}
+                    setNodes={setNodes}
+                    setIsDirty={setIsDirty}
+                    reactFlowWrapper={reactFlowWrapper}
+                />
             </div>
         </div>
     )
