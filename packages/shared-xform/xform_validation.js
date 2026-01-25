@@ -11,6 +11,8 @@ const xform_schema_1 = require("./xform_schema");
 const ajv_1 = __importDefault(require("ajv"));
 const yaml_1 = __importDefault(require("yaml"));
 const ajv = new ajv_1.default({ allErrors: true, strict: false });
+const addMetaSchema2020 = require('ajv/dist/refs/json-schema-2020-12').default;
+addMetaSchema2020.call(ajv, false);
 const validate = ajv.compile(xform_schema_1.TRANSFORM_JSON_SCHEMA);
 function validateSpecYaml(yamlText) {
     let obj;

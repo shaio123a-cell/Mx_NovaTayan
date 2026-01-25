@@ -1,0 +1,15 @@
+version: 1
+name: employees_minimal_json
+input:
+  type: json
+  root: $.employees[]
+output:
+  type: json
+mappings:
+  - name: employee_id
+    expr: id
+    type: number
+  - name: city
+    expr: city
+defaults:
+  on_missing: error
