@@ -2,7 +2,7 @@
 // React preview component for transformation engine
 
 import React, { useState, useEffect } from 'react';
-import { validateSpec, transform } from './xform_engine';
+import * as engine from 'shared-xform/xform_engine';
 
 interface XformPreviewProps {
   specYaml: string;
@@ -19,11 +19,11 @@ export const XformPreview: React.FC<XformPreviewProps> = ({ specYaml, inputText,
   const [columns, setColumns] = useState<string[]>([]);
 
   useEffect(() => {
-    const v = validateSpec(specYaml);
+    const v = engine.validateSpec(specYaml);
     setValid(v.ok);
-    setErrors(v.ok ? [] : v.errors);
+    setErrors(v.ok ? [] : (v as any).errors || []);
     if (v.ok) {
-      transform(v.spec, inputText, vars, { previewLimit: limit })
+      engine.transform(v.spec, inputText, vars, { previewLimit: limit })
         .then(result => {
           setPreview(typeof result === 'string' ? result : Buffer.from(result).toString('utf8'));
           if (v.spec.output.type === 'csv') {

@@ -1,19 +1,3 @@
-        @Post('preview-output-mutation')
-        async previewOutputMutation(@Body() body: { specYaml: string; inputText: string; vars?: any }) {
-            const { transform } = await import('../../../../packages/shared-xform/xform_engine');
-            try {
-                const result = await transform(body.specYaml, body.inputText, body.vars || {}, { limit: 20 });
-                return { ok: true, result };
-            } catch (err: any) {
-                return { ok: false, error: err.message };
-            }
-        }
-    @Post('validate-output-spec')
-    async validateOutputSpec(@Body('specYaml') specYaml: string) {
-        // Import validation from shared-xform
-        const { validateSpecYaml } = await import('../../../../packages/shared-xform/xform_validation');
-        return validateSpecYaml(specYaml);
-    }
 import { Controller, Get, Post, Body, Param, Patch, Query } from '@nestjs/common';
 import { WorkerService } from './worker.service';
 import { LoggerService } from '../common/logger/logger.service';
@@ -72,5 +56,29 @@ export class WorkerController {
         @Body() body: { result?: any; error?: string; input?: any }
     ) {
         return this.workerService.completeExecution(id, body.result, body.error, body.input);
+    }
+
+    @Post('preview-output-mutation')
+    async previewOutputMutation(@Body() body: { specYaml: string; inputText: string; vars?: any }) {
+        const { transform } = await import('../../../../packages/shared-xform/xform_engine');
+        const { validateSpecYaml } = await import('../../../../packages/shared-xform/xform_validation');
+        try {
+            const validation = validateSpecYaml(body.specYaml);
+            if (!validation.ok) {
+                const errs = (validation as any).errors || [];
+                return { ok: false, error: 'Invalid spec: ' + errs.join(', ') };
+            }
+            const result = await transform(validation.spec, body.inputText, body.vars || {}, { previewLimit: 20 });
+            return { ok: true, result };
+        } catch (err: any) {
+            return { ok: false, error: err.message };
+        }
+    }
+
+    @Post('validate-output-spec')
+    async validateOutputSpec(@Body('specYaml') specYaml: string) {
+        // Import validation from shared-xform
+        const { validateSpecYaml } = await import('../../../../packages/shared-xform/xform_validation');
+        return validateSpecYaml(specYaml);
     }
 }

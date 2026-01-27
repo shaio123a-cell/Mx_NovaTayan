@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { useState, useEffect } from 'react'
-import { XformPreview } from '../shared-xform/xform_preview.react';
+// Output processing is now per-variable; top-level preview removed.
 import { VariableManager } from './VariableManager';
 import { X, AlertTriangle } from 'lucide-react'
 
@@ -13,11 +13,12 @@ interface Props {
 export function TaskEditShelf({ taskId, onClose }: Props) {
     const queryClient = useQueryClient()
     const [activeTab, setActiveTab] = useState<'details' | 'config' | 'output'>('details')
-    // Output Processing State
-    const [outputSpecYaml, setOutputSpecYaml] = useState('');
-    const [outputInputText, setOutputInputText] = useState('');
+    // Output Processing State (now handled per-variable)
     const [outputVars, setOutputVars] = useState<Record<string, any>>({});
+    const [outputSpecYaml, setOutputSpecYaml] = useState<string>('');
+    const [outputInputText, setOutputInputText] = useState<string>('');
     const [outputError, setOutputError] = useState<string | null>(null);
+    const [previewResult, setPreviewResult] = useState<string | null>(null);
     const isEditing = !!taskId
 
     // Form State
@@ -65,6 +66,13 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
             setStatusMappings((task as any).statusMappings || [])
             setSanityChecks((task as any).sanityChecks || [])
             setGroupIds(((task as any).groups || []).map((g: any) => g.id))
+            // Load output processing fields if present
+            try {
+                const vars = (task as any).variableExtraction?.vars || (task as any).command?.outputProcessing?.vars || {};
+                setOutputVars(vars || {});
+            } catch (e) {
+                // ignore parsing errors
+            }
         }
     }, [task, isEditing])
 
@@ -74,7 +82,9 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                 name, description, method, url, 
                 headers: JSON.parse(headers), 
                 body, timeout, tags, statusMappings, sanityChecks,
-                groupIds
+                groupIds,
+                // Persist variable transformers only
+                variableExtraction: { vars: outputVars }
             }
             if (isEditing) tasksApi.updateTask(taskId!, data).then(() => { queryClient.invalidateQueries({ queryKey: ['tasks'] }); onClose(); })
             else tasksApi.createTask(data).then(() => { queryClient.invalidateQueries({ queryKey: ['tasks'] }); onClose(); })
@@ -140,6 +150,18 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                             <MaterialInput label="Task Name" value={name} onChange={setName} />
 
                             <MaterialInput label="Task Description" value={description} onChange={setDescription} />
+                            <div style={{ marginTop: 8 }}>
+                                <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Tags</label>
+                                <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    {tags.map(t => (
+                                        <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 16, backgroundColor: '#f3f4f6', fontSize: 12 }}>
+                                            <span style={{ fontWeight: 700, color: '#111827' }}>{t}</span>
+                                            <button onClick={() => setTags(tags.filter(x => x !== t))} style={{ border: 'none', background: 'transparent', color: '#999', cursor: 'pointer' }}>✕</button>
+                                        </div>
+                                    ))}
+                                    <TagAdder onAdd={(v: string) => { if (v && !tags.includes(v)) setTags([...tags, v]) }} />
+                                </div>
+                            </div>
                             
                             <div style={{ marginTop: '-16px' }}>
                                 <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Assign to Groups (Folders)</label>
@@ -256,6 +278,20 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                              </div>
                         </>
                     )}
+
+                    {activeTab === 'output' && (
+                        <>
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Output Processing</h4>
+                                </div>
+                                <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+                                    Output processing is now configured per-variable. Define variables and attach transformers below.
+                                </div>
+                                <VariableManager value={outputVars} onChange={setOutputVars} usedNames={[]} />
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Footer */}
@@ -265,36 +301,6 @@ export function TaskEditShelf({ taskId, onClose }: Props) {
                         style={{ background: 'transparent', border: 'none', color: '#1976D2', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', letterSpacing: '1px' }}
                     >
                         CANCEL
-                                            {activeTab === 'output' && (
-                                                <div>
-                                                    <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Output Processing</h4>
-                                                    <label>Transformation Spec (YAML):</label>
-                                                    <textarea
-                                                        value={outputSpecYaml}
-                                                        onChange={e => setOutputSpecYaml(e.target.value)}
-                                                        rows={8}
-                                                        style={{ width: '100%', fontFamily: 'monospace', marginBottom: 12 }}
-                                                    />
-                                                    <label>Sample Input Data:</label>
-                                                    <textarea
-                                                        value={outputInputText}
-                                                        onChange={e => setOutputInputText(e.target.value)}
-                                                        rows={4}
-                                                        style={{ width: '100%', fontFamily: 'monospace', marginBottom: 12 }}
-                                                    />
-                                                    <VariableManager value={outputVars} onChange={setOutputVars} usedNames={[]} />
-                                                    {outputError && <div style={{ color: 'red', marginBottom: 12 }}>{outputError}</div>}
-                                                    <div style={{ marginTop: 24 }}>
-                                                        <XformPreview
-                                                            specYaml={outputSpecYaml}
-                                                            inputText={outputInputText}
-                                                            vars={outputVars}
-                                                            limit={20}
-                                                            onError={(e: Error) => setOutputError(e.message)}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
                     </button>
                     <button 
                         onClick={handleSave}
@@ -403,6 +409,16 @@ function MaterialSelect({ label, value, onChange, options }: any) {
             >
                 {options.map((o: string) => <option key={o} value={o}>{o}</option>)}
             </select>
+        </div>
+    )
+}
+
+function TagAdder({ onAdd }: { onAdd: (v: string) => void }) {
+    const [val, setVal] = useState('');
+    return (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input value={val} onChange={e => setVal(e.target.value)} placeholder="Add tag" style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e0e0e0' }} />
+            <button onClick={() => { if (val.trim()) { onAdd(val.trim()); setVal(''); } }} style={{ backgroundColor: '#1976D2', color: 'white', border: 'none', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }}>Add</button>
         </div>
     )
 }

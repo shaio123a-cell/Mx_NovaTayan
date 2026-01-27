@@ -4,6 +4,7 @@ import { workflowsApi } from '../api/workflows'
 import { useState } from 'react'
 import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
 import { TaskEditShelf } from '../components/TaskEditShelf'
+import VariableInspectorDrawer from '../components/VariableInspectorDrawer'
 import { CheckCircle, AlertCircle, AlertTriangle, X, Clock, Play, Square, RefreshCcw } from 'lucide-react'
 
 function WorkflowExecutionDetail() {
@@ -11,6 +12,9 @@ function WorkflowExecutionDetail() {
     const [selectedTask, setSelectedTask] = useState<any>(null)
     const [showInspector, setShowInspector] = useState(false)
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+    const [inspectorVarOpen, setInspectorVarOpen] = useState(false);
+    const [inspectedVarName, setInspectedVarName] = useState<string | null>(null);
+    const [inspectedVarPayload, setInspectedVarPayload] = useState<{ value: any; transformer?: any; input?: any } | null>(null);
 
 
     const queryClient = useQueryClient();
@@ -258,6 +262,88 @@ function WorkflowExecutionDetail() {
                                 </div>
                             </section>
 
+                            {/* Output Processing Details */}
+                            <section>
+                                <h4 className="text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Output Processing</h4>
+                                <div className="space-y-4">
+                                    {/* Task-level transformation spec removed — handled per-variable now */}
+
+                                    <div>
+                                        <p className="text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-tighter">Saved Variables</p>
+                                        {selectedTask.task?.variableExtraction?.vars && Object.keys(selectedTask.task.variableExtraction.vars).length > 0 ? (
+                                            <table className="w-full text-xs border-collapse">
+                                                <thead>
+                                                    <tr className="text-left text-[11px] text-gray-500">
+                                                        <th className="pb-2">Name</th>
+                                                        <th className="pb-2">Value</th>
+                                                        <th className="pb-2">Scope</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {Object.entries(selectedTask.task.variableExtraction.vars).filter(([k]) => k !== '__scopes').map(([name, val]: any) => (
+                                                        <tr key={name} className="border-t border-gray-100">
+                                                            <td className="py-2 align-top font-mono text-gray-700">{name}</td>
+                                                            <td className="py-2 align-top font-mono text-gray-700">{typeof val === 'object' && val.valueMode === 'transformer' ? <span className="italic text-gray-600">[Transformer] {val.transformer?.type}</span> : String(val)}</td>
+                                                            <td className="py-2 align-top text-[11px] text-gray-500">{(selectedTask.task.variableExtraction.vars.__scopes || {})[name] || 'LOCAL'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        ) : (
+                                            <div className="text-xs text-gray-500">No variables configured for this task.</div>
+                                        )}
+                                    </div>
+
+                                    <div>
+                                        <p className="text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-tighter">Computed Variables (this run)</p>
+                                        {selectedTask.result?.variables && Object.keys(selectedTask.result.variables).length > 0 ? (
+                                            <table className="w-full text-xs border-collapse">
+                                                <thead>
+                                                    <tr className="text-left text-[11px] text-gray-500">
+                                                        <th className="pb-2">Name</th>
+                                                        <th className="pb-2">Value</th>
+                                                        <th className="pb-2">Scope</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {Object.entries(selectedTask.result.variables).map(([name, val]: any) => (
+                                                        <tr key={name} className="border-t border-gray-100">
+                                                            <td className="py-2 align-top font-mono text-gray-700">{name}</td>
+                                                            <td className="py-2 align-top font-mono text-gray-700">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</td>
+                                                            <td className="py-2 align-top text-[11px] text-gray-500">{(selectedTask.result.variableScopes || {})[name] || (selectedTask.task?.variableExtraction?.vars?.__scopes || {})[name] || 'LOCAL'}</td>
+                                                            <td className="py-2 align-top text-right">
+                                                                <button onClick={() => {
+                                                                    const savedDef = selectedTask.task?.variableExtraction?.vars?.[name];
+                                                                    const transformer = savedDef && savedDef.valueMode === 'transformer' ? savedDef.transformer : savedDef;
+                                                                    // determine input used: variable input or task result
+                                                                    let inputUsed: any = selectedTask.result?.data ?? selectedTask.task?.command?.body ?? null;
+                                                                    if (transformer && transformer.inputSource === 'variable' && transformer.inputVariable) {
+                                                                        inputUsed = selectedTask.result?.variables?.[transformer.inputVariable] ?? null;
+                                                                    }
+                                                                    setInspectedVarName(name);
+                                                                    setInspectedVarPayload({ value: val, transformer, input: inputUsed });
+                                                                    setInspectorVarOpen(true);
+                                                                }} className="text-primary-600 font-bold text-xs">Inspect</button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        ) : (
+                                            <div className="text-xs text-gray-500">No variables computed for this execution.</div>
+                                        )}
+                                        {selectedTask.result?.variableErrors && (
+                                            <div className="mt-3 text-xs text-red-600">
+                                                <div className="font-bold">Variable Errors:</div>
+                                                <pre className="bg-red-50 p-2 rounded mt-1 text-[12px]">{JSON.stringify(selectedTask.result.variableErrors, null, 2)}</pre>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Processed output display removed — transformations are per-variable now */}
+                                </div>
+                            </section>
+
                             {/* Sanity Check Results */}
                             {selectedTask.task?.sanityChecks?.length > 0 && (
                                 <section>
@@ -298,6 +384,17 @@ function WorkflowExecutionDetail() {
                         </div>
                     </div>
                 </>
+            )}
+
+            {inspectorVarOpen && inspectedVarName && inspectedVarPayload && (
+                <VariableInspectorDrawer
+                    open={inspectorVarOpen}
+                    name={inspectedVarName}
+                    value={inspectedVarPayload.value}
+                    transformer={inspectedVarPayload.transformer}
+                    inputValue={inspectedVarPayload.input}
+                    onClose={() => { setInspectorVarOpen(false); setInspectedVarName(null); setInspectedVarPayload(null); }}
+                />
             )}
         </>
     )
