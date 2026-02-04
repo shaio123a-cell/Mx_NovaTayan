@@ -1,0 +1,12 @@
+{
+  "name": "Extract Employees",
+  "description": "Demo extract employees",
+  "method": "GET",
+  "url": "https://example.invalid",
+  "headers": {},
+  "body": "",
+  "timeout": 30000,
+  "tags": [],
+  "outputMutation": { "transformTemplate": "<paste YAML here as a single-line escaped string or via your client>" },
+  "variableExtraction": { "vars": { }, "sampleInput": "" }
+}

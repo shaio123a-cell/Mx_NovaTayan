@@ -1,0 +1,262 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  email     String   @unique
+  password  String   // Encrypted
+  role      String   // UserRole enum
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ownedTasks      Task[]
+  ownedWorkflows  Workflow[]
+  ownedSchedules  Schedule[]
+  ownedSecrets    Secret[]
+
+  @@map("users")
+}
+
+model Secret {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  value       String   // Encrypted
+  scope       String   // ScopeType enum
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("secrets")
+}
+
+model Task {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  scope       String   // ScopeType enum
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
+  
+  // JSON fields for complex data
+  command            Json    // HttpRequestConfig
+  variableExtraction Json?   // VariableExtraction[]
+  outputMutation     Json?   // OutputMutation
+  statusMappings     Json?   // StatusMapping[]
+  retryPolicy        Json?   // RetryPolicy
+  sanityChecks      Json?   // SanityCheck[]
+  
+  tags      String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  executions TaskExecution[]
+  groups     TaskGroup[]     @relation("TaskToGroup")
+
+  @@map("tasks")
+}
+
+model TaskGroup {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  tasks       Task[]   @relation("TaskToGroup")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("task_groups")
+}
+
+model TaskExecution {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id])
+  
+  nodeId    String?  // The ID of the node in the workflow graph
+  
+  workflowExecutionId String?
+  workflowExecution   WorkflowExecution? @relation(fields: [workflowExecutionId], references: [id])
+
+  status    String   // PENDING, RUNNING, COMPLETED, FAILED
+  input     Json?    // HttpRequestConfig (actual sent)
+  result    Json?    // HttpResponse
+  error     String?
+  startedAt DateTime @default(now())
+  completedAt DateTime?
+  duration  Int?     // milliseconds
+
+  workerId  String?
+  worker    Worker?  @relation(fields: [workerId], references: [id])
+  
+  targetWorkerId String?
+  targetTags     String[]
+
+  @@map("task_executions")
+}
+
+model Worker {
+  id          String   @id @default(uuid())
+  name        String?
+  hostname    String   @unique
+  ipAddress   String?
+  status      String   @default("OFFLINE") // ONLINE, OFFLINE, DISABLED
+  tags        String[]
+  lastSeen    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  executions TaskExecution[]
+  workflowExecutions WorkflowExecution[] @relation("WorkerToWorkflowExecutions")
+
+  @@map("workers")
+}
+
+model Workflow {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  scope       String   // ScopeType enum
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
+  version     Int      @default(1)
+  
+  // Graph definition (stored as JSON)
+  nodes Json // WorkflowNode[]
+  edges Json // WorkflowEdge[]
+  
+  scheduleId String?
+  schedule   Schedule? @relation(fields: [scheduleId], references: [id])
+  enabled    Boolean   @default(false)
+  
+  tags      String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  executions WorkflowExecution[]
+
+  @@map("workflows")
+}
+
+model Schedule {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  scope           String   // ScopeType enum
+  ownerId         String
+  owner           User     @relation(fields: [ownerId], references: [id])
+  
+  recurrenceType  String   // RecurrenceType enum
+  recurrenceValue Int?
+  cronExpression  String?
+  
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  workflows Workflow[]
+
+  @@map("schedules")
+}
+
+model WorkflowExecution {
+  id              String   @id @default(uuid())
+  workflowId      String
+  workflow        Workflow @relation(fields: [workflowId], references: [id])
+  workflowName    String
+  workflowVersion Int
+  
+  status        String   // ExecutionStatus enum
+  triggeredBy   String   // SCHEDULE | MANUAL | SIGNAL
+  triggeredByUser String?
+  
+  startedAt   DateTime
+  completedAt DateTime?
+  duration    Int?      // milliseconds
+  
+  // Task execution results (stored as JSON)
+  taskExecutions Json // TaskExecutionResult[] - Consider phasing this out for the relation
+  
+  // Relations
+  taskExecutionRecords TaskExecution[]
+  
+  parentExecutionId String?
+  parentExecution   WorkflowExecution? @relation("WorkflowExecutionsToWorkflowExecutions", fields: [parentExecutionId], references: [id])
+  childExecutions    WorkflowExecution[] @relation("WorkflowExecutionsToWorkflowExecutions")
+
+  targetWorkerId     String?
+  targetWorker       Worker? @relation("WorkerToWorkflowExecutions", fields: [targetWorkerId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("workflow_executions")
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  description String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model GlobalVariable {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  group       String?
+  type        String   // string|number|boolean|array|object|binary|secret
+  value       String   // Encrypted if type is secret
+  validation  Json?    // regex|JSON schema|min|max|required
+  isSecret    Boolean  @default(false)
+  state       String   @default("ACTIVE") // ACTIVE|DEPRECATED|PENDING_REMOVAL
+  version     Int      @default(1) // Optimistic concurrency
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("global_variables")
+}
+
+model GlobalVariableGroup {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("global_variable_groups")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String   // CREATE|UPDATE|DELETE
+  entity    String   // GLOBAL_VAR etc
+  entityId  String
+  actor     String   // username
+  details   Json?    // Before/After, redacted
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}

@@ -1,0 +1,8 @@
+{
+  "employees": [
+    {"id":101,"name":"Jordan Smith","age":29,"city":"New York","work_address":"750 7th Ave, New York, NY 10019"},
+    {"id":102,"name":"Sarah Chen","age":34,"city":"San Francisco","work_address":"1 Market St, San Francisco, CA 94105"},
+    {"id":103,"name":"Marcus Miller","age":42,"city":"Chicago","work_address":"233 S Wacker Dr, Chicago, IL 60606"},
+    {"id":104,"name":"Elena Rodriguez","age":27,"city":"Austin","work_address":"500 W 2nd St, Austin, TX 78701"}
+  ]
+}
