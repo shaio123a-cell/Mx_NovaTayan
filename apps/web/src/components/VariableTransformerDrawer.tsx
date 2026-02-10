@@ -7,10 +7,10 @@ import { globalVarsApi } from '../api/globalVars';
 
 // --- Main Drawer ---
 
-export function VariableTransformerDrawer({ open, name, initial, variables = [], onClose, onSave }: any) {
+export function VariableTransformerDrawer({ open, name, initial, variables = [], onClose, onSave, readOnly = false }: any) {
   const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
   // State
-  const [tab, setTab] = useState<'constant'|'regex'|'jmespath'|'xpath'|'advanced'>('jmespath');
+  const [tab, setTab] = useState<'none'|'constant'|'regex'|'jmespath'|'xpath'|'advanced'>('none');
   const [spec, setSpec] = useState('');
   
   // UX State
@@ -39,7 +39,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
       setContextJson(initial.contextJson || '{"global": { "env": "dev" }}');
       setDirty(false);
     } else {
-      setTab('jmespath'); setSpec(''); setInputSource('task_output'); setInputVariable(''); setSample(''); setTestResult(null); setDirty(false);
+      setTab('none'); setSpec(''); setInputSource('task_output'); setInputVariable(''); setSample(''); setTestResult(null); setDirty(false);
     }
   }, [initial, open]);
 
@@ -173,6 +173,10 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
             setTestResult(interpolatedSpec);
             return;
         }
+        if (tab === 'none') {
+            setTestResult(typeof testInput === 'object' ? JSON.stringify(testInput, null, 2) : String(testInput));
+            return;
+        }
         setTestResult('No engine available to test this transformer in the browser.');
       } catch (e: any) {
         setError(String(e?.message || e));
@@ -222,8 +226,9 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                 
                 <div className="flex gap-4 items-center">
                     <button 
-                        onClick={() => { setInputSource('task_output'); setDirty(true); }}
-                        className={`flex-1 p-3 rounded-lg border text-left transition-all ${inputSource === 'task_output' ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+                        onClick={() => { if (!readOnly) { setInputSource('task_output'); setDirty(true); } }}
+                        disabled={readOnly}
+                        className={`flex-1 p-3 rounded-lg border text-left transition-all ${inputSource === 'task_output' ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200 hover:border-gray-300 bg-white'} ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                     >
                         <div className="flex items-center gap-2 font-semibold text-gray-800 text-sm">
                             <Box size={16} className={inputSource === 'task_output' ? 'text-blue-500' : 'text-gray-400'} />
@@ -233,8 +238,9 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                     </button>         
 
                     <button 
-                        onClick={() => { setInputSource('variable'); setDirty(true); }}
-                        className={`flex-1 p-3 rounded-lg border text-left transition-all ${inputSource === 'variable' ? 'border-purple-500 bg-purple-50 ring-1 ring-purple-500' : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+                        onClick={() => { if (!readOnly) { setInputSource('variable'); setDirty(true); } }}
+                        disabled={readOnly}
+                        className={`flex-1 p-3 rounded-lg border text-left transition-all ${inputSource === 'variable' ? 'border-purple-500 bg-purple-50 ring-1 ring-purple-500' : 'border-gray-200 hover:border-gray-300 bg-white'} ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                     >
                         <div className="flex items-center gap-2 font-semibold text-gray-800 text-sm">
                             <Zap size={16} className={inputSource === 'variable' ? 'text-purple-500' : 'text-gray-400'} />
@@ -251,15 +257,18 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                         <div className="flex gap-2">
                             <VariableAwareInput 
                                 value={inputVariable} 
-                                onValueChange={val => { setInputVariable(val); setDirty(true); }}
+                                onValueChange={val => { if (!readOnly) { setInputVariable(val); setDirty(true); } }}
                                 placeholder="{{global.myVar}}"
+                                disabled={readOnly}
                             />
-                            <button 
-                                onClick={() => openPicker('input')}
-                                className="px-3 py-2 bg-purple-100 text-purple-700 font-bold text-sm rounded-md hover:bg-purple-200 transition-colors flex items-center gap-2 h-[46px]"
-                            >
-                                <Plus size={14}/> Pick
-                            </button>
+                            {!readOnly && (
+                                <button 
+                                    onClick={() => openPicker('input')}
+                                    className="px-3 py-2 bg-purple-100 text-purple-700 font-bold text-sm rounded-md hover:bg-purple-200 transition-colors flex items-center gap-2 h-[46px]"
+                                >
+                                    <Plus size={14}/> Pick
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}
@@ -273,7 +282,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                     
                     {/* Engine Tabs */}
                      <div className="flex bg-gray-100 p-1 rounded-lg">
-                        {(['constant','regex','jmespath','xpath','advanced'] as any[]).map(t => (
+                        {(['none','constant','regex','jmespath','xpath','advanced'] as any[]).map(t => (
                             <button 
                                 key={t} 
                                 onClick={() => { setTab(t); setDirty(true); }} 
@@ -295,12 +304,19 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                             <Plus size={10}/> Insert Variable
                         </button>
                     </div>
-                    <VariableAwareInput 
-                        value={spec} 
-                        onValueChange={val => { setSpec(val); setDirty(true); }} 
-                        isTextarea={true}
-                        placeholder={tab === 'advanced' ? "mappings:\n  - name: id\n    expr: {{global.prefix}}-{{uuid}}" : "Expression..."}
-                    />
+                    {tab !== 'none' ? (
+                        <VariableAwareInput 
+                            value={spec} 
+                            onValueChange={val => { if (!readOnly) { setSpec(val); setDirty(true); } }} 
+                            isTextarea={true}
+                            disabled={readOnly}
+                            placeholder={tab === 'advanced' ? "mappings:\n  - name: id\n    expr: {{global.prefix}}-{{uuid}}" : "Expression..."}
+                        />
+                    ) : (
+                        <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-200 text-gray-400 text-xs text-center italic">
+                            No transformation will be applied. Input value is used as-is.
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -350,8 +366,12 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
         {/* Footer */}
         <div className="p-4 border-t border-gray-200 bg-white flex justify-end gap-3 shrink-0 z-10">
            <button onClick={() => { setSpec(''); setSample(''); setDirty(false); }} className="px-4 py-2 text-gray-500 hover:text-gray-700 font-medium text-sm">Reset</button>
-           <button onClick={() => { if (dirty) setConfirmClose(true); else onClose && onClose(); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm">Cancel</button>
-           <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm shadow hover:shadow-md transition-all">Save Changes</button>
+           <button onClick={() => { if (dirty) setConfirmClose(true); else onClose && onClose(); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm">
+               {readOnly ? 'Close' : 'Cancel'}
+           </button>
+           {!readOnly && (
+               <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm shadow hover:shadow-md transition-all">Save Changes</button>
+           )}
         </div>
 
         {/* Overlays */}

@@ -28,7 +28,7 @@ export async function executeHttpRequest(config: {
 }> {
     console.log(`Executing HTTP ${config.method} to ${config.url}`);
 
-    let headers = { ...config.headers } || {};
+    let headers = config.headers ? { ...config.headers } : {};
     let url = config.url;
 
     // Handle authorization
@@ -65,7 +65,7 @@ export async function executeHttpRequest(config: {
                 } else {
                     headers['Authorization'] = `Bearer ${token}`;
                 }
-            } catch (error) {
+            } catch (error: any) {
                 console.error(`JWT signing failed: ${error.message}`);
                 throw new Error(`JWT authentication failed: ${error.message}`);
             }

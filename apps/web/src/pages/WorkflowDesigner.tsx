@@ -512,7 +512,7 @@ function WorkflowDesignerContent() {
                 position: n.position,
                 data: {
                     id: n.id,
-                    label: n.label,
+                    label: tasks?.find((t: any) => t.id === n.taskId)?.name || n.label,
                     taskId: n.taskId,
                     taskType: n.taskType || 'HTTP',
                     method: n.taskType === 'VARIABLE' ? 'VAR' : (tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'),
@@ -989,8 +989,8 @@ function WorkflowDesignerContent() {
 
                 return (
                     <TaskEditShelf 
-                        taskId={isUtil ? null : editingNode.data.taskId} 
-                        nodeData={isUtil ? editingNode.data : null}
+                        taskId={editingNode.data.taskId} 
+                        nodeData={editingNode.data}
                         availableUpstreamVars={Array.from(new Set(upstreamVarNames))}
                         onClose={() => setEditingNode(null)}
                         onSaveNode={(newNodeData: any) => {

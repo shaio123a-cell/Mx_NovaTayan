@@ -25,32 +25,18 @@ export class TasksService implements OnModuleInit {
             });
         }
 
-        // Ensure System Variables Utility Task exists
+        // Cleanup: Remove legacy System Variables Utility Task if it exists
         const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
-        const varTask = await this.prisma.task.findUnique({ where: { id: SYSTEM_VAR_ID } });
-        if (!varTask) {
-            this.logger.log('Creating System Variables Utility Task...');
-            // Need a system owner ID. We'll try to find any admin or just use a fixed ID if we can't.
-            // For now, we'll use a placeholder owner or find the first user.
-            const firstUser = await this.prisma.user.findFirst();
-            if (firstUser) {
-                await this.prisma.task.create({
-                    data: {
-                        id: SYSTEM_VAR_ID,
-                        name: 'VARIABLE_UTILITY',
-                        description: 'System task for variable manipulation and transformation',
-                        scope: 'GLOBAL',
-                        ownerId: firstUser.id,
-                        command: { method: 'VAR' } as any,
-                        tags: ['system', 'utility']
-                    }
-                });
-            }
+        try {
+            await this.prisma.task.delete({ where: { id: SYSTEM_VAR_ID } });
+            this.logger.log('Removed legacy System Variables Utility Task.');
+        } catch (e) {
+            // Ignore if already gone
         }
     }
 
     async create(createTaskDto: CreateTaskDto, ownerId: string) {
-        const { method, url, headers, body, timeout, scope, tags, groupIds, ...rest } = createTaskDto;
+        const { method, url, headers, body, timeout, scope, tags, groupIds, authorization, ...rest } = createTaskDto;
         const cleanRest = { ...rest };
         if ('workerGroup' in cleanRest) delete (cleanRest as any).workerGroup;
 
@@ -65,6 +51,7 @@ export class TasksService implements OnModuleInit {
             headers: headers || {},
             body: body || undefined,
             timeout: timeout || 30000,
+            authorization: authorization || undefined
         };
 
         return this.prisma.task.create({
@@ -117,21 +104,21 @@ export class TasksService implements OnModuleInit {
     }
 
     async update(id: string, updateTaskDto: UpdateTaskDto) {
-        await this.findOne(id);
+        const existing = await this.findOne(id);
 
-        const { method, url, headers, body, timeout, groupIds, ...rest } = updateTaskDto;
+        const { method, url, headers, body, timeout, groupIds, authorization, ...rest } = updateTaskDto;
         const commandUpdate: any = {};
         if (method) commandUpdate.method = method;
         if (url) commandUpdate.url = url;
         if (headers !== undefined) commandUpdate.headers = headers;
         if (body !== undefined) commandUpdate.body = body;
         if (timeout !== undefined) commandUpdate.timeout = timeout;
+        if (authorization !== undefined) commandUpdate.authorization = authorization;
 
         const updateData: any = { ...rest };
         if ('workerGroup' in updateData) delete updateData.workerGroup;
 
         if (Object.keys(commandUpdate).length > 0) {
-            const existing = await this.findOne(id);
             updateData.command = {
                 ...(existing.command as any),
                 ...commandUpdate,
@@ -144,11 +131,39 @@ export class TasksService implements OnModuleInit {
             };
         }
 
-        return this.prisma.task.update({
+        const updatedTask = await this.prisma.task.update({
             where: { id },
             data: updateData,
             include: { groups: true }
         });
+
+        // Propagation logic: Update labels in all workflows if name changed
+        if (rest.name && rest.name !== existing.name) {
+            this.logger.log(`Propagating name change for task ${id}: ${existing.name} -> ${rest.name}`);
+            const allWorkflows = await this.prisma.workflow.findMany();
+            for (const wf of allWorkflows) {
+                let nodes = wf.nodes as any[];
+                if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+                
+                let changed = false;
+                const updatedNodes = nodes.map(node => {
+                    if (node.taskId === id) {
+                        changed = true;
+                        return { ...node, label: rest.name };
+                    }
+                    return node;
+                });
+
+                if (changed) {
+                    await this.prisma.workflow.update({
+                        where: { id: wf.id },
+                        data: { nodes: updatedNodes }
+                    });
+                }
+            }
+        }
+
+        return updatedTask;
     }
 
     async remove(id: string) {
@@ -187,8 +202,9 @@ export class TasksService implements OnModuleInit {
     async getImpact(taskId: string) {
         const workflows = await this.prisma.workflow.findMany();
         const impactedWorkflows = workflows.filter((wf: any) => {
-            const nodes = wf.nodes as any[];
-            return nodes.some(n => n.taskId === taskId);
+            let nodes = wf.nodes as any[];
+            if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+            return Array.isArray(nodes) && nodes.some(n => n.taskId === taskId);
         });
 
         return {
@@ -196,7 +212,7 @@ export class TasksService implements OnModuleInit {
             workflows: impactedWorkflows.map(wf => ({
                 id: wf.id,
                 name: wf.name
-            })).slice(0, 10)
+            })).slice(0, 50) // Increased limit for better visibility
         };
     }
 }

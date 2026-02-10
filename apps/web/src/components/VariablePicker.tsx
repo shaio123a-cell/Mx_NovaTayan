@@ -39,7 +39,11 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
             label: 'Workflow System', 
             icon: Workflow, 
             items: [
-                { label: 'executionId', value: '{{workflow.executionId}}' }
+                { label: 'executionId', value: '{{workflow.executionId}}' },
+                { label: 'Last execution epoch', value: '{{workflow.lastExecutionEpoch}}' },
+                { label: 'Last successful epoch', value: '{{workflow.lastSuccessEpoch}}' },
+                { label: 'Last failed epoch', value: '{{workflow.lastFailedEpoch}}' },
+                { label: 'Last cancelled epoch', value: '{{workflow.lastCancelledEpoch}}' }
             ] 
         },
         {

@@ -161,3 +161,5 @@ Acceptance:
 - Cycle: global.a="{{global.b}}", global.b="{{global.a}}" → cycle error
 - transformion: source {{ coalesce:jwt,global.defaultJwt }} → target workflow jwt
 - Admin impact: workflow contains {{global.apiBase}} in URL → shows in impact list
+
+

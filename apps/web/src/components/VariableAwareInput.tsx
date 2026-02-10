@@ -5,9 +5,10 @@ import { globalVarsApi } from '../api/globalVars';
 interface VariableAwareInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>, 'onChange'> {
     isTextarea?: boolean;
     onValueChange: (val: string) => void;
+    availableVars?: (string | { name: string, taskName: string, value?: any })[];
 }
 
-export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ value, onValueChange, placeholder, isTextarea = false, ...props }, ref) => {
+export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ value, onValueChange, placeholder, isTextarea = false, availableVars, ...props }, ref) => {
     const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
     const [tooltip, setTooltip] = useState<{ text: string, x: number, y: number } | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -42,6 +43,30 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
     // Simple Recursive Resolver for UI Tooltips
     const resolveVar = (expr: string, depth = 0): string => {
         if (depth > 5) return '... (too deep)';
+        
+        // Check if it's a workflow or local variable from availableVars
+        if (availableVars && availableVars.length > 0) {
+            const varName = expr.replace(/^(workflow\.|local\.)/, '');
+            const found = availableVars.find(v => {
+                if (typeof v === 'string') return v === varName;
+                return v.name === varName;
+            });
+            
+            if (found) {
+                // For upstream variables, we can't resolve their actual values in the UI
+                // Just indicate they're available
+                if (typeof found === 'string') {
+                    return `[Workflow/Local: ${found}]`;
+                } else {
+                    const valPreview = found.value !== undefined && found.value !== null 
+                        ? ` = ${typeof found.value === 'object' ? JSON.stringify(found.value).substring(0, 50) + (JSON.stringify(found.value).length > 50 ? '...' : '') : String(found.value)}`
+                        : '';
+                    return `[From ${found.taskName}: ${found.name}]${valPreview}`;
+                }
+            }
+        }
+        
+        // Fall back to global variable resolution
         const name = expr.startsWith('global.') ? expr.substring(7) : expr;
         const v = globalVars?.find((gv: any) => gv.name === name);
         if (!v) return 'Not found';
@@ -49,7 +74,7 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         
         const val = String(v.value);
         if (val.includes('{{')) {
-            return val.replace(/{{\s*(.+?)\s*}}/g, (match, innerExpr) => {
+            return val.replace(/\{\{\s*(.+?)\s*\}\}/g, (match, innerExpr) => {
                 return resolveVar(innerExpr.trim(), depth + 1);
             });
         }
@@ -97,16 +122,30 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
     const renderHighlights = () => {
         const result = [];
         let lastIndex = 0;
+        const isPassword = (props as any).type === 'password';
+        
+        const maskText = (text: string) => isPassword ? '●'.repeat(text.length) : text;
         
         regions.forEach((region, idx) => {
             if (region.start > lastIndex) {
-                result.push(<span key={`text-${idx}`}>{strValue.substring(lastIndex, region.start)}</span>);
+                result.push(<span key={`text-${idx}`}>{maskText(strValue.substring(lastIndex, region.start))}</span>);
             }
 
             const expr = region.expr;
             const isGlobal = expr.startsWith('global.');
-            const isWorkflow = expr.startsWith('workflow.') || expr.startsWith('HTTP.');
+            const isWorkflow = expr.startsWith('workflow.');
+            const isLocal = expr.startsWith('local.');
             
+            // Check if it's in availableVars (which could be plain names)
+            let isAvailable = false;
+            if (availableVars && !isGlobal && !isWorkflow && !isLocal) {
+                const varName = expr;
+                isAvailable = availableVars.some(v => {
+                    if (typeof v === 'string') return v === varName;
+                    return v.name === varName;
+                });
+            }
+
             let bgColor = '#f3f4f6'; 
             let textColor = '#1E40AF'; 
             let borderColor = '#d1d5db';
@@ -115,10 +154,14 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                 bgColor = '#DBEAFE'; // blue-100
                 textColor = '#1E40AF'; // blue-800
                 borderColor = '#BFDBFE'; 
-            } else if (isWorkflow) {
+            } else if (isWorkflow || expr.startsWith('HTTP.')) {
                 bgColor = '#FFEDD5'; // orange-100
                 textColor = '#9A3412'; // orange-800
                 borderColor = '#FED7AA'; 
+            } else if (isLocal || isAvailable) {
+                bgColor = '#F3E8FF'; // purple-100
+                textColor = '#6B21A8'; // purple-800
+                borderColor = '#E9D5FF';
             }
 
             result.push(
@@ -145,7 +188,7 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         });
 
         if (lastIndex < strValue.length) {
-            result.push(<span key="text-end">{strValue.substring(lastIndex)}</span>);
+            result.push(<span key="text-end">{maskText(strValue.substring(lastIndex))}</span>);
         }
         return result;
     };
@@ -203,9 +246,10 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                     WebkitTextFillColor: 'transparent',
                     background: 'transparent',
                     caretColor: '#111827',
-                    minHeight: isTextarea ? '120px' : '46px',
-                    height: isTextarea ? 'auto' : '46px',
+                    minHeight: isTextarea ? (props.style?.minHeight || '120px') : (props.style?.minHeight || '46px'),
+                    height: props.style?.height || (isTextarea ? 'auto' : '46px'),
                     resize: isTextarea ? 'vertical' : 'none',
+                    ...props.style
                 }}
             />
 

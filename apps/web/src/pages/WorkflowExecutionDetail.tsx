@@ -18,7 +18,9 @@ import {
     Activity,
     Server,
     ArrowLeft,
-    Save
+    Save, 
+    ChevronDown, 
+    ChevronRight
 } from 'lucide-react'
 
 function WorkflowExecutionDetail() {
@@ -30,6 +32,7 @@ function WorkflowExecutionDetail() {
     const [inspectorVarOpen, setInspectorVarOpen] = useState(false);
     const [inspectedVarName, setInspectedVarName] = useState<string | null>(null);
     const [inspectedVarPayload, setInspectedVarPayload] = useState<{ value: any; transformer?: any; input?: any } | null>(null);
+    const [expandedSections, setExpandedSections] = useState<string[]>(['definition', 'results']);
 
 
     const queryClient = useQueryClient();
@@ -225,7 +228,13 @@ function WorkflowExecutionDetail() {
                                         variableExtraction: nodeDef?.variableExtraction || record.input?.variableExtraction || record.task?.variableExtraction || { vars: {} }
                                     });
                                 } else if (record.task) {
+                                    const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === nodeId);
                                     setEditingTaskId(record.task.id);
+                                    setEditingNodeData({
+                                        id: nodeId,
+                                        label: nodeDef?.label || record.label || record.task?.name,
+                                        ...nodeDef
+                                    });
                                 }
                             }
                         }}
@@ -262,10 +271,29 @@ function WorkflowExecutionDetail() {
                         return ((workflow.nodes as any[]) || [])
                             .filter((n: any) => upstreamIds.includes(n.id))
                             .flatMap((n: any) => {
-                                const vars = n.variableExtraction?.vars || {};
+                                // Try to find the record in execution history to get full task definition
+                                // This ensures we get library variables too, not just overlays
+                                const record = execution?.taskExecutionRecords?.find((r: any) => r.nodeId === n.id);
+                                
+                                let vars = {};
+                                
+                                if (record) {
+                                    const libVars = record.task?.variableExtraction?.vars || {};
+                                    // Use input from record (what was actually executed) or node def
+                                    const overlayVars = record.input?.variableExtraction?.vars || n.variableExtraction?.vars || {};
+                                    vars = { ...libVars, ...overlayVars };
+                                } else {
+                                    // Fallback to just node overlay if no execution record found
+                                    vars = n.variableExtraction?.vars || {};
+                                }
+
                                 return Object.keys(vars)
                                     .filter(k => !k.startsWith('__'))
-                                    .map(name => ({ name, taskName: n.label || 'Task' }));
+                                    .map(name => ({ 
+                                        name, 
+                                        taskName: n.label || record?.task?.name || 'Task',
+                                        value: record?.result?.variables?.[name] ?? null
+                                    }));
                             });
                     })()}
                     onClose={() => { setEditingTaskId(null); setEditingNodeData(null); }} 
@@ -328,7 +356,13 @@ function WorkflowExecutionDetail() {
                              {(selectedTask.taskType !== 'VARIABLE') ? (
                                  <button 
                                     onClick={() => {
+                                        const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
                                         setEditingTaskId(selectedTask.task.id);
+                                        setEditingNodeData({
+                                            id: selectedTask.nodeId,
+                                            label: nodeDef?.label || selectedTask.label || selectedTask.task?.name,
+                                            ...nodeDef
+                                        });
                                         setShowInspector(false);
                                     }}
                                     className="text-[11px] font-bold text-primary-600 hover:underline flex items-center gap-1"
@@ -425,16 +459,30 @@ function WorkflowExecutionDetail() {
 
                                  <div className="space-y-8">
                                      {/* Section 1: Definition (Saved Variables) */}
-                                     <div>
-                                         <p className="text-[10px] font-bold text-gray-400 mb-3 uppercase tracking-tighter">Definition (Saved Variables)</p>
+                                     <div className="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                                         <button 
+                                             onClick={() => setExpandedSections(p => p.includes('definition') ? p.filter(s => s !== 'definition') : [...p, 'definition'])}
+                                             className="w-full flex items-center gap-2 p-3 bg-gray-50/80 hover:bg-gray-100 transition-colors text-left"
+                                         >
+                                             {expandedSections.includes('definition') ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+                                             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Definition (Saved Variables)</span>
+                                         </button>
+                                         
+                                         {expandedSections.includes('definition') && <div className="p-4 bg-white border-t border-gray-100">
                                          {(() => {
                                              const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
                                              const isVariableTask = selectedTask.taskType === 'VARIABLE' || 
                                                                   selectedTask.task?.id === '00000000-0000-0000-0000-000000000001' || 
                                                                   selectedTask.task?.name?.toLowerCase().includes('variable');
-                                             const vars = (isVariableTask 
-                                                 ? (nodeDef?.variableExtraction?.vars || selectedTask.input?.variableExtraction?.vars) 
-                                                 : (selectedTask.task?.variableExtraction?.vars)) || {};
+                                             
+                                             const libraryVars = (!isVariableTask ? selectedTask.task?.variableExtraction?.vars : {}) || {};
+                                             // Check both nodeDef and input for overlay variables
+                                             const instanceVars = {
+                                                 ...(selectedTask.input?.variableExtraction?.vars || {}),
+                                                 ...(nodeDef?.variableExtraction?.vars || {})
+                                             };
+                                             
+                                             const vars = { ...libraryVars, ...instanceVars };
                                              const displayVars = Object.keys(vars).filter(k=>!k.startsWith('__'));
                                              
                                              if (displayVars.length === 0) {
@@ -452,8 +500,30 @@ function WorkflowExecutionDetail() {
                                                     </thead>
                                                     <tbody>
                                                         {(() => {
-                                                            const order = Array.isArray(vars.__order) ? vars.__order : Object.keys(vars).filter(k => k !== '__scopes' && k !== '__order');
-                                                            return order.filter(n => vars.hasOwnProperty(n) && !n.startsWith('__')).map((name: string) => {
+                                                            // Separate library and overlay variable names
+                                                            const libraryVarNames = Object.keys(libraryVars).filter(k => !k.startsWith('__'));
+                                                            const overlayVarNames = Object.keys(instanceVars).filter(k => !k.startsWith('__'));
+                                                            
+                                                            // Order library variables
+                                                            let orderedLibrary = libraryVarNames;
+                                                            if (libraryVars.__order && Array.isArray(libraryVars.__order)) {
+                                                                const libOrder = libraryVars.__order.filter((n: string) => libraryVarNames.includes(n));
+                                                                const newLib = libraryVarNames.filter(n => !libraryVars.__order.includes(n));
+                                                                orderedLibrary = [...libOrder, ...newLib];
+                                                            }
+                                                            
+                                                            // Order overlay variables
+                                                            let orderedOverlay = overlayVarNames;
+                                                            if (instanceVars.__order && Array.isArray(instanceVars.__order)) {
+                                                                const overlayOrder = instanceVars.__order.filter((n: string) => overlayVarNames.includes(n));
+                                                                const newOverlay = overlayVarNames.filter(n => !instanceVars.__order.includes(n));
+                                                                orderedOverlay = [...overlayOrder, ...newOverlay];
+                                                            }
+                                                            
+                                                            // Final order: library first, then overlay
+                                                            const order = [...orderedLibrary, ...orderedOverlay];
+                                                            
+                                                            return order.map((name: string) => {
                                                                 const val = vars[name];
                                                                 return (
                                                                     <tr key={name} className="border-t border-gray-100">
@@ -474,11 +544,20 @@ function WorkflowExecutionDetail() {
                                                 </table>
                                             );
                                         })()}
+                                        </div>}
                                     </div>
 
                                     {/* Section 2: Execution Result (Computed Variables) */}
-                                    <div>
-                                        <p className="text-[10px] font-bold text-gray-400 mb-3 uppercase tracking-tighter">Results (Computed This Run)</p>
+                                    <div className="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                                        <button 
+                                            onClick={() => setExpandedSections(p => p.includes('results') ? p.filter(s => s !== 'results') : [...p, 'results'])}
+                                            className="w-full flex items-center gap-2 p-3 bg-gray-50/80 hover:bg-gray-100 transition-colors text-left"
+                                        >
+                                            {expandedSections.includes('results') ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+                                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Results (Computed This Run)</span>
+                                        </button>
+                                        
+                                        {expandedSections.includes('results') && <div className="p-4 bg-white border-t border-gray-100">
                                         {selectedTask.result?.variables && Object.keys(selectedTask.result.variables).length > 0 ? (
                                             <table className="w-full text-xs border-collapse">
                                                 <thead>
@@ -491,13 +570,43 @@ function WorkflowExecutionDetail() {
                                                 <tbody>
                                                     {(() => {
                                                         const vars = selectedTask.result.variables || {};
-                                                        const taskVars = selectedTask.task?.variableExtraction?.vars || {};
-                                                        const order = Array.isArray(taskVars.__order) 
-                                                            ? taskVars.__order 
-                                                            : Object.keys(vars).filter(k => k !== '__scopes' && k !== '__order');
                                                         
-                                                        const allNames = Array.from(new Set([...order, ...Object.keys(vars)]))
-                                                            .filter(n => vars.hasOwnProperty(n) && !n.startsWith('__'));
+                                                        const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
+                                                        const isVariableTask = selectedTask.taskType === 'VARIABLE' || 
+                                                                             selectedTask.task?.id === '00000000-0000-0000-0000-000000000001';
+                                                        
+                                                        const libraryVars = (!isVariableTask ? selectedTask.task?.variableExtraction?.vars : {}) || {};
+                                                        // Check both nodeDef and input for overlay variables
+                                                        const instanceVars = {
+                                                            ...(selectedTask.input?.variableExtraction?.vars || {}),
+                                                            ...(nodeDef?.variableExtraction?.vars || {})
+                                                        };
+                                                        
+                                                        // Get all variable names that have results
+                                                        const allResultVars = Object.keys(vars).filter(k => !k.startsWith('__'));
+                                                        
+                                                        // Separate into library and overlay
+                                                        const libraryVarNames = Object.keys(libraryVars).filter(k => !k.startsWith('__'));
+                                                        const overlayVarNames = Object.keys(instanceVars).filter(k => !k.startsWith('__'));
+                                                        
+                                                        // Order library variables (use their __order if exists, else natural order)
+                                                        let orderedLibrary = libraryVarNames.filter(n => allResultVars.includes(n));
+                                                        if (libraryVars.__order && Array.isArray(libraryVars.__order)) {
+                                                            const libOrder = libraryVars.__order.filter((n: string) => orderedLibrary.includes(n));
+                                                            const newLib = orderedLibrary.filter(n => !libraryVars.__order.includes(n));
+                                                            orderedLibrary = [...libOrder, ...newLib];
+                                                        }
+                                                        
+                                                        // Order overlay variables (use their __order if exists, else natural order)
+                                                        let orderedOverlay = overlayVarNames.filter(n => allResultVars.includes(n));
+                                                        if (instanceVars.__order && Array.isArray(instanceVars.__order)) {
+                                                            const overlayOrder = instanceVars.__order.filter((n: string) => orderedOverlay.includes(n));
+                                                            const newOverlay = orderedOverlay.filter(n => !instanceVars.__order.includes(n));
+                                                            orderedOverlay = [...overlayOrder, ...newOverlay];
+                                                        }
+                                                        
+                                                        // Final order: library first, then overlay
+                                                        const allNames = [...orderedLibrary, ...orderedOverlay];
 
                                                         return allNames.map((name: string) => {
                                                             const val = vars[name];
@@ -509,8 +618,25 @@ function WorkflowExecutionDetail() {
                                                                     </td>
                                                                     <td className="py-2.5 align-top text-right">
                                                                         <button onClick={() => {
-                                                                            const savedDef = selectedTask.task?.variableExtraction?.vars?.[name];
-                                                                            const transformer = savedDef && savedDef.valueMode === 'transformer' ? savedDef.transformer : savedDef;
+                                                                            const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
+                                                                            const isVariableTask = selectedTask.taskType === 'VARIABLE' || 
+                                                                                                 selectedTask.task?.id === '00000000-0000-0000-0000-000000000001';
+                                                                            
+                                                                            const libraryVars = selectedTask.task?.variableExtraction?.vars || {};
+                                                                            // Check both nodeDef and input for overlay variables
+                                                                            const instanceVars = {
+                                                                                ...(selectedTask.input?.variableExtraction?.vars || {}),
+                                                                                ...(nodeDef?.variableExtraction?.vars || {})
+                                                                            };
+                                                                            
+                                                                            const allVarDefs = { ...libraryVars, ...instanceVars };
+                                                                            const savedDef = allVarDefs[name];
+                                                                            
+                                                                            // Extract transformer only if savedDef is an object with valueMode === 'transformer'
+                                                                            const transformer = (savedDef && typeof savedDef === 'object' && savedDef.valueMode === 'transformer') 
+                                                                                ? savedDef.transformer 
+                                                                                : null;
+                                                                            
                                                                             let inputUsed: any = selectedTask.result?.data ?? selectedTask.task?.command?.body ?? null;
                                                                             if (transformer && transformer.inputSource === 'variable' && transformer.inputVariable) {
                                                                                 inputUsed = selectedTask.result?.variables?.[transformer.inputVariable] ?? null;
@@ -535,6 +661,7 @@ function WorkflowExecutionDetail() {
                                         ) : (
                                             <div className="text-[11px] text-gray-400 italic bg-gray-50/50 p-3 rounded-lg border border-dashed border-gray-200">No variables were produced in this run.</div>
                                         )}
+                                        </div>}
                                     </div>
                                 </div>
                             </section>  {/* Sanity Check Results (Only for non-utility) */}

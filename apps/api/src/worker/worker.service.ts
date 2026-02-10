@@ -160,6 +160,40 @@ export class WorkerService {
             }
         }
 
+        // 3. Workflow System Macros
+        const currentExecution = await this.prisma.workflowExecution.findUnique({
+            where: { id: workflowExecutionId }
+        });
+
+        if (currentExecution) {
+            macros['workflow.executionId'] = workflowExecutionId;
+            const workflowId = currentExecution.workflowId;
+
+            const [lastExec, lastSuccess, lastFailed, lastCancelled] = await Promise.all([
+                this.prisma.workflowExecution.findFirst({
+                    where: { workflowId, id: { not: workflowExecutionId } },
+                    orderBy: { startedAt: 'desc' }
+                }),
+                this.prisma.workflowExecution.findFirst({
+                    where: { workflowId, status: 'SUCCESS' },
+                    orderBy: { startedAt: 'desc' }
+                }),
+                this.prisma.workflowExecution.findFirst({
+                    where: { workflowId, status: 'FAILED' },
+                    orderBy: { startedAt: 'desc' }
+                }),
+                this.prisma.workflowExecution.findFirst({
+                    where: { workflowId, status: 'CANCELLED' },
+                    orderBy: { startedAt: 'desc' }
+                })
+            ]);
+
+            macros['workflow.lastExecutionEpoch'] = lastExec?.startedAt ? Math.floor(lastExec.startedAt.getTime() / 1000) : 0;
+            macros['workflow.lastSuccessEpoch'] = lastSuccess?.startedAt ? Math.floor(lastSuccess.startedAt.getTime() / 1000) : 0;
+            macros['workflow.lastFailedEpoch'] = lastFailed?.startedAt ? Math.floor(lastFailed.startedAt.getTime() / 1000) : 0;
+            macros['workflow.lastCancelledEpoch'] = lastCancelled?.startedAt ? Math.floor(lastCancelled.startedAt.getTime() / 1000) : 0;
+        }
+
         return { workflowVars, macros };
     }
 
@@ -280,10 +314,14 @@ export class WorkerService {
             reason = `HTTP ${httpStatus} did not match success pattern ${successPattern}`;
         }
 
-        // 3. Regex Sanity Checks
-        if (task.sanityChecks && Array.isArray(task.sanityChecks)) {
+        // 3. Regex Sanity Checks (Merge Library + Instance Overlay)
+        const libChecks = (task.sanityChecks && Array.isArray(task.sanityChecks)) ? task.sanityChecks : [];
+        const instChecks = (execution.input?.sanityChecks && Array.isArray(execution.input.sanityChecks)) ? execution.input.sanityChecks : [];
+        const allSanityChecks = [...libChecks, ...instChecks];
+
+        if (allSanityChecks.length > 0) {
             const body = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
-            for (const check of task.sanityChecks) {
+            for (const check of allSanityChecks) {
                 try {
                     const regex = new RegExp(check.regex);
                     const matches = regex.test(body);
@@ -461,8 +499,14 @@ export class WorkerService {
                         input: isUtility ? { 
                             utility: true, 
                             taskType: 'VARIABLE',
-                            variableExtraction: nextNode.variableExtraction || { vars: {} }
-                        } : undefined
+                            variableExtraction: nextNode.variableExtraction || { vars: {} },
+                            sanityChecks: nextNode.sanityChecks || [],
+                            authorization: nextNode.authorization
+                        } : {
+                            variableExtraction: nextNode.variableExtraction || { vars: {} },
+                            sanityChecks: nextNode.sanityChecks || [],
+                            authorization: nextNode.authorization
+                        }
                     },
                 });
                 this.logger.log(`[Orchestration] Triggered next node: ${nextNode.id} (${nextNode.label})`);

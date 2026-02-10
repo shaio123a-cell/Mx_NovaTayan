@@ -228,8 +228,20 @@ export class WorkflowsService {
                                 input: isUtility ? { 
                                     utility: true, 
                                     taskType: 'VARIABLE',
-                                    variableExtraction: node.variableExtraction || { vars: {} }
-                                } : undefined
+                                    variableExtraction: node.variableExtraction || { vars: {} },
+                                    sanityChecks: node.sanityChecks || [],
+                                authorization: node.authorization,
+                                    timeout: node.timeout,
+                                    body: node.body,
+                                    headers: node.headers
+                                } : {
+                                    variableExtraction: node.variableExtraction || { vars: {} },
+                                    sanityChecks: node.sanityChecks || [],
+                                    authorization: node.authorization,
+                                    timeout: node.timeout,
+                                    body: node.body,
+                                    headers: node.headers
+                                }
                             },
                         });
                     }
@@ -301,8 +313,14 @@ export class WorkflowsService {
                         input: isUtility ? { 
                             utility: true, 
                             taskType: 'VARIABLE',
-                            variableExtraction: node.variableExtraction || { vars: {} }
-                        } : undefined
+                            variableExtraction: node.variableExtraction || { vars: {} },
+                            sanityChecks: node.sanityChecks || [],
+                            authorization: node.authorization
+                        } : {
+                            variableExtraction: node.variableExtraction || { vars: {} },
+                            sanityChecks: node.sanityChecks || [],
+                            authorization: node.authorization
+                        }
                     },
                 });
                 

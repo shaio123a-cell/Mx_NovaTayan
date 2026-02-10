@@ -17,6 +17,17 @@ export async function executeTask(taskConfig: {
         headers?: Record<string, string>;
         body?: string;
         timeout?: number;
+        authorization?: {
+            type: 'none' | 'basic' | 'bearer' | 'jwt';
+            username?: string;
+            password?: string;
+            token?: string;
+            algorithm?: string;
+            secret?: string;
+            secretIsBase64?: boolean;
+            payload?: Record<string, any>;
+            addTo?: 'header' | 'query';
+        };
     };
     variableExtractions?: Array<{
         variableName: string;

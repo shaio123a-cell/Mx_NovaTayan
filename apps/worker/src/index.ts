@@ -4,6 +4,7 @@ import { VariableEngine, VariableContext } from '../../../packages/shared-xform/
 import * as dotenv from 'dotenv';
 import * as os from 'os';
 import { logger } from './common/logger/logger';
+import type { Algorithm } from 'jsonwebtoken';
 
 dotenv.config();
 
@@ -59,12 +60,25 @@ async function executeTask(data: any) {
         || (task.command && task.command.outputProcessing && task.command.outputProcessing.specYaml)
         || null;
     
+    const libVars = (task.variableExtraction && task.variableExtraction.vars) 
+        || (task.command && task.command.outputProcessing && task.command.outputProcessing.vars)
+        || {};
+    const instVars = (inputObj?.variableExtraction?.vars) || {};
+
     const outputProcessingVars = isUtility 
-        ? (inputObj.variableExtraction?.vars || {})
-        : (task.outputProcessingVars
-            || (task.variableExtraction && task.variableExtraction.vars)
-            || (task.command && task.command.outputProcessing && task.command.outputProcessing.vars)
-            || {});
+        ? instVars
+        : {
+            ...libVars,
+            ...instVars,
+            __scopes: {
+                ...(libVars.__scopes || {}),
+                ...(instVars.__scopes || {})
+            },
+            __order: [
+                ...(libVars.__order || Object.keys(libVars).filter(k => k !== '__scopes' && k !== '__order')),
+                ...(instVars.__order || Object.keys(instVars).filter(k => k !== '__scopes' && k !== '__order'))
+            ].filter((v, i, a) => a.indexOf(v) === i)
+        };
 
     const { method, url, headers, body, timeout } = command || {};
 
@@ -90,10 +104,27 @@ async function executeTask(data: any) {
         let input: any = null;
 
         if (!isUtility) {
-            // Resolve inputs
-            const resolvedUrl = engine.resolve(url);
-            const resolvedBody = body ? engine.resolve(body) : undefined;
-            const resolvedHeaders = headers ? Object.entries(headers).reduce((acc, [k, v]) => ({
+            // Priority: Node Overrides (inputObj) > Library Defaults (command)
+            const nodeAuth = inputObj?.authorization;
+            const nodeHeaders = inputObj?.headers;
+            const nodeBody = inputObj?.body;
+            const nodeTimeout = inputObj?.timeout;
+            const nodeMethod = inputObj?.method;
+            const nodeUrl = inputObj?.url;
+
+            const authorization = nodeAuth || command?.authorization || {};
+            
+            // Note: method and url are currently read-only in UI for nodes, but we support overrides if provided.
+            const finalMethod = (nodeMethod || method || 'GET').toUpperCase();
+            const finalUrl = nodeUrl || url || '';
+            
+            const rawHeaders = nodeHeaders || headers || {};
+            const rawBody = nodeBody !== undefined ? nodeBody : (body || '');
+            const finalTimeout = nodeTimeout || timeout || 30000;
+
+            const resolvedUrl = engine.resolve(finalUrl);
+            const resolvedBody = rawBody ? engine.resolve(rawBody) : undefined;
+            const resolvedHeaders = rawHeaders ? Object.entries(rawHeaders).reduce((acc: any, [k, v]) => ({
                 ...acc,
                 [k]: engine.resolve(String(v))
             }), {}) : {};
@@ -101,11 +132,79 @@ async function executeTask(data: any) {
             logger.info(`🔍 Resolved URL: ${resolvedUrl}`);
 
             input = {
-                method: method.toUpperCase(),
+                method: finalMethod,
                 url: resolvedUrl,
                 headers: { ...resolvedHeaders },
-                timeout: timeout || 30000,
+                timeout: finalTimeout,
+                // Preserve definitions for inspector
+                variableExtraction: inputObj.variableExtraction,
+                sanityChecks: inputObj.sanityChecks,
+                authorization: inputObj.authorization
             };
+
+            // Handle authorization
+            if (authorization && authorization.type !== 'none') {
+                const auth = { ...authorization };
+                
+                // Resolve variables in auth fields
+                if (auth.username) auth.username = engine.resolve(auth.username);
+                if (auth.password) auth.password = engine.resolve(auth.password);
+                if (auth.token) auth.token = engine.resolve(auth.token);
+                if (auth.secret) auth.secret = engine.resolve(auth.secret);
+                if (auth.payload) {
+                    const payloadStr = typeof auth.payload === 'string' ? auth.payload : JSON.stringify(auth.payload);
+                    const resolvedPayload = engine.resolve(payloadStr);
+                    try {
+                        auth.payload = JSON.parse(resolvedPayload);
+                    } catch (e) {
+                        auth.payload = resolvedPayload;
+                    }
+                }
+
+                if (auth.type === 'basic') {
+                    const credentials = Buffer.from(`${auth.username}:${auth.password}`).toString('base64');
+                    input.headers['Authorization'] = `Basic ${credentials}`;
+                    logger.info(`🔐 Applied Basic Auth for user: ${auth.username}`);
+                } else if (auth.type === 'bearer') {
+                    input.headers['Authorization'] = `Bearer ${(auth.token || '').trim()}`;
+                    logger.info(`🔐 Applied Bearer Token Auth`);
+                } else if (auth.type === 'jwt') {
+                    try {
+                        const jwt = await import('jsonwebtoken');
+                        let secret = auth.secret || '';
+                        
+                        // Decode Base64 secret if specified
+                        if (auth.secretIsBase64) {
+                            secret = Buffer.from(secret, 'base64').toString('utf8');
+                        }
+
+                        const algorithm = (auth.algorithm || 'HS256') as Algorithm;
+                        const payload = auth.payload || {};
+                        
+                        // Sign the JWT
+                        const token = jwt.sign(payload, secret, { algorithm });
+                        
+                        // Add to header or query param
+                        if (auth.addTo === 'query') {
+                            const separator = input.url.includes('?') ? '&' : '?';
+                            input.url = `${input.url}${separator}token=${encodeURIComponent(token)}`;
+                            logger.info(`🔐 Applied JWT Auth via Query Parameter`);
+                        } else {
+                            input.headers['Authorization'] = `Bearer ${token}`;
+                            logger.info(`🔐 Applied JWT Auth via Header`);
+                        }
+                    } catch (error: any) {
+                        logger.error(`❌ JWT signing failed: ${error.message}`);
+                        throw new Error(`JWT authentication failed: ${error.message}`);
+                    }
+                }
+            }
+
+            // Ensure Accept header is set (common cause for 400/406 errors)
+            const hasAccept = Object.keys(input.headers).some(h => h.toLowerCase() === 'accept');
+            if (!hasAccept) {
+                input.headers['Accept'] = 'application/json';
+            }
 
             // Only attach data for relevant methods or if body is explicitly provided
             if (['POST', 'PUT', 'PATCH'].includes(input.method) || (resolvedBody !== undefined && resolvedBody !== null)) {
@@ -135,6 +234,9 @@ async function executeTask(data: any) {
             });
 
             logger.info(`📥 Task Response Status: ${response.status}`);
+            if (response.status >= 400) {
+                logger.warn(`❌ Response Body: ${typeof response.data === 'string' ? response.data : JSON.stringify(response.data)}`);
+            }
         } else {
             logger.info(`⚡ Skipping HTTP request for utility task: ${name}`);
         }
@@ -189,6 +291,10 @@ async function executeTask(data: any) {
 
         // Evaluate per-variable transformers (if any)
         const computedVars: Record<string, any> = {};
+        if (varContext.task) {
+            // Point varContext.task to computedVars so they are available for resolution
+            varContext.task = computedVars;
+        }
         const variableErrors: Record<string, string> = {};
         const variableInputs: Record<string, any> = {}; // Record exactly what went into each transformer
         const varScopes: Record<string, string> = (outputProcessingVars && (outputProcessingVars.__scopes || {})) || {};
@@ -212,9 +318,18 @@ async function executeTask(data: any) {
                 let inputForVar: any = null;
                 try {
                     def = outputProcessingVars[name];
-                    // Backwards-compatible: if stored as simple value, use as-is
+                    // Backwards-compatible: if stored as simple value, resolve any variable references
                     if (!def || typeof def !== 'object' || def.valueMode !== 'transformer') {
-                        computedVars[name] = def;
+                        // If it's a string with variable references, resolve them
+                        if (typeof def === 'string') {
+                            // First check if this exact variable name exists in computedVars (for self-references)
+                            // Update context so engine can see currently computed vars
+                            varContext.task = computedVars;
+                            const resolved = engine.resolve(def);
+                            computedVars[name] = resolved;
+                        } else {
+                            computedVars[name] = def;
+                        }
                         continue;
                     }
                     t = def.transformer || {};
@@ -256,7 +371,6 @@ async function executeTask(data: any) {
                         const re = new RegExp(pattern);
                         const m = text.match(re);
                         computedVars[name] = m ? (m[1] || m[0]) : null;
-                        if (varContext.task) varContext.task[name] = computedVars[name];
                     } else if (t.type === 'jmespath' || t.type === 'json') {
                         const { evalExpr } = await import('../../../packages/shared-xform/xform_selectors_json');
                         // evalExpr expects (row, expr)
@@ -272,7 +386,6 @@ async function executeTask(data: any) {
                             }
                             const jmesExpr = engine.resolve(t.spec || t.expr || '');
                             computedVars[name] = evalExpr(jmesInput, jmesExpr);
-                            if (varContext.task) varContext.task[name] = computedVars[name];
                         } catch (je: any) {
                             const msg = je?.message || String(je);
                             // If the error is due to JMESPath root expecting an array, retry with input wrapped in array
@@ -295,7 +408,6 @@ async function executeTask(data: any) {
                         const nodes = selectNodes(xmlText, rootExpr);
                         if (nodes && nodes.length > 0) computedVars[name] = evalXPath(nodes[0], xpathExpr);
                         else computedVars[name] = null;
-                        if (varContext.task) varContext.task[name] = computedVars[name];
                     } else if (t.type === 'advanced') {
                         // Treat transformer.spec as YAML transform spec
                         let specObj: any = t.spec || t.specYaml || null;
@@ -332,15 +444,14 @@ async function executeTask(data: any) {
                         }
                         if (out instanceof Uint8Array) out = Buffer.from(out).toString('utf8');
                         computedVars[name] = out;
-                        if (varContext.task) varContext.task[name] = computedVars[name];
                     } else if (t.type === 'constant') {
                         computedVars[name] = typeof t.value === 'string' ? engine.resolve(t.value) : t.value;
-                        if (varContext.task) varContext.task[name] = computedVars[name];
+                    } else if (t.type === 'none' || t.type === 'NONE') {
+                        computedVars[name] = inputForVar;
                     } else {
                         // Unknown transformer type: attempt jmespath as fallback
                         const { evalExpr } = await import('../../../packages/shared-xform/xform_selectors_json');
                         computedVars[name] = evalExpr(inputForVar, t.spec || t.expr || '');
-                        if (varContext.task) varContext.task[name] = computedVars[name];
                     }
                 } catch (ve: any) {
                     const msg = ve?.message || String(ve);
