@@ -233,7 +233,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
             setOutputVars(vars);
             setActiveTab('output');
         }
-    }, [task, nodeData, isEditing, isUtility, isWorkflowNode])
+    }, [task, nodeData, isEditing, isUtility, isWorkflowNode, isTaskFetching])
 
     const handleSave = () => {
         try {
