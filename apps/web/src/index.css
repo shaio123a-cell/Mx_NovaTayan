@@ -39,10 +39,12 @@ html, body, #root {
 }
 
 .react-flow__handle {
-  width: 8px !important;
-  height: 8px !important;
-  background: #f05a28 !important;
-  border: 2px solid #111217 !important;
+  width: 16px !important;
+  height: 16px !important;
+  background: #3b82f6 !important;
+  border: 3px solid #ffffff !important;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5) !important;
+  z-index: 1000 !important;
 }
 
 .react-flow__edge-path {

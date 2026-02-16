@@ -25,6 +25,22 @@ export class CreateWorkflowDto {
     @IsArray()
     @IsOptional()
     tags?: string[];
+
+    @IsObject()
+    @IsOptional()
+    inputVariables?: Record<string, any>;
+
+    @IsObject()
+    @IsOptional()
+    outputVariables?: Record<string, any>;
+
+    @IsObject()
+    @IsOptional()
+    scheduling?: any;
+
+    @IsArray()
+    @IsOptional()
+    notifications?: any[];
 }
 
 export class UpdateWorkflowDto {
@@ -51,4 +67,20 @@ export class UpdateWorkflowDto {
     @IsArray()
     @IsOptional()
     tags?: string[];
+
+    @IsObject()
+    @IsOptional()
+    inputVariables?: Record<string, any>;
+
+    @IsObject()
+    @IsOptional()
+    outputVariables?: Record<string, any>;
+
+    @IsObject()
+    @IsOptional()
+    scheduling?: any;
+
+    @IsArray()
+    @IsOptional()
+    notifications?: any[];
 }

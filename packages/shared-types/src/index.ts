@@ -108,12 +108,14 @@ export interface Task {
     description?: string;
     scope: ScopeType;
     ownerId: string;
+    taskType?: 'HTTP' | 'VARIABLE' | 'WORKFLOW' | 'KAFKA'; // Type of task
 
     // Core command configuration
     command: HttpRequestConfig;
 
     // Data extraction and transformation
     variableExtractions?: VariableExtraction[];
+    variableExtraction?: { vars: Record<string, any> }; // Per-task variable manipulation
     outputMutation?: OutputMutation;
     statusMappings?: StatusMapping[];
 
@@ -143,6 +145,18 @@ export interface WorkflowNode {
         y: number;
     };
     label?: string; // Optional display label
+    taskType?: 'HTTP' | 'VARIABLE' | 'WORKFLOW' | 'KAFKA';
+    inputMapping?: Record<string, any>; // For nested workflows
+    variableExtraction?: { vars: Record<string, any> };
+    targetTags?: string[];
+    failureStrategy?: string;
+    failureStatusOverride?: string;
+    timeout?: number;
+    method?: string;
+    url?: string;
+    body?: string;
+    headers?: Record<string, string>;
+    tags?: string[];
 }
 
 export interface WorkflowEdge {
@@ -165,9 +179,20 @@ export interface Workflow {
     nodes: WorkflowNode[];
     edges: WorkflowEdge[];
 
+    // Variables & Interface
+    inputVariables?: Record<string, any>;
+    outputVariables?: Record<string, any>;
+
     // Scheduling
     scheduleId?: string; // Reference to Schedule
+    scheduling?: {
+        enabled: boolean;
+        cron: string;
+    };
     enabled: boolean;
+
+    // Monitoring
+    notifications?: any[];
 
     // Metadata
     tags?: string[];

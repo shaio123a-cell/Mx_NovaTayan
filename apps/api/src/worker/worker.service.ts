@@ -131,7 +131,7 @@ export class WorkerService {
         const macros: Record<string, any> = {};
 
         for (const record of records) {
-            const taskName = record.task.name;
+            const taskName = record.task?.name || record.nodeId || 'task';
             const result = record.result as any;
             if (!result) continue;
 
@@ -150,7 +150,7 @@ export class WorkerService {
                     headers: result.headers
                 };
                 // Helper: key without spaces for easy dot access
-                const cleanName = taskName.replace(/\s+/g, '_');
+                const cleanName = String(taskName).replace(/\s+/g, '_');
                 macros[`HTTP.${cleanName}`] = shortcut;
                 // Also store raw name if possible (though pathing with spaces is harder)
                 macros[`HTTP.${taskName}`] = shortcut;
@@ -167,8 +167,19 @@ export class WorkerService {
 
         if (currentExecution) {
             macros['workflow.executionId'] = workflowExecutionId;
-            const workflowId = currentExecution.workflowId;
+            macros['workflow.name'] = currentExecution.workflowName;
 
+            // 4. Resolve Input variables from parent if this is a sub-workflow
+            if ((currentExecution as any).parentTaskExecutionId) {
+                const parentTask = await this.prisma.taskExecution.findUnique({
+                    where: { id: (currentExecution as any).parentTaskExecutionId }
+                });
+                if (parentTask && parentTask.input && (parentTask.input as any).resolvedInput) {
+                    Object.assign(workflowVars, (parentTask.input as any).resolvedInput);
+                }
+            }
+
+            const workflowId = currentExecution.workflowId;
             const [lastExec, lastSuccess, lastFailed, lastCancelled] = await Promise.all([
                 this.prisma.workflowExecution.findFirst({
                     where: { workflowId, id: { not: workflowExecutionId } },
@@ -282,12 +293,150 @@ export class WorkerService {
         return updated;
     }
 
+    private async executeUtilityTask(taskExec: any) {
+        this.logger.log(`[Utility] Executing Variable Manipulation task: ${taskExec.id}`);
+        
+        try {
+            await this.prisma.taskExecution.update({
+                where: { id: taskExec.id },
+                data: { status: 'RUNNING', startedAt: new Date() }
+            });
+
+            // Gather context
+            const { workflowVars } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
+            const globalVars = await this.globalVarsService.findAllResolved();
+            
+            // Resolve variables (this logic would typically happen in the worker, but for utility we do it here)
+            // For now, we'll just return the current variables or apply the extraction mapping
+            const extraction = taskExec.input?.variableExtraction || { vars: {} };
+            const results: Record<string, any> = {};
+
+            // Simple direct value assignment for utility tasks
+            for (const [key, config] of Object.entries(extraction.vars || {})) {
+                if (typeof config === 'object' && (config as any).valueMode === 'direct') {
+                    results[key] = (config as any).directValue;
+                } else if (typeof config === 'string') {
+                    results[key] = config;
+                }
+                // TRANSFORMER mode would need a full JS engine, skipping for now or adding basic support
+            }
+
+            await this.completeExecution(taskExec.id, {
+                status: 200,
+                data: "Variable manipulation completed",
+                variables: results
+            });
+
+        } catch (e) {
+            this.logger.error(`Failed to execute utility task ${taskExec.id}: ${e.message}`);
+            await this.completeExecution(taskExec.id, {}, `Internal error: ${e.message}`);
+        }
+    }
+
+    private async triggerSubWorkflow(taskExec: any) {
+        const workflowId = (taskExec.input as any)?.subWorkflowId || taskExec.taskId;
+        const workflow = await this.prisma.workflow.findUnique({ where: { id: workflowId } });
+        if (!workflow) {
+            await this.completeExecution(taskExec.id, {}, 'Sub-workflow not found');
+            return;
+        }
+
+        this.logger.log(`[Trace] Triggering sub-workflow: ${workflow.name} for parent task: ${taskExec.id}`);
+        
+        // Resolve input mapping from parent context
+        const { workflowVars } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
+        const globalVars = await this.globalVarsService.findAllResolved();
+        const inputMapping = taskExec.input?.inputMapping || {};
+        const resolvedInput: Record<string, any> = {};
+
+        // Simple template resolution for input mapping
+        for (const [key, value] of Object.entries(inputMapping)) {
+            if (typeof value === 'string' && value.includes('{{')) {
+                // Resolution logic... for now we'll just carry it as is or do basic replacement
+                // In a real scenario, we'd use a more robust resolver
+                resolvedInput[key] = value; 
+            } else {
+                resolvedInput[key] = value;
+            }
+        }
+
+        // Store resolved input in taskExec for persistence
+        await this.prisma.taskExecution.update({
+            where: { id: taskExec.id },
+            data: { 
+                input: { 
+                    ...(taskExec.input as any), 
+                    resolvedInput 
+                } 
+            }
+        });
+
+        // 1. Create sub-workflow execution
+        const subExec = await this.prisma.workflowExecution.create({
+            data: {
+                workflowId,
+                workflowName: workflow.name,
+                workflowVersion: workflow.version,
+                status: 'RUNNING',
+                triggeredBy: 'SIGNAL',
+                triggeredByUser: 'system',
+                startedAt: new Date(),
+                parentTaskExecutionId: taskExec.id,
+                taskExecutions: [], // Legacy
+            } as any
+        });
+
+        // 2. Start sub-workflow nodes
+        let nodes = workflow.nodes as any[];
+        let edges = workflow.edges as any[];
+        if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+        if (typeof edges === 'string') edges = JSON.parse(edges);
+        if (!Array.isArray(nodes)) nodes = Object.values(nodes || {});
+
+        const targetNodeIds = new Set(edges.map((e: any) => e.target));
+        const startNodes = nodes.filter((n: any) => !targetNodeIds.has(n.id));
+
+        for (const node of startNodes) {
+            const isUtility = (node as any).taskType === 'VARIABLE';
+            const isNested = (node as any).taskType === 'WORKFLOW';
+            const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
+
+            const childExec = await this.prisma.taskExecution.create({
+                data: {
+                    taskId: (isUtility || isNested) ? null : node.taskId,
+                    nodeId: node.id,
+                    workflowExecutionId: subExec.id,
+                    status: 'PENDING',
+                    targetTags: node.targetTags || (workflow.tags || []),
+                    input: {
+                        taskType: (node as any).taskType,
+                        subWorkflowId: isNested ? node.taskId : undefined,
+                        variableExtraction: node.variableExtraction || { vars: {} },
+                        sanityChecks: node.sanityChecks || [],
+                        authorization: node.authorization
+                    }
+                }
+            });
+
+            // If the start node is ALSO a sub-workflow, trigger it recursively
+            if (isNested) {
+                await this.prisma.taskExecution.update({
+                    where: { id: childExec.id },
+                    data: { status: 'RUNNING', startedAt: new Date() }
+                });
+                await this.triggerSubWorkflow(childExec);
+            } else if (isUtility) {
+                await this.executeUtilityTask(childExec);
+            }
+        }
+    }
+
     private async evaluateStatus(execution: any, result: any, error?: string): Promise<{ status: string; reason?: string; sanityResults?: any[] }> {
         if (error) return { status: 'FAILED' };
         if (!result || result.status === undefined) return { status: 'FAILED', reason: 'Response missing status code' };
 
         const httpStatus = result.status;
-        const task = execution.task;
+        const task = execution.task || {};
         const sanityResults: any[] = [];
 
         // 1. Task Level Status Mappings
@@ -336,7 +485,7 @@ export class WorkerService {
 
                     if (failed) {
                         const failureMsg = `Sanity Check Failed: Body ${check.condition === 'MUST_CONTAIN' ? 'missing' : 'contains'} "${check.regex}"`;
-                        this.logger.warn(`[SanityCheck] Task ${task.name} Status: ${check.severity === 'ERROR' ? 'FAILED' : 'WARNING'} - ${failureMsg}`);
+                        this.logger.warn(`[SanityCheck] Task ${task?.name || execution.nodeId} Status: ${check.severity === 'ERROR' ? 'FAILED' : 'WARNING'} - ${failureMsg}`);
                         if (check.severity === 'ERROR') {
                             status = 'FAILED';
                             reason = failureMsg;
@@ -485,31 +634,37 @@ export class WorkerService {
 
             if (!existing) {
                 const isUtility = (nextNode as any).taskType === 'VARIABLE';
+                const isNested = (nextNode as any).taskType === 'WORKFLOW';
                 const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
 
-                await this.prisma.taskExecution.create({
+                const nextTaskExec = await this.prisma.taskExecution.create({
                     data: {
-                        taskId: isUtility ? SYSTEM_VAR_ID : nextNode.taskId,
+                        taskId: (isUtility || isNested) ? null : nextNode.taskId,
                         nodeId: nextNode.id,
                         workflowExecutionId,
-                        status: initialStatus,
+                        status: isNested ? 'RUNNING' : initialStatus,
                         targetWorkerId,
                         targetTags,
                         startedAt: new Date(), // Initialize for FIFO sorting
-                        input: isUtility ? { 
-                            utility: true, 
-                            taskType: 'VARIABLE',
+                        input: { 
+                            utility: isUtility,
+                            nested: isNested,
+                            subWorkflowId: isNested ? nextNode.taskId : undefined,
+                            taskType: (nextNode as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
                             variableExtraction: nextNode.variableExtraction || { vars: {} },
                             sanityChecks: nextNode.sanityChecks || [],
-                            authorization: nextNode.authorization
-                        } : {
-                            variableExtraction: nextNode.variableExtraction || { vars: {} },
-                            sanityChecks: nextNode.sanityChecks || [],
-                            authorization: nextNode.authorization
+                            authorization: nextNode.authorization,
+                            inputMapping: nextNode.inputMapping // Important for WORKFLOW
                         }
                     },
                 });
-                this.logger.log(`[Orchestration] Triggered next node: ${nextNode.id} (${nextNode.label})`);
+                this.logger.log(`[Orchestration] Triggered next node: ${nextNode.id} (${nextNode.label}) type=${(nextNode as any).taskType}`);
+                
+                if (isNested) {
+                    await this.triggerSubWorkflow(nextTaskExec);
+                } else if (isUtility) {
+                    await this.executeUtilityTask(nextTaskExec);
+                }
             }
         }
 
@@ -563,5 +718,21 @@ export class WorkerService {
                 duration: duration
             }
         });
+
+        // If this was a sub-workflow, resume the parent task
+        const exec = execution as any;
+        if (isFullyDone && exec.parentTaskExecutionId) {
+            this.logger.log(`[Orchestration] Sub-workflow ${workflowExecutionId} finished. Resuming parent task ${exec.parentTaskExecutionId}`);
+            
+            // Gather sub-workflow variables to pass back to parent
+            const { workflowVars } = await this.gatherWorkflowContext(workflowExecutionId);
+            
+            await this.completeExecution(exec.parentTaskExecutionId, { 
+                status: finalStatus === 'SUCCESS' ? 200 : 500,
+                data: `Sub-workflow ${execution.workflowName} finished with status ${finalStatus}`,
+                subWorkflowId: workflowExecutionId,
+                variables: workflowVars // Propagate variables to parent task
+            });
+        }
     }
 }

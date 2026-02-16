@@ -225,6 +225,7 @@ function WorkflowExecutionDetail() {
                                     setEditingNodeData({
                                         id: nodeId,
                                         label: nodeDef?.label || record.label || record.task?.name,
+                                        taskType: 'VARIABLE',
                                         variableExtraction: nodeDef?.variableExtraction || record.input?.variableExtraction || record.task?.variableExtraction || { vars: {} }
                                     });
                                 } else if (record.task) {
@@ -665,32 +666,43 @@ function WorkflowExecutionDetail() {
                                     </div>
                                 </div>
                             </section>  {/* Sanity Check Results (Only for non-utility) */}
-                            {selectedTask.taskType !== 'VARIABLE' && selectedTask.task?.sanityChecks?.length > 0 && (
-                                <section>
-                                    <h4 className="text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Sanity Gates</h4>
-                                    <div className="space-y-2">
-                                        {selectedTask.task.sanityChecks.map((check: any, idx: number) => {
-                                            const record = selectedTask.result?.sanityResults?.find((r: any) => r.regex === check.regex);
-                                            const isFailed = record ? !record.passed : selectedTask.error?.includes(`"${check.regex}"`);
-                                            
-                                            return (
-                                                <div key={idx} className={`p-4 rounded-xl border flex items-center justify-between ${isFailed ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
-                                                    <div className="flex items-center gap-3">
-                                                        {isFailed ? <AlertTriangle size={16} className="text-red-500" /> : <CheckCircle size={16} className="text-green-500" />}
-                                                        <div>
-                                                            <div className="text-[11px] font-bold text-gray-700">{check.regex}</div>
-                                                            <div className="text-[9px] text-gray-400 uppercase font-black">{check.condition} • {check.severity}</div>
+                            {selectedTask.taskType !== 'VARIABLE' && (() => {
+                                const libraryChecks = selectedTask.task?.sanityChecks || [];
+                                const overlayChecks = selectedTask.input?.sanityChecks || [];
+                                const allChecks = [...libraryChecks, ...overlayChecks];
+                                
+                                if (allChecks.length === 0) return null;
+                                
+                                return (
+                                    <section>
+                                        <h4 className="text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Sanity Gates</h4>
+                                        <div className="space-y-2">
+                                            {allChecks.map((check: any, idx: number) => {
+                                                const record = selectedTask.result?.sanityResults?.find((r: any) => r.regex === check.regex);
+                                                const isFailed = record ? !record.passed : selectedTask.error?.includes(`"${check.regex}"`);
+                                                
+                                                return (
+                                                    <div key={idx} className={`p-4 rounded-xl border flex items-center justify-between ${isFailed ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
+                                                        <div className="flex items-center gap-3">
+                                                            {isFailed ? <AlertTriangle size={16} className="text-red-500" /> : <CheckCircle size={16} className="text-green-500" />}
+                                                            <div>
+                                                                <div className="text-[11px] font-bold text-gray-700">{check.regex}</div>
+                                                                <div className="text-[9px] text-gray-400 uppercase font-black">
+                                                                    {check.condition} • {check.severity}
+                                                                    {overlayChecks.includes(check) && <span className="ml-2 text-primary-500 bg-primary-50 px-1 rounded">Overlay</span>}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div className={`text-[10px] font-black ${isFailed ? 'text-red-600' : 'text-green-600'}`}>
+                                                            {isFailed ? 'FAILED' : 'PASSED'}
                                                         </div>
                                                     </div>
-                                                    <div className={`text-[10px] font-black ${isFailed ? 'text-red-600' : 'text-green-600'}`}>
-                                                        {isFailed ? 'FAILED' : 'PASSED'}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </section>
-                            )}
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                );
+                            })()}
                         </div>
 
                         {/* Footer */}

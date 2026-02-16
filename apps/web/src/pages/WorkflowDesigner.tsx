@@ -23,9 +23,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { workflowsApi } from '../api/workflows'
 import { TaskEditShelf } from '../components/TaskEditShelf'
-import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil, Zap, Settings2, X } from 'lucide-react'
+import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil, Zap, Settings2, X, Box, GitBranch, LayoutDashboard, Clock, Bell, Info, Layers, Shield } from 'lucide-react'
 import { useDirtyState } from '../context/DirtyStateContext'
 import { useToast } from '../context/ToastContext'
+import { WorkflowAdminShelf } from '../components/WorkflowAdminShelf'
 
 const initialNodes: Node[] = []
 const initialEdges: any[] = []
@@ -221,6 +222,110 @@ function N8nTaskNode({ data }: any) {
     )
 }
 
+/**
+ * Workflow Node
+ * - Represents a nested workflow
+ */
+function WorkflowNode({ data }: any) {
+    const inputCount = data.inputVarsCount || 0;
+    const outputCount = data.outputVarsCount || 0;
+
+    return (
+        <div style={{ 
+            background: 'linear-gradient(135deg, #0a1b1e 0%, #111217 100%)', 
+            border: '1px solid #3b82f6', 
+            borderRadius: '12px', 
+            minWidth: '240px',
+            boxShadow: '0 0 20px rgba(59, 130, 246, 0.15), 0 10px 15px -3px rgba(0, 0, 0, 0.4)',
+            position: 'relative'
+        }} className="hover:border-primary-500/50 transition-all group">
+            
+            <Handle
+                type="target"
+                position={Position.Left}
+                style={{ 
+                    background: '#3b82f6', 
+                    width: '16px', 
+                    height: '16px', 
+                    border: '3px solid white',
+                    left: '-10px',
+                    boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)',
+                    zIndex: 1000
+                }}
+            />
+
+            <div style={{ padding: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', borderBottom: '1px solid #202226', paddingBottom: '8px' }}>
+                    <div style={{ 
+                        width: '32px', 
+                        height: '32px', 
+                        background: '#0b0c10', 
+                        borderRadius: '8px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        border: '1px solid #202226',
+                        color: '#3b82f6'
+                    }}>
+                        <GitBranch size={14} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase', letterSpacing: '0.05em' }}>WORKFLOW</div>
+                        <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#f2f5f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
+                    </div>
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            data.onDelete(data.id);
+                        }}
+                        style={{ 
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#464c54',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px'
+                        }}
+                        className="hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                        title="Remove workflow"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', padding: '0 4px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#3b82f6' }}>{inputCount}</div>
+                        <div style={{ fontSize: '8px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Inputs</div>
+                    </div>
+                    <div style={{ height: '20px', width: '1px', background: '#202226' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>{outputCount}</div>
+                        <div style={{ fontSize: '8px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Outputs</div>
+                    </div>
+                </div>
+            </div>
+
+            <Handle
+                type="source"
+                position={Position.Right}
+                style={{ 
+                    background: '#3b82f6', 
+                    width: '16px', 
+                    height: '16px', 
+                    border: '3px solid white',
+                    right: '-10px',
+                    boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)',
+                    zIndex: 1000
+                }}
+            />
+        </div>
+    );
+}
+
+
 function CustomEdge({
     id,
     sourceX,
@@ -341,6 +446,7 @@ function CustomEdge({
 
 const nodeTypes = {
     taskNode: N8nTaskNode,
+    workflowNode: WorkflowNode,
 }
 
 const edgeTypes = {
@@ -392,19 +498,22 @@ function ReactFlowCanvas({
 
             const newNodeId = `node-${Date.now()}`;
             const isUtility = taskData.taskType === 'VARIABLE';
+            const isWorkflow = taskData.itemType === 'WORKFLOW';
             const randomSuffix = Math.floor(100000 + Math.random() * 900000);
             const label = isUtility ? `${taskData.name} ${randomSuffix}` : taskData.name;
-
+ 
             const newNode: Node = {
                 id: newNodeId,
-                type: 'taskNode',
+                type: isWorkflow ? 'workflowNode' : 'taskNode',
                 position,
                 data: {
                     id: newNodeId,
                     label: label,
                     taskId: taskData.id,
-                    taskType: taskData.taskType || 'HTTP',
-                    method: taskData.command?.method || (taskData.taskType === 'VARIABLE' ? 'VAR' : 'GET'),
+                    taskType: isWorkflow ? 'WORKFLOW' : (taskData.taskType || 'HTTP'),
+                    inputVarsCount: isWorkflow ? Object.keys(taskData.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
+                    outputVarsCount: isWorkflow ? Object.keys(taskData.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
+                    method: isWorkflow ? 'WF' : (taskData.taskType === 'VARIABLE' ? 'VAR' : (taskData.command?.method || 'GET')),
                     targetTags: taskData.targetTags || [],
                     failureStrategy: 'SUCCESS_REQUIRED',
                     failureStatusOverride: 'FAILED',
@@ -413,8 +522,7 @@ function ReactFlowCanvas({
                         setIsDirty(true);
                     },
                     onChangeTargetTags: (val: string) => {
-                        const tags = val.split(',').map((t: any) => t.trim()).filter(Boolean);
-                        setNodes((nds: any) => nds.map((node: any) => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: tags } } : node))
+                        setNodes((nds: any) => nds.map((node: any) => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: val.split(',').map(t => t.trim()).filter(Boolean) } } : node))
                         setIsDirty(true);
                     },
                     onChangeFailureStrategy: (val: string) => {
@@ -484,6 +592,7 @@ function WorkflowDesignerContent() {
     const [searchQuery, setSearchQuery] = useState('');
     const [editingNode, setEditingNode] = useState<any>(null);
     const [isTopDrawerOpen, setIsTopDrawerOpen] = useState(false);
+    const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
     const queryClient = useQueryClient()
     const initializedRef = useRef<string | null>(null)
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -491,6 +600,11 @@ function WorkflowDesignerContent() {
     const { data: tasks, isLoading: isLoadingTasks } = useQuery({
         queryKey: ['tasks'],
         queryFn: tasksApi.getTasks,
+    })
+ 
+    const { data: allWorkflows, isLoading: isLoadingWorkflows } = useQuery({
+        queryKey: ['workflows'],
+        queryFn: workflowsApi.getWorkflows,
     })
 
     const { data: existingWorkflow, isLoading: isWfLoading } = useQuery({
@@ -508,14 +622,16 @@ function WorkflowDesignerContent() {
             
             setNodes(existingWorkflow.nodes.map((n: any) => ({
                 id: n.id,
-                type: 'taskNode',
+                type: n.taskType === 'WORKFLOW' ? 'workflowNode' : 'taskNode',
                 position: n.position,
                 data: {
                     id: n.id,
-                    label: tasks?.find((t: any) => t.id === n.taskId)?.name || n.label,
+                    label: n.taskType === 'WORKFLOW' ? (n.label || allWorkflows?.find((w: any) => w.id === n.taskId)?.name || 'Nested Workflow') : (tasks?.find((t: any) => t.id === n.taskId)?.name || n.label),
                     taskId: n.taskId,
                     taskType: n.taskType || 'HTTP',
-                    method: n.taskType === 'VARIABLE' ? 'VAR' : (tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'),
+                    inputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
+                    outputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
+                    method: n.taskType === 'VARIABLE' ? 'VAR' : n.taskType === 'WORKFLOW' ? 'WF' : (tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'),
                     targetTags: n.targetTags || [],
                     failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
                     failureStatusOverride: n.failureStatusOverride || 'FAILED',
@@ -618,7 +734,8 @@ function WorkflowDesignerContent() {
                 targetTags: n.data.targetTags || [],
                 failureStrategy: n.data.failureStrategy || 'SUCCESS_REQUIRED',
                 failureStatusOverride: n.data.failureStatusOverride || 'FAILED',
-                variableExtraction: n.data.variableExtraction // Ensure utility task variables are saved
+                variableExtraction: n.data.variableExtraction, // Ensure utility task variables are saved
+                inputMapping: n.data.inputMapping // Ensure nested workflow mappings are saved
             })),
             edges: edges.map(e => ({
                 id: e.id,
@@ -640,30 +757,47 @@ function WorkflowDesignerContent() {
         }
     };
 
-    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ 'Global': true })
+    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ 'Global Tasks': true, 'Workflows': true })
 
-    const groupedTasks = (() => {
+    const groupedLibraryItems = (() => {
         const grouped: Record<string, any[]> = {}
-        const filtered = tasks?.filter((t: any) => {
+        
+        const q = searchQuery.toLowerCase();
+
+        // Add Tasks
+        const filteredTasks = tasks?.filter((t: any) => {
             const name = t.name?.toLowerCase() ?? '';
             const label = t.label?.toLowerCase() ?? '';
             const method = t.command?.method?.toLowerCase() ?? '';
-            const q = searchQuery.toLowerCase();
             return name.includes(q) || label.includes(q) || method.includes(q);
         });
-        filtered?.forEach((t: any) => {
+
+        filteredTasks?.forEach((t: any) => {
             const tg = t.groups || []
             if (tg.length === 0) {
-                if (!grouped['Global']) grouped['Global'] = []
-                grouped['Global'].push(t)
+                if (!grouped['Global Tasks']) grouped['Global Tasks'] = []
+                grouped['Global Tasks'].push({ ...t, itemType: 'TASK' })
             } else {
                 tg.forEach((g: any) => {
                     const name = typeof g === 'string' ? g : g.name
                     if (!grouped[name]) grouped[name] = []
-                    grouped[name].push(t)
+                    grouped[name].push({ ...t, itemType: 'TASK' })
                 })
             }
         })
+
+        // Add Workflows (exclude current)
+        const filteredWorkflows = allWorkflows?.filter((w: any) => {
+            if (w.id === workflowId) return false;
+            const name = w.name?.toLowerCase() ?? '';
+            return name.includes(q);
+        });
+
+        filteredWorkflows?.forEach((w: any) => {
+            if (!grouped['Workflows']) grouped['Workflows'] = []
+            grouped['Workflows'].push({ ...w, itemType: 'WORKFLOW' })
+        })
+
         return grouped
     })()
 
@@ -672,9 +806,9 @@ function WorkflowDesignerContent() {
         event.dataTransfer.effectAllowed = 'move';
     };
 
-    const isTaskInWorkflow = (taskId: string) => nodes.some(n => n.data.taskId === taskId)
+    const isTaskInWorkflow = (itemId: string) => nodes.some(n => n.data.taskId === itemId)
 
-    if (isWfLoading || !tasks) return <div style={{ color: '#1976D2', textAlign: 'center', padding: '100px', fontWeight: 'bold' }}>Initialising Designer Engine...</div>
+    if (isWfLoading || !tasks || isLoadingWorkflows) return <div style={{ color: '#1976D2', textAlign: 'center', padding: '100px', fontWeight: 'bold' }}>Initialising Designer Engine...</div>
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '24px' }}>
@@ -746,6 +880,14 @@ function WorkflowDesignerContent() {
                         style={{ background: 'white', border: '1px solid #ddd', color: '#374151', padding: '8px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
                     >
                         Save Workflow
+                    </button>
+                    <button 
+                        onClick={() => setIsAdminPanelOpen(true)}
+                        style={{ border: '1px solid #e2e8f0', background: 'white', color: '#64748b', padding: '10px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}
+                        className="hover:border-primary-500 hover:text-primary-500 hover:bg-slate-50"
+                        title="Workflow Administration"
+                    >
+                        <Shield style={{ color: '#1976D2' }} size={18} />
                     </button>
                     <button 
                         onClick={() => workflowId && executeMutation.mutate(workflowId)}
@@ -838,15 +980,15 @@ function WorkflowDesignerContent() {
                     </div>
 
                     <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>Task Library</h3>
-                        <p style={{ fontSize: '11px', color: '#666' }}>Drag & drop tasks onto the canvas.</p>
+                        <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>Library</h3>
+                        <p style={{ fontSize: '11px', color: '#666' }}>Drag & drop tasks or workflows.</p>
                     </div>
 
                     <div style={{ marginBottom: '16px' }}>
                         <div style={{ position: 'relative' }}>
                             <input 
                                 type="text"
-                                placeholder="Search tasks..."
+                                placeholder="Search library..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 style={{
@@ -867,10 +1009,10 @@ function WorkflowDesignerContent() {
                     </div>
 
                     <div style={{ flex: 1, overflowY: 'auto' }}>
-                        {isLoadingTasks ? (
-                            <div style={{ color: '#999', fontSize: '12px' }}>Loading tasks library...</div>
+                        {isLoadingTasks || isLoadingWorkflows ? (
+                            <div style={{ color: '#999', fontSize: '12px' }}>Loading library...</div>
                         ) : (
-                            Object.entries(groupedTasks).sort(([a], [b]) => a === 'Global' ? -1 : b === 'Global' ? 1 : a.localeCompare(b)).map(([groupName, groupTasks]: [string, any]) => (
+                            Object.entries(groupedLibraryItems).sort(([a], [b]) => a.includes('Tasks') ? -1 : b.includes('Tasks') ? 1 : a.localeCompare(b)).map(([groupName, items]: [string, any]) => (
                                 <div key={groupName} style={{ marginBottom: '24px' }}>
                                     <div 
                                         onClick={() => setExpandedFolders(prev => ({ ...prev, [groupName]: !prev[groupName] }))}
@@ -885,7 +1027,7 @@ function WorkflowDesignerContent() {
                                         }}
                                     >
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '14px' }}>{groupName === 'Global' ? '🌐' : '📁'}</span>
+                                            <span style={{ fontSize: '14px' }}>{groupName === 'Workflows' ? '⚡' : groupName.includes('Tasks') ? '🌐' : '📁'}</span>
                                             <span style={{ fontSize: '12px', fontWeight: 900, color: '#333', textTransform: 'uppercase', letterSpacing: '1px' }}>{groupName}</span>
                                         </div>
                                         <span style={{ color: '#ccc', fontSize: '10px' }}>{expandedFolders[groupName] ? '▼' : '▶'}</span>
@@ -893,17 +1035,18 @@ function WorkflowDesignerContent() {
                                     
                                     {(expandedFolders[groupName] || searchQuery.length > 0) && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                            {groupTasks.map((task: any) => {
-                                                const selected = isTaskInWorkflow(task.id);
+                                            {items.map((item: any) => {
+                                                const selected = isTaskInWorkflow(item.id);
+                                                const isWf = item.itemType === 'WORKFLOW';
                                                 return (
                                                     <div
-                                                        key={task.id}
+                                                        key={item.id}
                                                         draggable
-                                                        onDragStart={(event) => onDragStart(event, task)}
+                                                        onDragStart={(event) => onDragStart(event, item)}
                                                         style={{
                                                             padding: '12px',
-                                                            background: selected ? '#f0f7ff' : '#fafafa',
-                                                            border: `1px solid ${selected ? '#1976D2' : '#eee'}`,
+                                                            background: selected ? (isWf ? '#eff6ff' : '#f0f7ff') : '#fafafa',
+                                                            border: `1px solid ${selected ? (isWf ? '#3b82f6' : '#1976D2') : '#eee'}`,
                                                             borderRadius: '10px',
                                                             cursor: 'grab',
                                                             fontSize: '13px',
@@ -928,14 +1071,19 @@ function WorkflowDesignerContent() {
                                                         }}
                                                     >
                                                         <div style={{ 
-                                                            width: '8px', 
-                                                            height: '8px', 
-                                                            borderRadius: '50%', 
-                                                            background: task.command?.method === 'POST' ? '#1976D2' : task.command?.method === 'DELETE' ? '#dc2626' : '#22c55e',
-                                                            boxShadow: selected ? '0 0 8px rgba(25,118,210,0.4)' : 'none'
-                                                        }} />
-                                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.name}</span>
-                                                        {selected && <Check size={12} color="#1976D2" strokeWidth={3} />}
+                                                            width: '20px', 
+                                                            height: '20px', 
+                                                            borderRadius: '4px', 
+                                                            background: isWf ? '#3b82f6' : (item.command?.method === 'POST' ? '#1976D2' : item.command?.method === 'DELETE' ? '#dc2626' : '#22c55e'),
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            color: 'white'
+                                                        }}>
+                                                            {isWf ? <GitBranch size={12} /> : <Box size={12} />}
+                                                        </div>
+                                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                                                        {selected && <Check size={12} color={isWf ? '#3b82f6' : "#1976D2"} strokeWidth={3} />}
                                                     </div>
                                                 );
                                             })}
@@ -989,18 +1137,27 @@ function WorkflowDesignerContent() {
 
                 return (
                     <TaskEditShelf 
-                        taskId={editingNode.data.taskId} 
-                        nodeData={editingNode.data}
+                        taskId={editingNode?.data?.taskId}
+                        nodeData={editingNode?.data}
                         availableUpstreamVars={Array.from(new Set(upstreamVarNames))}
                         onClose={() => setEditingNode(null)}
-                        onSaveNode={(newNodeData: any) => {
-                            setNodes(nds => nds.map(n => n.id === editingNode.id ? { ...n, data: { ...n.data, ...newNodeData } } : n));
-                            setIsDirty(true);
-                            setEditingNode(null);
+                        onSaveNode={(data) => {
+                            setNodes(nds => nds.map(n => n.id === editingNode.id ? { ...n, data: { ...n.data, ...data } } : n))
+                            setIsDirty(true)
                         }}
                     />
                 );
             })()}
+
+            {isAdminPanelOpen && (
+                <WorkflowAdminShelf
+                    workflowId={workflowId}
+                    onClose={() => setIsAdminPanelOpen(false)}
+                    onSave={(data: any) => {
+                        // Saving logic if needed, usually shelf handles its own mutations or parent saves
+                    }}
+                />
+            )}
         </div>
     )
 }

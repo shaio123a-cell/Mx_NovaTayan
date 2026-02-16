@@ -82,13 +82,15 @@ model TaskGroup {
 
 model TaskExecution {
   id        String   @id @default(uuid())
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id])
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id])
   
   nodeId    String?  // The ID of the node in the workflow graph
   
   workflowExecutionId String?
-  workflowExecution   WorkflowExecution? @relation(fields: [workflowExecutionId], references: [id])
+  workflowExecution   WorkflowExecution? @relation("WorkflowExecutionToTaskExecutions", fields: [workflowExecutionId], references: [id])
+  
+  subWorkflows WorkflowExecution[] @relation("TaskExecutionToSubWorkflow")
 
   status    String   // PENDING, RUNNING, COMPLETED, FAILED
   input     Json?    // HttpRequestConfig (actual sent)
@@ -142,6 +144,12 @@ model Workflow {
   schedule   Schedule? @relation(fields: [scheduleId], references: [id])
   enabled    Boolean   @default(false)
   
+  // Interface & Execution Logic
+  inputVariables  Json? // Record<string, any>
+  outputVariables Json? // Record<string, any>
+  scheduling      Json? // { enabled: boolean, cron: string }
+  notifications   Json? // any[]
+  
   tags      String[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -193,14 +201,17 @@ model WorkflowExecution {
   taskExecutions Json // TaskExecutionResult[] - Consider phasing this out for the relation
   
   // Relations
-  taskExecutionRecords TaskExecution[]
-  
   parentExecutionId String?
   parentExecution   WorkflowExecution? @relation("WorkflowExecutionsToWorkflowExecutions", fields: [parentExecutionId], references: [id])
-  childExecutions    WorkflowExecution[] @relation("WorkflowExecutionsToWorkflowExecutions")
+  childExecutions   WorkflowExecution[] @relation("WorkflowExecutionsToWorkflowExecutions")
 
-  targetWorkerId     String?
-  targetWorker       Worker? @relation("WorkerToWorkflowExecutions", fields: [targetWorkerId], references: [id])
+  parentTaskExecutionId String?
+  parentTaskExecution   TaskExecution? @relation("TaskExecutionToSubWorkflow", fields: [parentTaskExecutionId], references: [id])
+
+  targetWorkerId String?
+  targetWorker   Worker? @relation("WorkerToWorkflowExecutions", fields: [targetWorkerId], references: [id])
+
+  taskExecutionRecords TaskExecution[] @relation("WorkflowExecutionToTaskExecutions")
 
   createdAt DateTime @default(now())
 

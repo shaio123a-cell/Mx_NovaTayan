@@ -83,16 +83,28 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
 
     setError(null);
     const copy = { ...value } as Record<string, any>;
+    
+    // Preserve old val definition if editing and newVal is empty
+    let finalVal: any = newVal;
+    if (editingName && !newVal && typeof value[editingName] === 'object' && value[editingName].valueMode === 'transformer') {
+        finalVal = value[editingName];
+    }
+
     if (editingName && editingName !== name) {
       delete copy[editingName];
     }
     
     // Assign value
-    copy[name] = newVal;
+    copy[name] = finalVal;
     
     // Update scopes
     const newScopes = { ...scopes };
-    newScopes[name] = newScope;
+    if (editingName && editingName !== name) {
+        newScopes[name] = scopes[editingName] || newScope;
+        delete newScopes[editingName];
+    } else {
+        newScopes[name] = newScope;
+    }
 
     // Update names order
     let nextNames = [...orderedNames];

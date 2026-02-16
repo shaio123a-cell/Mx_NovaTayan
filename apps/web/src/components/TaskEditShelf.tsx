@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
+import { workflowsApi } from '../api/workflows'
 import React, { useState, useEffect, useRef } from 'react'
 // Output processing is now per-variable; top-level preview removed.
 import { VariableManager } from './VariableManager';
-import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder } from 'lucide-react'
+import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive } from 'lucide-react'
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
 import { useToast } from '../context/ToastContext';
@@ -20,7 +21,8 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
     const queryClient = useQueryClient()
     const { showToast } = useToast();
     const [activeTab, setActiveTab] = useState<'details' | 'config' | 'auth' | 'output'>('details')
-    // Output Processing State (now handled per-variable)
+    
+    // Output Processing State
     const [outputVars, setOutputVars] = useState<Record<string, any>>({});
     const [inheritedVars, setInheritedVars] = useState<Record<string, any>>({});
     const [inheritedSanityChecks, setInheritedSanityChecks] = useState<any[]>([]);
@@ -35,15 +37,18 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
     const [headersOverride, setHeadersOverride] = useState(false);
     const [overlayTags, setOverlayTags] = useState<string[]>([]);
     const [kvHeaders, setKvHeaders] = useState<{ key: string, value: string }[]>([]);
-    const [outputSpecYaml, setOutputSpecYaml] = useState<string>('');
-    const [outputInputText, setOutputInputText] = useState<string>('');
-    const [outputError, setOutputError] = useState<string | null>(null);
-    const [previewResult, setPreviewResult] = useState<string | null>(null);
     const [showImpactList, setShowImpactList] = useState(false);
+    
     const isEditing = !!taskId || !!nodeData
     const isWorkflowNode = !!nodeData
+    const isNestedWorkflow = nodeData?.taskType === 'WORKFLOW'
     const isUtility = nodeData?.taskType === 'VARIABLE' || taskId === '00000000-0000-0000-0000-000000000001'
+    const [openAccordions, setOpenAccordions] = useState<Record<string, boolean>>({ headers: true, payload: true, meta: false });
+    const toggleAccordion = (key: string) => setOpenAccordions(prev => ({ ...prev, [key]: !prev[key] }));
     const initializedRef = React.useRef<string | null>(null);
+
+    // Nested Workflow State
+    const [inputMapping, setInputMapping] = useState<Record<string, any>>({})
 
     // Form State
     const [name, setName] = useState('')
@@ -83,11 +88,17 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
         setPickerOpen(false);
     };
 
-    // Fetch existing data
+    // Fetch Task or Child Workflow
     const { data: task, isLoading: isTaskLoading, isFetching: isTaskFetching } = useQuery({
         queryKey: ['task', taskId],
         queryFn: () => tasksApi.getTask(taskId!),
-        enabled: !!taskId
+        enabled: !!taskId && !isNestedWorkflow && !isUtility
+    })
+
+    const { data: childWorkflow, isLoading: isChildWfLoading, isFetching: isChildWfFetching } = useQuery({
+        queryKey: ['workflow', taskId],
+        queryFn: () => workflowsApi.getWorkflow(taskId!),
+        enabled: !!taskId && isNestedWorkflow
     })
 
     const { data: groups } = useQuery({
@@ -98,30 +109,52 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
     const { data: impact } = useQuery({
         queryKey: ['task-impact', taskId],
         queryFn: () => tasksApi.getTaskImpact(taskId!),
-        enabled: !!taskId
+        enabled: !!taskId && !isNestedWorkflow && !isUtility
     })
 
+    // Auto-switch tabs
     useEffect(() => {
-        if (!task) {
+        if (isUtility) {
+            setActiveTab('output');
+        } else if (isNestedWorkflow) {
+            setActiveTab('details');
+        }
+    }, [isUtility, isNestedWorkflow])
+
+    // Initialization
+    useEffect(() => {
+        const targetData = isNestedWorkflow ? childWorkflow : task;
+        const currentSessionId = nodeData?.id || taskId;
+
+        if (!targetData && !isUtility) {
             initializedRef.current = null;
             return;
         }
 
-        // Wait for fresh data before initializing to avoid stale state
-        if (isTaskFetching) return;
-        
-        const currentSessionId = nodeData?.id || taskId;
+        if (isTaskFetching || isChildWfFetching) return;
         if (initializedRef.current === currentSessionId) return;
         initializedRef.current = currentSessionId;
 
-        if (task && isEditing && !isUtility) {
+        if (isUtility && nodeData) {
+            setName(nodeData.label || 'Variables Manipulation')
+            setDescription(nodeData.description || '')
+            setOutputVars(nodeData.variableExtraction?.vars || {})
+            setInheritedVars({});
+            setInheritedSanityChecks([]);
+        } else if (isNestedWorkflow && childWorkflow) {
+            setName(nodeData.label || childWorkflow.name)
+            setDescription(nodeData.description || childWorkflow.description || '')
+            setInputMapping(nodeData.inputMapping || {})
+            setOutputVars(nodeData.variableExtraction?.vars || {})
+            setInheritedVars({});
+            setInheritedSanityChecks([]);
+        } else if (task && isEditing) {
             setName(task.name)
             setDescription(task.description || '')
             const cmd = (task as any).command || {}
             setUrl(cmd.url || '')
             setMethod(cmd.method || 'GET')
             
-            // Initial Headers (KV)
             const rawHeaders = cmd.headers || {};
             setHeaders(JSON.stringify(rawHeaders, null, 2));
             setKvHeaders(Object.entries(rawHeaders).map(([k, v]) => ({ key: k, value: String(v) })));
@@ -131,43 +164,32 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
             setTags(task.tags || [])
             setStatusMappings((task as any).statusMappings || [])
             
-            // Overlays initialization
             if (isWorkflowNode && nodeData) {
                 if (nodeData.timeout !== undefined) {
                     setTimeout(nodeData.timeout);
                     setTimeoutOverride(true);
-                } else {
-                    setTimeoutOverride(false);
-                }
+                } else setTimeoutOverride(false);
 
                 if (nodeData.body !== undefined) {
                     setBody(nodeData.body);
                     setBodyOverride(true);
-                } else {
-                    setBodyOverride(false);
-                }
+                } else setBodyOverride(false);
 
                 if (nodeData.headers !== undefined) {
                     const nodeRawHeaders = nodeData.headers || {};
                     setKvHeaders(Object.entries(nodeRawHeaders).map(([k, v]) => ({ key: k, value: String(v) })));
                     setHeadersOverride(true);
-                } else {
-                    setHeadersOverride(false);
-                }
+                } else setHeadersOverride(false);
 
                 if (nodeData.url !== undefined) {
                     setUrl(nodeData.url);
                     setUrlOverride(true);
-                } else {
-                    setUrlOverride(false);
-                }
+                } else setUrlOverride(false);
 
                 if (nodeData.method !== undefined) {
                     setMethod(nodeData.method);
                     setMethodOverride(true);
-                } else {
-                    setMethodOverride(false);
-                }
+                } else setMethodOverride(false);
 
                 setOverlayTags(nodeData.tags || []);
             } else {
@@ -177,7 +199,6 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 setOverlayTags([]);
             }
 
-            // Handle Sanity Checks
             const libChecks = (task as any).sanityChecks || [];
             if (isWorkflowNode) {
                 setInheritedSanityChecks(libChecks);
@@ -189,8 +210,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
 
             setGroupIds(((task as any).groups || []).map((g: any) => g.id))
             
-            // Load authorization config
-            const auth = cmd.authorization || {}
+            const auth = cmd.authorization || { type: 'none' };
             setLibAuth(auth);
             
             let targetAuth = auth;
@@ -215,7 +235,6 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 setJwtAddTo(targetAuth.addTo || 'header')
             }
 
-            // Handle Variables
             const libVars = (task as any).variableExtraction?.vars || (task as any).command?.outputProcessing?.vars || {};
             if (isWorkflowNode) {
                 setInheritedVars(libVars);
@@ -225,19 +244,10 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 setOutputVars(libVars);
             }
         }
-        if (nodeData && isUtility) {
-            setName(nodeData.label || 'Variables Manipulation')
-            const vars = nodeData.variableExtraction?.vars || {};
-            setInheritedVars({});
-            setInheritedSanityChecks([]);
-            setOutputVars(vars);
-            setActiveTab('output');
-        }
-    }, [task, nodeData, isEditing, isUtility, isWorkflowNode, isTaskFetching])
+    }, [task, childWorkflow, nodeData, isEditing, isUtility, isWorkflowNode, isNestedWorkflow, isTaskFetching, isChildWfFetching, taskId])
 
     const handleSave = () => {
         try {
-            // Build authorization config
             let authorization: any = { type: authType };
             if (authType === 'basic') {
                 authorization.username = basicAuthUser;
@@ -256,22 +266,24 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 authorization.addTo = jwtAddTo;
             }
 
-            // Convert KV Headers back to Object
             const finalHeaders = kvHeaders.reduce((acc, curr) => {
                 if (curr.key.trim()) acc[curr.key.trim()] = curr.value;
                 return acc;
             }, {} as Record<string, string>);
 
-            if (isWorkflowNode && onSaveNode) {
+            if (onSaveNode) {
                 onSaveNode({
                     ...nodeData,
                     label: name,
+                    taskId,
+                    taskType: isNestedWorkflow ? 'WORKFLOW' : (isUtility ? 'VARIABLE' : (task?.taskType || 'HTTP')),
+                    inputMapping: isNestedWorkflow ? inputMapping : undefined,
                     variableExtraction: { vars: outputVars },
                     sanityChecks,
                     authorization: authOverride ? authorization : undefined,
                     timeout: timeoutOverride ? timeout : undefined,
+                    method: methodOverride ? method : (isNestedWorkflow ? 'WF' : undefined),
                     url: urlOverride ? url : undefined,
-                    method: methodOverride ? method : undefined,
                     body: bodyOverride ? body : undefined,
                     headers: headersOverride ? finalHeaders : undefined,
                     tags: overlayTags.length > 0 ? overlayTags : undefined
@@ -285,9 +297,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 name, description, method, url, 
                 headers: finalHeaders, 
                 body, timeout, tags, statusMappings, sanityChecks,
-                groupIds,
-                authorization,
-                // Persist variable transformers only
+                groupIds, authorization,
                 variableExtraction: { vars: outputVars }
             }
             if (taskId) {
@@ -304,21 +314,19 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 })
             }
         } catch (e) {
-            showToast('Invalid Headers JSON - please check your syntax', 'error')
+            showToast('Failed to save task. Please check your configuration.', 'error')
         }
     }
 
-    if (isEditing && isTaskLoading) return null;
+    if (isEditing && (isTaskLoading || isChildWfLoading)) return null;
 
     return (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999999, display: 'flex', justifyContent: 'flex-end' }}>
-            {/* Backdrop */}
             <div 
                 style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}
                 onClick={onClose}
             />
 
-            {/* Main Drawer */}
             <div 
                 style={{ 
                     position: 'relative', 
@@ -331,648 +339,427 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                     animation: 'slide-in-right 0.3s ease-out'
                 }}
             >
-                {/* Header */}
                 <div style={{ padding: '24px 32px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
+                    <div style={{ flex: 1 }}>
                         <div className="flex flex-col">
-                            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                {isUtility ? 'VARIABLES MANIPULATION' : (taskId ? (isWorkflowNode ? (nodeData?.label || task?.name || 'Task') : 'TASK FORM - EDIT MODE') : 'CREATE NEW TASK')}
-                                {isWorkflowNode && !isUtility && (
-                                    <span style={{ fontSize: '10px', background: '#eef2ff', color: '#4f46e5', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #c7d2fe' }}>Node Instance</span>
-                                )}
-                                {!isWorkflowNode && impact && impact.count > 0 && (
-                                    <div 
-                                        onClick={() => setShowImpactList(!showImpactList)}
-                                        style={{ 
-                                            fontSize: '11px', 
-                                            background: '#fef3c7', 
-                                            color: '#92400e', 
-                                            padding: '4px 10px', 
-                                            borderRadius: '12px', 
-                                            fontWeight: 'bold', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            gap: '6px', 
-                                            cursor: 'pointer',
-                                            border: '1px solid #fde68a',
-                                            marginLeft: '8px'
-                                        }}
-                                        title="View Workflow Usage"
-                                    >
-                                        <Link2 size={12} />
-                                        {impact.count} WORKFLOWS
-                                        {showImpactList ? <X size={10} /> : <ExternalLink size={10} />}
+                            {isUtility ? (
+                                <>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <input 
+                                            value={name} 
+                                            onChange={(e) => {
+                                                setName(e.target.value);
+                                                if (onSaveNode) {
+                                                    // Proactively notify parent of rename for better UX
+                                                    // (though wait for Save button is also fine)
+                                                }
+                                            }}
+                                            style={{ 
+                                                fontSize: '20px', 
+                                                fontWeight: 800, 
+                                                color: '#111827', 
+                                                border: 'none', 
+                                                background: 'transparent',
+                                                outline: 'none',
+                                                width: '100%',
+                                                padding: 0
+                                            }}
+                                            placeholder="Utility Task Name"
+                                        />
                                     </div>
-                                )}
-                            </h2>
-                            {isWorkflowNode && !isUtility && (
-                                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#9ca3af', marginTop: '2px', paddingLeft: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                    NODE OVERLAY CONFIG
-                                </div>
+                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#4f46e5', marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                                        VARIABLES MANIPULATION
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#111827', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        {isNestedWorkflow ? (nodeData?.label || childWorkflow?.name || 'Nested Workflow') : (taskId ? (isWorkflowNode ? (nodeData?.label || task?.name || 'Task Instance') : 'TASK FORM - EDIT MODE') : 'CREATE NEW TASK')}
+                                        {isWorkflowNode && !isUtility && (
+                                            <span style={{ fontSize: '10px', background: '#eef2ff', color: '#4f46e5', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #c7d2fe' }}>Node Instance</span>
+                                        )}
+                                    </h2>
+                                    {isWorkflowNode && !isUtility && (
+                                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#9ca3af', marginTop: '2px', paddingLeft: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                            NODE OVERLAY CONFIG
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     </div>
-                    <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '8px', borderRadius: '50%', display: 'flex' }}>
+                    <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '8px', borderRadius: '50%', display: 'flex', marginLeft: '16px' }}>
                         <X size={24} color="#999" />
                     </button>
                 </div>
 
-                {/* Warning Impact */}
-                {/* Warning Impact - only show if NOT a workflow node */}
-                {isEditing && !isWorkflowNode && impact && impact.count > 0 && (
-                    <div style={{ margin: '16px 32px 0 32px', padding: '12px 16px', backgroundColor: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', color: '#92400e', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <AlertTriangle size={16} />
-                        Warning: <b>{impact.count} workflows</b> use this task. Changes here will affect all of them.
-                    </div>
-                )}
-
-                {/* Tabs */}
                 <div style={{ display: 'flex', padding: '0 32px', borderBottom: '1px solid #eee', marginTop: '16px' }}>
-                    {!isUtility && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
-                    {!isUtility && <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />}
-                    {!isUtility && <TabButton active={activeTab === 'auth'} onClick={() => setActiveTab('auth')} label="Authorization" />}
-                    <TabButton active={activeTab === 'output'} onClick={() => setActiveTab('output')} label={isUtility ? "Manipulations" : "Output Processing"} />
+                    {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
+                    {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />}
+                    {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'auth'} onClick={() => setActiveTab('auth')} label="Authorization" />}
+                    {isNestedWorkflow && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Input Mapping" />}
+                    <TabButton 
+                       active={activeTab === 'output'} 
+                       onClick={() => setActiveTab('output')} 
+                       label={isUtility ? "Manipulations" : isNestedWorkflow ? "Output Mapping" : "Output Processing"} 
+                    />
                 </div>
 
-                {/* Content Area */}
                 <div style={{ flex: 1, overflowY: 'auto', padding: '32px', display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                    {activeTab === 'details' && (
-                        <>
-                            {showImpactList && impact && !isWorkflowNode && (
-                                <div style={{ 
-                                    background: '#f8fafc', 
-                                    padding: '16px', 
-                                    borderRadius: '12px', 
-                                    border: '1px solid #e2e8f0',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '12px',
-                                    marginBottom: '24px',
-                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <Link2 size={14} /> WORKFLOW USAGE LIST
-                                        </div>
-                                        <button onClick={() => setShowImpactList(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}><X size={14} /></button>
+                            {activeTab === 'details' && !isUtility && (
+                                <>
+                                    {isNestedWorkflow && childWorkflow && (
+                                <div className="space-y-6">
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                                        <Layers size={18} className="text-primary-600" />
+                                        <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                            INPUT MAPPING
+                                        </h4>
                                     </div>
-                                    <div style={{ 
-                                        maxHeight: '200px',
-                                        overflowY: 'auto',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: '6px'
-                                    }}>
-                                        {impact.workflows?.map((w: any) => (
-                                            <div key={w.id} style={{ 
-                                                padding: '10px 14px',
-                                                background: 'white',
-                                                borderRadius: '8px',
-                                                border: '1px solid #f1f5f9',
-                                                display: 'flex', 
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                fontSize: '13px'
-                                            }}>
-                                                <span style={{ fontWeight: 600, color: '#1e293b' }}>{w.name}</span>
-                                                <a 
-                                                    href={`/designer?id=${w.id}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    style={{ color: '#1976D2', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontSize: '11px' }}
-                                                >
-                                                    OPEN <ExternalLink size={12}/>
-                                                </a>
-                                            </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                                        {Object.entries(childWorkflow.inputVariables || {}).filter(([k]) => !k.startsWith('__')).map(([varName, defaultValue]: [string, any]) => (
+                                            <MaterialInput 
+                                                key={varName}
+                                                label={varName}
+                                                value={inputMapping[varName] !== undefined ? inputMapping[varName] : (typeof defaultValue === 'string' ? defaultValue : '')}
+                                                onChange={(val) => setInputMapping(prev => ({ ...prev, [varName]: val }))}
+                                                enableVariables={true}
+                                                onRequestVariable={openVarPicker}
+                                                placeholder={`Default: ${String(defaultValue || 'none')}`}
+                                            />
                                         ))}
-                                        {(!impact.workflows || impact.workflows.length === 0) && (
-                                            <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>No workflows found.</div>
+                                        {Object.keys(childWorkflow.inputVariables || {}).filter(k => !k.startsWith('__')).length === 0 && (
+                                            <div style={{ fontSize: '13px', fontStyle: 'italic', color: '#94a3b8', padding: '16px', border: '2px dashed #f1f5f9', borderRadius: '12px', textAlign: 'center' }}>
+                                                This workflow has no input variables defined.
+                                            </div>
                                         )}
                                     </div>
                                 </div>
                             )}
 
-                            <MaterialInput 
-                                label="Task Name" 
-                                value={name} 
-                                onChange={setName} 
-                                disabled={isWorkflowNode} 
-                            />
-
-                            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-                                 <div style={{ minWidth: '100px', flex: '0 0 auto' }}>
-                                     {isWorkflowNode && (
-                                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '2px' }}>
-                                             <button 
-                                                 onClick={() => setMethodOverride(!methodOverride)}
-                                                 style={{ fontSize: '10px', fontWeight: 'bold', border: 'none', background: methodOverride ? '#f59e0b' : '#eee', color: methodOverride ? 'white' : '#999', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
-                                             >
-                                                 {methodOverride ? 'OVERRIDE' : 'LIB'}
-                                             </button>
-                                         </div>
-                                     )}
-                                     <MaterialSelect 
-                                         label="Method" 
-                                         value={method} 
-                                         onChange={setMethod} 
-                                         options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH']} 
-                                         disabled={isWorkflowNode ? !methodOverride : false}
-                                     />
-                                 </div>
-                                 <div style={{ flex: '1 1 80%' }}>
-                                     {isWorkflowNode && (
-                                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '2px' }}>
-                                             <button 
-                                                 onClick={() => setUrlOverride(!urlOverride)}
-                                                 style={{ fontSize: '10px', fontWeight: 'bold', border: 'none', background: urlOverride ? '#f59e0b' : '#eee', color: urlOverride ? 'white' : '#999', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
-                                             >
-                                                 {urlOverride ? 'OVERRIDE ENABLED' : 'USING LIBRARY'}
-                                             </button>
-                                         </div>
-                                     )}
-                                     <MaterialTextArea 
-                                         label="Endpoint URL" 
-                                         value={url} 
-                                         onChange={setUrl} 
-                                         placeholder="https://..." 
-                                         height="46px"
-                                         enableVariables={true} 
-                                         onRequestVariable={openVarPicker} 
-                                         disabled={isWorkflowNode ? !urlOverride : false}
-                                     />
-                                 </div>
-                            </div>
-
-                            <MaterialTextArea 
-                                label="Description" 
-                                value={description} 
-                                onChange={setDescription} 
-                                height="55px"
-                                enableVariables={true}
-                                onRequestVariable={openVarPicker}
-                            />
-                            
-                            <div style={{ marginTop: 0 }}>
-                                <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Tags</label>
-                                <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                    {tags.map(t => (
-                                        <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 16, backgroundColor: '#f3f4f6', fontSize: 12 }}>
-                                            <span style={{ fontWeight: 700, color: '#111827' }}>{t}</span>
-                                            {!isWorkflowNode && <button onClick={() => setTags(tags.filter(x => x !== t))} style={{ border: 'none', background: 'transparent', color: '#999', cursor: 'pointer' }}>✕</button>}
-                                        </div>
-                                    ))}
-                                    {!isWorkflowNode && <TagAdder onAdd={(v: string) => { if (v && !tags.includes(v)) setTags([...tags, v]) }} />}
-                                </div>
-                            </div>
-
-                            <div style={{ marginTop: '16px' }}>
-                                <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Folders</label>
-                                <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                    {groups?.map((g: any) => {
-                                        const isSelected = groupIds.includes(g.id);
-                                        return (
-                                            <div 
-                                                key={g.id} 
-                                                onClick={() => {
-                                                    if (isWorkflowNode) return; 
-                                                    if (isSelected) setGroupIds(groupIds.filter(id => id !== g.id));
-                                                    else setGroupIds([...groupIds, g.id]);
-                                                }}
-                                                style={{ 
-                                                    display: 'flex', 
-                                                    alignItems: 'center', 
-                                                    gap: 8, 
-                                                    padding: '6px 10px', 
-                                                    borderRadius: 16, 
-                                                    backgroundColor: isSelected ? '#e0f2fe' : '#f3f4f6', 
-                                                    cursor: isWorkflowNode ? 'default' : 'pointer',
-                                                    border: isSelected ? '1px solid #7dd3fc' : '1px solid transparent',
-                                                    opacity: isWorkflowNode ? 0.7 : 1
-                                                }}
-                                            >
-                                                <Folder size={14} color={isSelected ? '#0ea5e9' : '#6b7280'} />
-                                                <span style={{ fontWeight: 700, color: isSelected ? '#0369a1' : '#111827', fontSize: 12 }}>{g.name}</span>
+                            {!isNestedWorkflow && (
+                                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                    {/* Section 1: Target API */}
+                                    <div className={`bg-white rounded-2xl border ${urlOverride || methodOverride ? 'border-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.05)]' : 'border-slate-200'} shadow-sm overflow-hidden transition-all duration-300`}>
+                                        <div className={`bg-slate-50/50 px-6 py-3 border-b border-slate-100 flex items-center justify-between pr-4`}>
+                                            <div className="flex items-center gap-2">
+                                                <Globe size={14} className={urlOverride || methodOverride ? "text-amber-500" : "text-slate-400"} />
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Network Architecture</span>
                                             </div>
-                                        );
-                                    })}
-                                    {(!groups || groups.length === 0) && (
-                                        <div style={{ fontSize: '12px', color: '#9ca3af', fontStyle: 'italic' }}>No folders available.</div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {isWorkflowNode && (
-                                 <div style={{ marginTop: '0px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                     <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Overlay Tags</label>
-                                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                         {overlayTags.map((tag, i) => (
-                                             <span key={i} style={{ background: '#f59e0b', color: 'white', padding: '2px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                 {tag}
-                                                 <button onClick={() => setOverlayTags(overlayTags.filter((_, idx) => idx !== i))} style={{ border: 'none', background: 'transparent', color: 'white', cursor: 'pointer', padding: 0 }}>✕</button>
-                                             </span>
-                                         ))}
-                                         <button 
-                                            onClick={() => {
-                                                const t = prompt('Add tag:');
-                                                if (t) setOverlayTags([...overlayTags, t]);
-                                            }}
-                                            style={{ color: '#f59e0b', fontSize: '11px', fontWeight: 'bold', border: '1px dashed #f59e0b', background: 'transparent', padding: '2px 10px', borderRadius: '12px', cursor: 'pointer' }}
-                                         >
-                                             + OVERLAY TAG
-                                         </button>
-                                     </div>
-                                 </div>
-                             )}
-                            
-                             <div style={{ display: 'flex', gap: '20px' }}>
-                                 <div style={{ flex: 1 }}>
-                                     {isWorkflowNode ? (
-                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                             <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>Timeout Override</label>
-                                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                 <button 
-                                                     onClick={() => setTimeoutOverride(!timeoutOverride)}
-                                                     style={{ background: timeoutOverride ? '#f59e0b' : '#f3f4f6', color: timeoutOverride ? 'white' : '#6b7280', border: 'none', padding: '10px', borderRadius: '8px', cursor: 'pointer', display: 'flex' }}
-                                                 >
-                                                     <Clock size={16}/>
-                                                 </button>
-                                                 <input 
-                                                     type="number"
-                                                     value={timeout}
-                                                     onChange={e => setTimeout(Number(e.target.value))}
-                                                     disabled={!timeoutOverride}
-                                                     style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '14px', opacity: timeoutOverride ? 1 : 0.5, backgroundColor: 'white' }}
-                                                 />
-                                             </div>
-                                         </div>
-                                     ) : (
-                                         <MaterialInput label="Timeout (ms)" value={timeout.toString()} onChange={(val: string) => setTimeout(Number(val))} type="number" />
-                                     )}
-                                 </div>
-                                 <div style={{ flex: 1 }} />
-                             </div>
-
-                             <div style={{ marginTop: '0px' }}>
-                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                     <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                                         Headers Definition (Key-Value)
-                                     </label>
-                                     {isWorkflowNode && (
-                                         <button 
-                                             onClick={() => setHeadersOverride(!headersOverride)}
-                                             style={{ fontSize: '10px', fontWeight: 'bold', border: 'none', background: headersOverride ? '#f59e0b' : '#f3f4f6', color: headersOverride ? 'white' : '#6b7280', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer' }}
-                                         >
-                                             {headersOverride ? 'OVERRIDE ENABLED' : 'USING LIBRARY'}
-                                         </button>
-                                     )}
-                                 </div>
-                                 <div style={{ border: '1px solid #eee', borderRadius: '12px', overflow: 'hidden', opacity: (isWorkflowNode && !headersOverride) ? 0.6 : 1, pointerEvents: (isWorkflowNode && !headersOverride) ? 'none' : 'auto', background: 'white' }}>
-                                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                         <thead style={{ background: '#f8fafc' }}>
-                                             <tr>
-                                                 <th style={{ textAlign: 'left', padding: '10px 16px', fontSize: '10px', color: '#64748b', borderBottom: '1px solid #eee' }}>KEY</th>
-                                                 <th style={{ textAlign: 'left', padding: '10px 16px', fontSize: '10px', color: '#64748b', borderBottom: '1px solid #eee' }}>VALUE</th>
-                                                 <th style={{ width: '40px', borderBottom: '1px solid #eee' }}></th>
-                                             </tr>
-                                         </thead>
-                                         <tbody>
-                                             {(kvHeaders.length > 0 ? kvHeaders : [{key: '', value: ''}]).map((h, i) => (
-                                                 <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                     <td style={{ padding: '4px 8px' }}>
-                                                         <input 
-                                                             value={h.key} 
-                                                             onChange={e => {
-                                                                 const n = [...kvHeaders];
-                                                                 if (n.length === 0) n.push({key: '', value: ''});
-                                                                 n[i].key = e.target.value; 
-                                                                 setKvHeaders(n);
-                                                             }}
-                                                             placeholder="Header-Name"
-                                                             style={{ width: '100%', border: 'none', padding: '8px', fontSize: '13px', outline: 'none' }}
-                                                         />
-                                                     </td>
-                                                     <td style={{ padding: '4px 8px' }}>
-                                                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                                             <input 
-                                                                 value={h.value} 
-                                                                 onChange={e => {
-                                                                     const n = [...kvHeaders];
-                                                                     if (n.length === 0) n.push({key: '', value: ''});
-                                                                     n[i].value = e.target.value; 
-                                                                     setKvHeaders(n);
-                                                                 }}
-                                                                 placeholder="Value..."
-                                                                 style={{ flex: 1, border: 'none', padding: '8px', fontSize: '13px', outline: 'none' }}
-                                                             />
-                                                             <button 
-                                                                 onClick={() => openVarPicker(v => {
-                                                                     const n = [...kvHeaders];
-                                                                     if (n.length === 0) n.push({key: '', value: ''});
-                                                                     n[i].value += v; 
-                                                                     setKvHeaders(n);
-                                                                 })} 
-                                                                 style={{ border: 'none', background: 'transparent', color: '#cbd5e1', cursor: 'pointer' }}
-                                                             >
-                                                                 <Zap size={14}/>
-                                                             </button>
-                                                         </div>
-                                                     </td>
-                                                     <td style={{ textAlign: 'center' }}>
-                                                         <button onClick={() => setKvHeaders(kvHeaders.filter((_, idx) => idx !== i))} style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', opacity: 0.5 }}>
-                                                             <Trash2 size={14}/>
-                                                         </button>
-                                                     </td>
-                                                 </tr>
-                                             ))}
-                                         </tbody>
-                                     </table>
-                                     <button 
-                                         onClick={() => setKvHeaders([...kvHeaders, { key: '', value: '' }])}
-                                         style={{ width: '100%', padding: '10px', background: 'white', border: 'none', borderTop: '1px solid #eee', color: '#6366f1', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                                     >
-                                         <Plus size={14}/> ADD HEADER
-                                     </button>
-                                 </div>
-                             </div>
-
-                             <div style={{ marginTop: '0px' }}>
-                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                     <label style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                                         Payload Content (Body)
-                                     </label>
-                                     {isWorkflowNode && (
-                                         <button 
-                                             onClick={() => setBodyOverride(!bodyOverride)}
-                                             style={{ fontSize: '10px', fontWeight: 'bold', border: 'none', background: bodyOverride ? '#f59e0b' : '#f3f4f6', color: bodyOverride ? 'white' : '#6b7280', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer' }}
-                                         >
-                                             {bodyOverride ? 'OVERRIDE ENABLED' : 'USING LIBRARY'}
-                                         </button>
-                                     )}
-                                 </div>
-                                 <MaterialTextArea 
-                                     label=""
-                                     value={body} 
-                                     onChange={setBody} 
-                                     height="160px" 
-                                     mono 
-                                     enableVariables={true}
-                                     onRequestVariable={openVarPicker} 
-                                     disabled={isWorkflowNode ? !bodyOverride : false}
-                                 />
-                             </div>
-
-                        </>
-                    )}
-
-                    {activeTab === 'config' && (
-                        <>
-                            <div style={{ marginBottom: '32px' }}>
-                                <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Status Code Mappings</h4>
-                                {statusMappings.map((m, i) => (
-                                     <div key={i} style={{ display: 'flex', gap: '12px', marginBottom: '12px', alignItems: 'center' }}>
-                                         <input 
-                                             value={m.pattern} 
-                                             onChange={e => {
-                                                 const n = [...statusMappings]; n[i].pattern = e.target.value; setStatusMappings(n);
-                                             }} 
-                                             style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #eee', fontSize: '13px' }} 
-                                             placeholder="Codes (e.g. 200, 201-204)" 
-                                         />
-                                         <select 
-                                             value={m.status} 
-                                             onChange={e => {
-                                                 const n = [...statusMappings]; n[i].status = e.target.value; setStatusMappings(n);
-                                             }} 
-                                             style={{ padding: '10px', borderRadius: '4px', border: '1px solid #eee', fontSize: '13px', fontWeight: 'bold' }}
-                                         >
-                                             <option value="SUCCESS">SUCCESS</option>
-                                             <option value="FAILED">FAILED</option>
-                                         </select>
-                                         <button onClick={() => setStatusMappings(statusMappings.filter((_, idx) => idx !== i))} style={{ border: 'none', background: 'transparent', color: '#999', cursor: 'pointer' }}>✕</button>
-                                     </div>
-                                 ))}
-                                 <button onClick={() => setStatusMappings([...statusMappings, { pattern: '', status: 'SUCCESS' }])} style={{ color: '#1976D2', fontSize: '12px', fontWeight: 'bold', border: 'none', background: 'transparent', cursor: 'pointer' }}>+ ADD MAPPING</button>
-                             </div>
-
-                             <div>
-                                 <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                     <ShieldCheck size={14}/> Sanity Policies
-                                 </h4>
-                                 
-                                 {/* Inherited Checks */}
-                                 {inheritedSanityChecks.map((c, i) => (
-                                     <div key={`lib-${i}`} style={{ padding: '16px', border: '1px solid #eef2ff', borderRadius: '12px', marginBottom: '12px', backgroundColor: '#f8faff', position: 'relative', opacity: 0.8 }}>
-                                         <div style={{ position: 'absolute', top: '12px', right: '12px', fontSize: '10px', fontWeight: 'bold', color: '#6366f1', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                             <Lock size={10}/> LIBRARY
-                                         </div>
-                                         <div style={{ fontFamily: 'monospace', fontSize: '13px', marginBottom: '12px', color: '#4f46e5', fontWeight: 'bold' }}>{c.regex}</div>
-                                         <div style={{ display: 'flex', gap: '12px' }}>
-                                             <span style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', color: '#4338ca' }}>
-                                                 {c.condition.replace('_', ' ')}
-                                             </span>
-                                             <span style={{ background: c.severity === 'ERROR' ? '#fef2f2' : '#fffbeb', border: `1px solid ${c.severity === 'ERROR' ? '#fecaca' : '#fde68a'}`, borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', color: c.severity === 'ERROR' ? '#b91c1c' : '#b45309' }}>
-                                                 {c.severity}
-                                             </span>
-                                         </div>
-                                     </div>
-                                 ))}
-
-                                 {/* Local Node Checks */}
-                                 {sanityChecks.map((c, i) => (
-                                     <div key={`inst-${i}`} style={{ padding: '16px', border: '1px solid #eee', borderRadius: '12px', marginBottom: '12px', backgroundColor: '#fafafa', position: 'relative' }}>
-                                         <button onClick={() => setSanityChecks(sanityChecks.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: '12px', right: '12px', border: 'none', background: 'transparent', color: '#999', cursor: 'pointer' }}>✕</button>
-                                         <input value={c.regex} onChange={e => {
-                                             const n = [...sanityChecks]; n[i].regex = e.target.value; setSanityChecks(n);
-                                         }} style={{ width: 'calc(100% - 24px)', border: 'none', background: 'transparent', borderBottom: '1px solid #ddd', outline: 'none', fontFamily: 'monospace', fontSize: '13px', marginBottom: '12px' }} placeholder="Regex Pattern" />
-                                         <div style={{ display: 'flex', gap: '12px' }}>
-                                             <select value={c.condition} onChange={e => {
-                                                 const n = [...sanityChecks]; n[i].condition = e.target.value; setSanityChecks(n);
-                                             }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', padding: '4px' }}>
-                                                 <option value="MUST_CONTAIN">MUST CONTAIN</option>
-                                                 <option value="MUST_NOT_CONTAIN">MUST NOT CONTAIN</option>
-                                             </select>
-                                             <select value={c.severity} onChange={e => {
-                                                 const n = [...sanityChecks]; n[i].severity = e.target.value; setSanityChecks(n);
-                                             }} style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', color: '#dc2626', padding: '4px' }}>
-                                                 <option value="ERROR">ERROR</option>
-                                                 <option value="WARNING">WARNING</option>
-                                             </select>
-                                         </div>
-                                     </div>
-                                 ))}
-                                 <button onClick={() => setSanityChecks([...sanityChecks, { regex: '', condition: 'MUST_CONTAIN', severity: 'ERROR' }])} style={{ color: '#1976D2', fontSize: '12px', fontWeight: 'bold', border: 'none', background: 'transparent', cursor: 'pointer' }}>+ ADD POLICY OVERLAY</button>
-                             </div>
-                        </>
-                    )}
-
-                    {activeTab === 'auth' && (
-                        <>
-                            {isWorkflowNode && (
-                                <div style={{ marginBottom: '24px', padding: '16px', background: authOverride ? '#fffbeb' : '#f0f9ff', borderRadius: '12px', border: `1px solid ${authOverride ? '#fef3c7' : '#e0f2fe'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{ background: authOverride ? '#f59e0b' : '#3b82f6', color: 'white', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            {authOverride ? <Unlock size={18}/> : <Lock size={18}/>}
+                                            {isWorkflowNode && (
+                                                <div className="flex gap-2">
+                                                    <button 
+                                                        onClick={() => {
+                                                            const newState = !(urlOverride || methodOverride);
+                                                            setUrlOverride(newState);
+                                                            setMethodOverride(newState);
+                                                            if (!newState && task) {
+                                                                setUrl((task as any).command?.url || '');
+                                                                setMethod((task as any).command?.method || 'GET');
+                                                            }
+                                                        }}
+                                                        className={`px-2 py-1 rounded text-[9px] font-black uppercase flex items-center gap-2 transition-all ${urlOverride || methodOverride ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}
+                                                    >
+                                                        {urlOverride || methodOverride ? <Unlock size={10} /> : <Lock size={10} />}
+                                                        OVERLAY URL/METHOD
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                        <div>
-                                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#1f2937' }}>{authOverride ? 'Custom Overridden Auth' : 'Using Library Auth'}</div>
-                                            <div style={{ fontSize: '11px', color: '#6b7280' }}>{authOverride ? 'Settings below apply only to this node' : 'Currently inheriting auth from the main task'}</div>
+                                        <div className="p-6">
+                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
+                                                <div className="md:col-span-1">
+                                                    <MaterialSelect 
+                                                        label="HTTP Method" 
+                                                        value={method} 
+                                                        onChange={setMethod} 
+                                                        options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']} 
+                                                        disabled={isWorkflowNode ? !methodOverride : false}
+                                                    />
+                                                </div>
+                                                <div className="md:col-span-3">
+                                                    <MaterialInput 
+                                                        label="Resource Endpoint (URL)" 
+                                                        placeholder="https://api.system.com/v1/..." 
+                                                        value={url} 
+                                                        onChange={setUrl} 
+                                                        enableVariables 
+                                                        onRequestVariable={openVarPicker}
+                                                        disabled={isWorkflowNode ? !urlOverride : false}
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                    <button 
-                                        onClick={() => setAuthOverride(!authOverride)}
-                                        style={{ background: authOverride ? '#fef3c7' : '#e0f2fe', color: authOverride ? '#92400e' : '#0369a1', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}
-                                    >
-                                        {authOverride ? 'RESET TO LIBRARY' : 'ENABLE OVERRIDE'}
-                                    </button>
-                                </div>
-                            )}
 
-                            <div style={{ opacity: (isWorkflowNode && !authOverride) ? 0.6 : 1, pointerEvents: (isWorkflowNode && !authOverride) ? 'none' : 'auto', transition: 'all 0.2s' }}>
-                                <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '16px' }}>Authorization Type</h4>
-                                <select 
-                                    value={authType} 
-                                    onChange={e => setAuthType(e.target.value as any)}
-                                    style={{ 
-                                        width: '100%', 
-                                        padding: '12px', 
-                                        borderRadius: '8px', 
-                                        border: '1px solid #ddd', 
-                                        fontSize: '14px', 
-                                        fontWeight: 'bold',
-                                        backgroundColor: 'white'
-                                    }}
-                                >
-                                    <option value="none">No Auth</option>
-                                    <option value="basic">Basic Auth</option>
-                                    <option value="bearer">Bearer Token</option>
-                                    <option value="jwt">JWT Bearer</option>
-                                </select>
-                            </div>
+                                    {/* Section 2: Request Details - REORDERED & ACCORDION */}
+                                    <div className="space-y-4">
+                                        {/* Headers Accordion */}
+                                        <div className={`bg-white rounded-2xl border ${headersOverride ? 'border-amber-200' : 'border-slate-200'} shadow-sm overflow-hidden transition-all duration-300`}>
+                                            <div className="flex items-center justify-between bg-slate-50/50 pr-4">
+                                                <button 
+                                                    onClick={() => toggleAccordion('headers')}
+                                                    className="flex-1 px-6 py-4 flex items-center justify-between hover:bg-slate-100/50 transition-colors"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <div className={`w-8 h-8 rounded-lg ${headersOverride ? 'bg-amber-100 text-amber-600' : 'bg-indigo-50 text-indigo-500'} flex items-center justify-center`}>
+                                                            <Layers size={16} />
+                                                        </div>
+                                                        <div className="flex flex-col items-start">
+                                                            <span className="text-[12px] font-black text-slate-700 uppercase tracking-widest">Custom Headers</span>
+                                                            {isWorkflowNode && !headersOverride && <span className="text-[9px] text-slate-400 font-bold uppercase">Using Library Defaults</span>}
+                                                            {isWorkflowNode && headersOverride && <span className="text-[9px] text-amber-600 font-bold uppercase">Overlay Active</span>}
+                                                        </div>
+                                                    </div>
+                                                    {openAccordions.headers ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                                                </button>
+                                                {isWorkflowNode && (
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setHeadersOverride(!headersOverride);
+                                                            if (headersOverride && task) {
+                                                                const lib = (task as any).command?.headers || {};
+                                                                setKvHeaders(Object.entries(lib).map(([k, v]) => ({ key: k, value: String(v) })));
+                                                            }
+                                                        }}
+                                                        className={`p-2 rounded-lg transition-all ${headersOverride ? 'bg-amber-500 text-white shadow-lg shadow-amber-200' : 'bg-slate-200 text-slate-400'}`}
+                                                        title={headersOverride ? "Disable Overlay (Use Library)" : "Enable Overlay (Custom Headers)"}
+                                                    >
+                                                        {headersOverride ? <Unlock size={14} /> : <Lock size={14} />}
+                                                    </button>
+                                                )}
+                                            </div>
+                                            
+                                            {openAccordions.headers && (
+                                                <div className="p-6 animate-in slide-in-from-top-1 duration-200">
+                                                    <div className={`space-y-2 max-h-[250px] overflow-y-auto ${headersOverride ? 'bg-amber-50/30' : 'bg-slate-50/50'} p-4 rounded-xl border border-dashed ${headersOverride ? 'border-amber-200' : 'border-slate-200'}`}>
+                                                        {kvHeaders.length === 0 && (
+                                                            <div className="text-center py-4 text-[11px] text-slate-400 italic">No custom headers configured.</div>
+                                                        )}
+                                                        {kvHeaders.map((h, i) => (
+                                                            <div key={i} className="flex gap-2 group/header items-center bg-white p-1.5 rounded-lg border border-slate-200 shadow-sm focus-within:border-primary-300 transition-colors">
+                                                                <input 
+                                                                    className="flex-1 px-3 py-1.5 text-[11px] border-none bg-transparent font-mono outline-none" 
+                                                                    value={h.key} 
+                                                                    placeholder="Key"
+                                                                    disabled={isWorkflowNode && !headersOverride}
+                                                                    onChange={e => {
+                                                                        const newH = [...kvHeaders];
+                                                                        newH[i].key = e.target.value;
+                                                                        setKvHeaders(newH);
+                                                                    }}
+                                                                />
+                                                                <div className="w-[1px] h-4 bg-slate-200" />
+                                                                <input 
+                                                                    className="flex-1 px-3 py-1.5 text-[11px] border-none bg-transparent font-mono outline-none" 
+                                                                    value={h.value} 
+                                                                    placeholder="Value"
+                                                                    disabled={isWorkflowNode && !headersOverride}
+                                                                    onChange={e => {
+                                                                        const newH = [...kvHeaders];
+                                                                        newH[i].value = e.target.value;
+                                                                        setKvHeaders(newH);
+                                                                    }}
+                                                                />
+                                                                <button 
+                                                                    disabled={isWorkflowNode && !headersOverride}
+                                                                    onClick={() => setKvHeaders(kvHeaders.filter((_, idx) => idx !== i))} 
+                                                                    className={`p-1.5 transition-colors ${isWorkflowNode && !headersOverride ? 'text-slate-200' : 'text-slate-300 hover:text-red-500'}`}
+                                                                >
+                                                                    <Trash2 size={14}/>
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                        <button 
+                                                            disabled={isWorkflowNode && !headersOverride}
+                                                            onClick={() => setKvHeaders([...kvHeaders, { key: '', value: '' }])}
+                                                            className={`w-full mt-2 py-2 text-[10px] border border-dashed rounded-xl transition-all font-bold flex items-center justify-center gap-2 ${
+                                                                isWorkflowNode && !headersOverride 
+                                                                    ? 'border-slate-200 text-slate-300 opacity-50 cursor-not-allowed' 
+                                                                    : 'border-slate-300 text-slate-500 hover:bg-white hover:border-primary-300 hover:text-primary-600'
+                                                            }`}
+                                                        >
+                                                            <Plus size={12} /> ADD HEADER KEY
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
 
-                            {isWorkflowNode && !authOverride && libAuth && libAuth.type !== 'none' && (
-                                <div style={{ marginTop: '16px', fontSize: '11px', color: '#666', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <Lock size={12}/> View only: Library is using <b>{libAuth.type.toUpperCase()}</b> auth.
-                                </div>
-                            )}
-
-                            {authType === 'basic' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
-                                    <h4 style={{ fontSize: '12px', fontWeight: 900, color: '#374151', margin: 0 }}>Basic Authentication</h4>
-                                    <MaterialInput 
-                                        label="Username" 
-                                        value={basicAuthUser} 
-                                        onChange={setBasicAuthUser}
-                                        enableVariables
-                                        onRequestVariable={openVarPicker}
-                                    />
-                                    <MaterialInput 
-                                        label="Password" 
-                                        value={basicAuthPassword} 
-                                        onChange={setBasicAuthPassword}
-                                        type="password"
-                                        enableVariables
-                                        onRequestVariable={openVarPicker}
-                                    />
-                                </div>
-                            )}
-
-                            {authType === 'bearer' && (
-                                <div style={{ padding: '20px', backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
-                                    <h4 style={{ fontSize: '12px', fontWeight: 900, color: '#374151', marginBottom: '16px' }}>Bearer Token</h4>
-                                    <MaterialInput 
-                                        label="Token" 
-                                        value={bearerToken} 
-                                        onChange={setBearerToken}
-                                        enableVariables
-                                        onRequestVariable={openVarPicker}
-                                    />
-                                </div>
-                            )}
-
-                            {authType === 'jwt' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
-                                    <h4 style={{ fontSize: '12px', fontWeight: 900, color: '#374151', margin: 0 }}>JWT Bearer Configuration</h4>
-                                    
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#6b7280', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                            Algorithm
-                                        </label>
-                                        <select 
-                                            value={jwtAlgorithm} 
-                                            onChange={e => setJwtAlgorithm(e.target.value)}
-                                            style={{ 
-                                                width: '100%', 
-                                                padding: '10px', 
-                                                borderRadius: '6px', 
-                                                border: '1px solid #d1d5db', 
-                                                fontSize: '13px',
-                                                backgroundColor: 'white'
-                                            }}
-                                        >
-                                            <option value="HS256">HS256</option>
-                                            <option value="HS384">HS384</option>
-                                            <option value="HS512">HS512</option>
-                                            <option value="RS256">RS256</option>
-                                            <option value="RS384">RS384</option>
-                                            <option value="RS512">RS512</option>
-                                        </select>
+                                        {/* Payload Accordion */}
+                                        <div className={`bg-white rounded-2xl border ${bodyOverride ? 'border-amber-200' : 'border-slate-200'} shadow-sm overflow-hidden transition-all duration-300`}>
+                                            <div className="flex items-center justify-between bg-slate-50/50 pr-4">
+                                                <button 
+                                                    onClick={() => toggleAccordion('payload')}
+                                                    className="flex-1 px-6 py-4 flex items-center justify-between hover:bg-slate-100/50 transition-colors"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <div className={`w-8 h-8 rounded-lg ${bodyOverride ? 'bg-amber-100 text-amber-600' : 'bg-blue-50 text-blue-500'} flex items-center justify-center`}>
+                                                            <FileText size={16} />
+                                                        </div>
+                                                        <div className="flex flex-col items-start">
+                                                            <span className="text-[12px] font-black text-slate-700 uppercase tracking-widest">Request Payload</span>
+                                                            {isWorkflowNode && !bodyOverride && <span className="text-[9px] text-slate-400 font-bold uppercase">Using Library Body</span>}
+                                                            {isWorkflowNode && bodyOverride && <span className="text-[9px] text-amber-600 font-bold uppercase">Overlay Active</span>}
+                                                        </div>
+                                                    </div>
+                                                    {openAccordions.payload ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                                                </button>
+                                                {isWorkflowNode && (
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setBodyOverride(!bodyOverride);
+                                                            if (bodyOverride && task) setBody((task as any).command?.body || '');
+                                                        }}
+                                                        className={`p-2 rounded-lg transition-all ${bodyOverride ? 'bg-amber-500 text-white shadow-lg shadow-amber-200' : 'bg-slate-200 text-slate-400'}`}
+                                                        title={bodyOverride ? "Disable Overlay (Use Library)" : "Enable Overlay (Custom Payload)"}
+                                                    >
+                                                        {bodyOverride ? <Unlock size={14} /> : <Lock size={14} />}
+                                                    </button>
+                                                )}
+                                            </div>
+                                            
+                                            {openAccordions.payload && (
+                                                <div className="p-6 animate-in slide-in-from-top-1 duration-200">
+                                                    <MaterialTextArea 
+                                                        label="JSON / Text Body" 
+                                                        value={body} 
+                                                        onChange={setBody} 
+                                                        height="250px" 
+                                                        mono 
+                                                        enableVariables 
+                                                        onRequestVariable={openVarPicker}
+                                                        disabled={isWorkflowNode ? !bodyOverride : false}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
 
-                                    <div>
-                                        <MaterialInput 
-                                            label="Secret" 
-                                            value={jwtSecret} 
-                                            onChange={setJwtSecret}
-                                            enableVariables
+                                    {/* Section 3: Execution & Metadata */}
+                                    <div className={`bg-white rounded-2xl border ${timeoutOverride ? 'border-amber-200' : 'border-slate-200'} shadow-sm overflow-hidden`}>
+                                        <div className="bg-slate-50/50 px-6 py-3 border-bottom border-slate-100 flex items-center justify-between pr-4">
+                                            <div className="flex items-center gap-2">
+                                                <Settings size={14} className="text-slate-400" />
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Execution & Metadata</span>
+                                            </div>
+                                            {isWorkflowNode && (
+                                                <button 
+                                                    onClick={() => {
+                                                        setTimeoutOverride(!timeoutOverride);
+                                                        if (timeoutOverride && task) setTimeout((task as any).command?.timeout || 30000);
+                                                    }}
+                                                    className={`p-1.5 rounded transition-all ${timeoutOverride ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-200 text-slate-400'}`}
+                                                >
+                                                    {timeoutOverride ? <Unlock size={12} /> : <Lock size={12} />}
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="p-6">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                <div className="space-y-6">
+                                                    <MaterialInput 
+                                                        label="Execution Timeout (ms)" 
+                                                        type="number" 
+                                                        value={timeout} 
+                                                        onChange={(v: any) => setTimeout(parseInt(v) || 30000)}
+                                                        disabled={isWorkflowNode ? !timeoutOverride : false}
+                                                    />
+                                                    
+                                                    <MaterialInput 
+                                                        label="Operational Tags" 
+                                                        placeholder="prod, linux, aws..."
+                                                        value={isWorkflowNode ? overlayTags.join(', ') : tags.join(', ')} 
+                                                        onChange={(v: string) => {
+                                                            const t = v.split(',').map(s => s.trim()).filter(Boolean);
+                                                            if (isWorkflowNode) setOverlayTags(t);
+                                                            else setTags(t);
+                                                        }}
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    {!isWorkflowNode && (
+                                                        <div className="relative">
+                                                            <div className="flex items-center justify-between mb-4">
+                                                                <label className="material-label">Library Categorization</label>
+                                                                <div className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-widest">Digital Org</div>
+                                                            </div>
+                                                            <div className="grid grid-cols-2 gap-3 mt-2 relative">
+                                                                {/* Optional: Decorative grid lines */}
+                                                                <div className="absolute inset-0 grid grid-cols-4 grid-rows-4 pointer-events-none opacity-[0.03]">
+                                                                    {Array.from({ length: 16 }).map((_, i) => <div key={i} className="border border-primary-500" />)}
+                                                                </div>
+
+                                                                {groups?.map((g: any, idx: number) => {
+                                                                    const isActive = groupIds.includes(g.id);
+                                                                    const hexId = g.id.substring(0, 4).toUpperCase();
+                                                                    return (
+                                                                        <div 
+                                                                            key={g.id} 
+                                                                            onClick={() => {
+                                                                                if (isActive) setGroupIds(groupIds.filter(id => id !== g.id));
+                                                                                else setGroupIds([...groupIds, g.id]);
+                                                                            }}
+                                                                            className={`relative overflow-hidden group cursor-pointer border-2 transition-all p-3 rounded-2xl flex flex-col gap-2 ${
+                                                                                isActive 
+                                                                                    ? 'bg-[#f0f4ff] border-primary-500 shadow-[0_0_20px_rgba(25,118,210,0.12)]' 
+                                                                                    : 'bg-white border-slate-100 hover:border-slate-300 hover:bg-slate-50/50'
+                                                                            }`}
+                                                                        >
+                                                                            <div className="flex items-center justify-between">
+                                                                                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md font-mono text-[9px] font-black tracking-tighter transition-colors ${isActive ? 'bg-primary-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                                                    <div className={`w-1 h-1 rounded-full ${isActive ? 'bg-white animate-pulse' : 'bg-slate-300'}`} />
+                                                                                    REG-{hexId}
+                                                                                </div>
+                                                                                {isActive && (
+                                                                                    <div className="flex gap-0.5">
+                                                                                        {[1, 2, 3].map(i => (
+                                                                                            <div key={i} className="w-1 h-2 bg-primary-500/20 rounded-full" />
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <Folder size={12} className={isActive ? 'text-primary-600' : 'text-slate-300'} fill={isActive ? "currentColor" : "none"} />
+                                                                                <span className={`text-[12px] font-bold truncate ${isActive ? 'text-primary-800' : 'text-slate-600'}`}>
+                                                                                    {g.name}
+                                                                                </span>
+                                                                            </div>
+                                                                            {isActive && (
+                                                                                <div className="absolute -bottom-1 -right-1 opacity-10">
+                                                                                    <Grid size={32} className="text-primary-500" />
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                                {(!groups || groups.length === 0) && (
+                                                                    <div className="col-span-2 text-[10px] text-slate-400 italic py-4 text-center border-2 border-dashed border-slate-100 rounded-2xl uppercase tracking-widest font-black">
+                                                                        No library clusters found
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6">
+                                        <MaterialTextArea 
+                                            label="Researcher Notes (Description)" 
+                                            value={description} 
+                                            onChange={setDescription} 
+                                            height="80px"
+                                            enableVariables={true}
                                             onRequestVariable={openVarPicker}
+                                            placeholder="Document purpose, expected outcomes, or dependencies..."
                                         />
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '12px', color: '#6b7280', cursor: 'pointer' }}>
-                                            <input 
-                                                type="checkbox" 
-                                                checked={jwtSecretIsBase64} 
-                                                onChange={e => setJwtSecretIsBase64(e.target.checked)}
-                                                style={{ cursor: 'pointer' }}
-                                            />
-                                            Secret is Base64 encoded
-                                        </label>
                                     </div>
-
-                                    <MaterialTextArea 
-                                        label="Payload (JSON)" 
-                                        value={jwtPayload} 
-                                        onChange={setJwtPayload}
-                                        height="120px"
-                                        mono
-                                        enableVariables
-                                        onRequestVariable={openVarPicker}
-                                    />
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#6b7280', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                            Add JWT Token To
-                                        </label>
-                                        <select 
-                                            value={jwtAddTo} 
-                                            onChange={e => setJwtAddTo(e.target.value as any)}
-                                            style={{ 
-                                                width: '100%', 
-                                                padding: '10px', 
-                                                borderRadius: '6px', 
-                                                border: '1px solid #d1d5db', 
-                                                fontSize: '13px',
-                                                backgroundColor: 'white'
-                                            }}
-                                        >
-                                            <option value="header">Request Header (Authorization: Bearer ...)</option>
-                                            <option value="query">Query Parameter (?token=...)</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            )}
-
-                            {authType === 'none' && (
-                                <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
-                                    <p>No authentication will be used for this request.</p>
                                 </div>
                             )}
                         </>
@@ -986,19 +773,6 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                         <MaterialInput label="Task Name (Label)" value={name} onChange={setName} />
                                     </div>
                                 )}
-                                <div style={{ marginBottom: isUtility ? '0px' : '32px' }}>
-                                    {!isUtility && (
-                                        <>
-                                            <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '8px' }}>
-                                                Output Processing
-                                            </h4>
-                                            <p style={{ fontSize: '12px', color: '#666', lineHeight: '1.5' }}>
-                                                Output processing is now configured per-variable. Define variables and attach transformers below.
-                                            </p>
-                                        </>
-                                    )}
-                                </div>
-
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         <Zap size={18} className="text-primary-600" fill="currentColor" />
@@ -1014,12 +788,9 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                 <VariableManager 
                                     value={{ ...inheritedVars, ...outputVars }} 
                                     onChange={(newMerged) => {
-                                        // VariableManager already filters __order and __scopes to exclude inherited vars
                                         const onlyNew = { ...newMerged };
                                         Object.keys(inheritedVars).forEach(k => {
-                                            if (k !== '__order' && k !== '__scopes') {
-                                                delete onlyNew[k];
-                                            }
+                                            if (k !== '__order' && k !== '__scopes') delete onlyNew[k];
                                         });
                                         setOutputVars(onlyNew);
                                     }} 
@@ -1031,265 +802,330 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                             </div>
                         </>
                     )}
+                    
+                    {activeTab === 'config' && (
+                        <div className="space-y-8">
+                            <div>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <ShieldCheck size={18} className="text-primary-600" />
+                                    <h4 className="text-[14px] font-extrabold text-[#333] uppercase tracking-wider">Sanity Gate Policies</h4>
+                                </div>
+                                <SanityCheckManager 
+                                    value={sanityChecks} 
+                                    onChange={setSanityChecks} 
+                                    inherited={inheritedSanityChecks}
+                                />
+                            </div>
+                            
+                            {!isWorkflowNode && (
+                                <div>
+                                    <div className="flex items-center gap-2 mb-4 mt-8">
+                                        <List size={18} className="text-primary-600" />
+                                        <h4 className="text-[14px] font-extrabold text-[#333] uppercase tracking-wider">Status Response Mappings</h4>
+                                    </div>
+                                    <StatusMappingManager value={statusMappings} onChange={setStatusMappings} />
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'auth' && (
+                        <div className="space-y-6">
+                            <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100/50">
+                                <div className="flex items-center justify-between mb-6">
+                                    <div className="flex items-center gap-2">
+                                        <Lock size={18} className="text-blue-600" />
+                                        <h4 className="text-[14px] font-extrabold text-blue-900 uppercase tracking-wider">Authentication Strategy</h4>
+                                    </div>
+                                    {isWorkflowNode && (
+                                        <button 
+                                            onClick={() => {
+                                                setAuthOverride(!authOverride);
+                                                if (authOverride && libAuth) {
+                                                    setAuthType(libAuth.type || 'none');
+                                                    // Reset fields to library values...
+                                                }
+                                            }}
+                                            className={`px-3 py-1 rounded text-[10px] font-black uppercase transition-all ${authOverride ? 'bg-amber-500 text-white shadow-md' : 'bg-gray-200 text-gray-500'}`}
+                                        >
+                                            {authOverride ? 'Custom Active' : 'Use Library Auth'}
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-4 gap-3">
+                                    {['none', 'basic', 'bearer', 'jwt'].map((t: any) => (
+                                        <button
+                                            key={t}
+                                            disabled={isWorkflowNode && !authOverride}
+                                            onClick={() => setAuthType(t)}
+                                            className={`py-3 rounded-xl border-2 font-black text-[11px] uppercase transition-all ${
+                                                authType === t 
+                                                ? 'bg-blue-600 border-blue-600 text-white shadow-lg' 
+                                                : 'bg-white border-gray-100 text-gray-400 hover:border-blue-200 hover:text-blue-500'
+                                            } ${isWorkflowNode && !authOverride ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                        >
+                                            {t}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className={`space-y-4 p-4 ${isWorkflowNode && !authOverride ? 'opacity-40 pointer-events-none' : ''}`}>
+                                {authType === 'basic' && (
+                                    <>
+                                        <MaterialInput label="Username" value={basicAuthUser} onChange={setBasicAuthUser} enableVariables onRequestVariable={openVarPicker} />
+                                        <MaterialInput label="Password" type="password" value={basicAuthPassword} onChange={setBasicAuthPassword} enableVariables onRequestVariable={openVarPicker} />
+                                    </>
+                                )}
+                                {authType === 'bearer' && (
+                                    <MaterialTextArea label="Bearer Token" value={bearerToken} onChange={setBearerToken} height="60px" mono enableVariables onRequestVariable={openVarPicker} />
+                                )}
+                                {authType === 'jwt' && (
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <MaterialSelect label="Algorithm" value={jwtAlgorithm} onChange={setJwtAlgorithm} options={['HS256', 'HS384', 'HS512', 'RS256']} />
+                                            <MaterialInput label="Token Destination" value={jwtAddTo} onChange={setJwtAddTo} options={['header', 'query']} />
+                                        </div>
+                                        <MaterialTextArea label="Secret / Private Key" value={jwtSecret} onChange={setJwtSecret} height="100px" mono />
+                                        <div className="flex items-center gap-2">
+                                            <input type="checkbox" checked={jwtSecretIsBase64} onChange={e => setJwtSecretIsBase64(e.target.checked)} />
+                                            <span className="text-xs font-bold text-gray-500 uppercase">Secret is Base64 encoded</span>
+                                        </div>
+                                        <MaterialTextArea label="Payload (JSON)" value={jwtPayload} onChange={setJwtPayload} height="150px" mono />
+                                    </div>
+                                )}
+                                {authType === 'none' && (
+                                    <div className="flex flex-col items-center justify-center py-12 text-gray-300">
+                                        <Unlock size={48} className="mb-4 opacity-20" />
+                                        <div className="text-xs font-black uppercase tracking-widest">Public Request (No Auth)</div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                {/* Footer */}
                 <div style={{ padding: '24px 32px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '24px', backgroundColor: 'white' }}>
-                    <button 
-                        onClick={onClose}
-                        style={{ background: 'transparent', border: 'none', color: '#1976D2', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', letterSpacing: '1px' }}
-                    >
-                        CANCEL
-                    </button>
-                    <button 
-                        onClick={handleSave}
-                        style={{ backgroundColor: '#1976D2', border: 'none', color: 'white', padding: '10px 24px', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}
-                    >
-                        SAVE TASK
-                    </button>
+                    <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#1976D2', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}>CANCEL</button>
+                    <button onClick={handleSave} style={{ backgroundColor: '#1976D2', border: 'none', color: 'white', padding: '10px 24px', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}>SAVE</button>
                 </div>
+            </div>
+
             {pickerOpen && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 99999999 }}>
                     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.1)' }} onClick={() => setPickerOpen(false)} />
                     <VariablePicker 
                         onSelect={handleVarSelect} 
                         onClose={() => setPickerOpen(false)} 
-                        localVars={[
-                            ...Object.keys(outputVars || {}).filter(k => !k.startsWith('__')),
-                            ...(availableUpstreamVars || [])
-                        ]}
+                        localVars={[...Object.keys(outputVars || {}).filter(k => !k.startsWith('__')), ...(availableUpstreamVars || [])]}
                     />
                 </div>
             )}
-            </div>
 
             <style>{`
-                @keyframes slide-in-right {
-                    from { transform: translateX(100%); }
-                    to { transform: translateX(0); }
-                }
-                .material-label {
-                    position: absolute;
-                    top: -8px;
-                    left: 12px;
-                    background: white;
-                    padding: 0 4px;
-                    font-size: 11px;
-                    color: #999;
-                    font-weight: 500;
-                    z-index: 10;
-                }
-                .material-box {
-                    width: 100%;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    padding: 12px 16px;
-                    font-size: 14px;
-                    outline: none;
-                    transition: border-color 0.2s;
-                }
-                .material-box:focus {
-                    border-color: #1976D2;
-                }
+                @keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+                .material-label { position: absolute; top: -8px; left: 12px; background: white; padding: 0 4px; font-size: 11px; color: #999; font-weight: 500; z-index: 10; text-transform: uppercase; }
+                .material-box { width: 100%; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px 16px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+                .material-box:focus { border-color: #1976D2; }
             `}</style>
         </div>
     )
 }
 
+function SanityCheckManager({ value, onChange, inherited = [] }: { value: any[], onChange: (val: any[]) => void, inherited?: any[] }) {
+    const [regex, setRegex] = useState('');
+    const [condition, setCondition] = useState('MUST_CONTAIN');
+    const [severity, setSeverity] = useState('ERROR');
+
+    const handleAdd = () => {
+        if (!regex) return;
+        onChange([...(value || []), { regex, condition, severity }]);
+        setRegex('');
+    };
+
+    const handleRemove = (idx: number) => {
+        onChange((value || []).filter((_, i) => i !== idx));
+    };
+
+    const safeValue = Array.isArray(value) ? value : [];
+    const safeInherited = Array.isArray(inherited) ? inherited : [];
+
+    return (
+        <div className="space-y-4">
+            <div className="flex gap-2">
+                <input 
+                    placeholder="Regex e.g. success: true" 
+                    value={regex} 
+                    onChange={e => setRegex(e.target.value)} 
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white outline-none"
+                />
+                <select value={condition} onChange={e => setCondition(e.target.value)} className="px-2 py-2 border rounded-lg text-xs font-bold bg-gray-50">
+                    <option value="MUST_CONTAIN">MUST CONTAIN</option>
+                    <option value="MUST_NOT_CONTAIN">MUST NOT</option>
+                </select>
+                <select value={severity} onChange={e => setSeverity(e.target.value)} className="px-2 py-2 border rounded-lg text-xs font-bold bg-gray-50">
+                    <option value="ERROR">ERROR</option>
+                    <option value="WARNING">WARNING</option>
+                </select>
+                <button onClick={handleAdd} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs uppercase shadow-sm"><Plus size={16}/></button>
+            </div>
+
+            <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2">
+                {safeInherited.map((check, idx) => (
+                    <div key={`inh-${idx}`} className="flex items-center justify-between p-3 bg-indigo-50/50 border border-indigo-100/50 rounded-xl opacity-70">
+                        <div className="flex items-center gap-3">
+                            <Library size={14} className="text-indigo-400" />
+                            <div className="font-mono text-xs font-bold text-indigo-900">{check?.regex || 'N/A'}</div>
+                        </div>
+                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">{check?.condition} • {check?.severity}</div>
+                    </div>
+                ))}
+                {safeValue.map((check, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-xl shadow-sm group hover:border-blue-200 transition-all">
+                        <div className="flex items-center gap-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                            <div className="font-mono text-xs font-bold text-gray-700">{check?.regex || 'N/A'}</div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{check?.condition} • {check?.severity}</div>
+                            <button onClick={() => handleRemove(idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={14}/></button>
+                        </div>
+                    </div>
+                ))}
+                {safeValue.length === 0 && safeInherited.length === 0 && (
+                    <div className="text-[11px] text-gray-400 text-center py-4 border-2 border-dashed border-gray-50 rounded-xl">
+                        No validation policies defined.
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function StatusMappingManager({ value, onChange }: { value: any[], onChange: (val: any[]) => void }) {
+    const [pattern, setPattern] = useState('');
+    const [status, setStatus] = useState('SUCCESS');
+
+    const handleAdd = () => {
+        if (!pattern) return;
+        onChange([...value, { pattern, status }]);
+        setPattern('');
+    };
+
+    const handleRemove = (idx: number) => {
+        onChange(value.filter((_, i) => i !== idx));
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="flex gap-2">
+                <input 
+                    placeholder="Code or Range e.g. 200-204, 404" 
+                    value={pattern} 
+                    onChange={e => setPattern(e.target.value)} 
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white outline-none font-mono"
+                />
+                <select value={status} onChange={e => setStatus(e.target.value)} className="px-3 py-2 border rounded-lg text-xs font-bold bg-gray-50">
+                    {['SUCCESS', 'FAILED', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION'].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                    ))}
+                </select>
+                <button onClick={handleAdd} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs uppercase shadow-sm"><Plus size={16}/></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+                {value.map((m, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2.5 bg-gray-50 border border-gray-100 rounded-xl group hover:border-blue-200 transition-all">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono font-black text-gray-400">#</span>
+                            <div className="text-xs font-bold text-gray-700">{m.pattern}</div>
+                            <ArrowRight size={12} className="text-gray-300" />
+                            <div className={`text-[10px] font-black uppercase ${
+                                m.status === 'SUCCESS' ? 'text-green-600' :
+                                m.status === 'FAILED' ? 'text-red-600' :
+                                'text-orange-600'
+                            }`}>{m.status}</div>
+                        </div>
+                        <button onClick={() => handleRemove(idx)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14}/></button>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function TabButton({ active, onClick, label }: any) {
     return (
-        <button 
-            onClick={onClick}
-            style={{ 
-                flex: 1, 
-                padding: '16px 0', 
-                border: 'none', 
-                background: 'transparent', 
-                fontSize: '12px', 
-                fontWeight: 'bold', 
-                textTransform: 'uppercase', 
-                letterSpacing: '1px',
-                color: active ? '#1976D2' : '#999',
-                borderBottom: active ? '2px solid #1976D2' : '2px solid transparent',
-                cursor: 'pointer',
-                transition: 'all 0.2s'
-            }}
-        >
+        <button onClick={onClick} style={{ flex: 1, padding: '16px 0', border: 'none', background: 'transparent', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', color: active ? '#1976D2' : '#999', borderBottom: active ? '2px solid #1976D2' : '2px solid transparent', cursor: 'pointer' }}>
             {label}
         </button>
     )
 }
 
-// Helpers moved to bottom
-
-
-// ... (existing imports, but add useRef if not present at top, I will add it to the replacement block if I replace the whole file or top)
-// actually I'll just add the new components method and imports
-
-// --- Helper Components ---
-
-interface MaterialInputProps {
-    label: string;
-    value: string;
-    onChange: (val: string) => void;
-    placeholder?: string;
-    type?: string;
-    enableVariables?: boolean;
-    onRequestVariable?: (cb: (val: string) => void) => void;
-    disabled?: boolean;
-}
-
-function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false }: MaterialInputProps) {
+function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false }: any) {
     const inputRef = useRef<any>(null);
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
             {enableVariables ? (
                 <div className="relative">
-                    <VariableAwareInput 
-                        ref={inputRef}
-                        value={value} 
-                        onValueChange={onChange} 
-                        placeholder={placeholder}
-                        type={type}
-                        disabled={disabled}
-                    />
-                    <button 
-                        onClick={() => onRequestVariable && onRequestVariable((val: string) => {
-                            const el = inputRef.current;
-                            if (el) {
-                                const start = el.selectionStart || 0;
-                                const end = el.selectionEnd || 0;
-                                const newVal = value.slice(0, start) + val + value.slice(end);
-                                onChange(newVal);
-                                setTimeout(() => {
-                                    el.focus();
-                                    el.setSelectionRange(start + val.length, start + val.length);
-                                }, 0);
-                            } else {
-                                onChange(value + val);
-                            }
-                        })}
-                        disabled={disabled}
-                        style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', color: disabled ? '#ccc' : '#1976D2', cursor: disabled ? 'default' : 'pointer', padding: '4px', zIndex: 10 }}
-                        title="Insert Variable"
-                    >
+                    <VariableAwareInput ref={inputRef} value={value} onValueChange={onChange} placeholder={placeholder} type={type} disabled={disabled} />
+                    <button onClick={() => onRequestVariable && onRequestVariable((val: string) => {
+                        const el = inputRef.current;
+                        if (el) {
+                            const start = el.selectionStart || 0;
+                            const end = el.selectionEnd || 0;
+                            const newVal = (value || '').slice(0, start) + val + (value || '').slice(end);
+                            onChange(newVal);
+                            setTimeout(() => { el.focus(); el.setSelectionRange(start + val.length, start + val.length); }, 0);
+                        } else onChange((value || '') + val);
+                    })} disabled={disabled} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', color: disabled ? '#ccc' : '#1976D2', cursor: disabled ? 'default' : 'pointer', padding: '4px', zIndex: 10 }}>
                         <Zap size={14} fill="currentColor" />
                     </button>
                 </div>
             ) : (
-                <input 
-                    ref={inputRef}
-                    type={type} 
-                    value={value} 
-                    onChange={(e) => onChange(e.target.value)} 
-                    placeholder={placeholder}
-                    disabled={disabled}
-                    className="material-box"
-                    style={{ opacity: disabled ? 0.6 : 1 }}
-                />
+                <input ref={inputRef} type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} disabled={disabled} className="material-box" style={{ opacity: disabled ? 0.6 : 1 }} />
             )}
         </div>
     )
 }
 
-interface MaterialTextAreaProps {
-    label: string;
-    value: string;
-    onChange: (val: string) => void;
-    height?: string;
-    mono?: boolean;
-    placeholder?: string;
-    enableVariables?: boolean;
-    onRequestVariable?: (cb: (val: string) => void) => void;
-    disabled?: boolean;
-}
-
-function MaterialTextArea({ label, value, onChange, height = '100px', mono = false, placeholder = '', enableVariables, onRequestVariable, disabled = false }: MaterialTextAreaProps) {
+function MaterialTextArea({ label, value, onChange, height = '100px', mono = false, placeholder = '', enableVariables, onRequestVariable, disabled = false }: any) {
     const areaRef = useRef<any>(null);
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
             {enableVariables ? (
                 <div className="relative">
-                    <VariableAwareInput 
-                        ref={areaRef}
-                        isTextarea={true}
-                        value={value} 
-                        onValueChange={onChange} 
-                        placeholder={placeholder}
-                        style={{ minHeight: '46px', height }}
-                        disabled={disabled}
-                    />
-                    <button 
-                        onClick={() => onRequestVariable && onRequestVariable((val: string) => {
-                            const el = areaRef.current;
-                            if (el) {
-                                const start = el.selectionStart || 0;
-                                const end = el.selectionEnd || 0;
-                                const newVal = value.slice(0, start) + val + value.slice(end);
-                                onChange(newVal);
-                                setTimeout(() => {
-                                    el.focus();
-                                    el.setSelectionRange(start + val.length, start + val.length);
-                                }, 0);
-                            } else {
-                                onChange(value + val);
-                            }
-                        })}
-                        disabled={disabled}
-                        style={{ position: 'absolute', right: '12px', top: '12px', border: 'none', background: 'white', color: disabled ? '#ccc' : '#1976D2', cursor: disabled ? 'default' : 'pointer', padding: '4px', borderRadius: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', zIndex: 10 }}
-                        title="Insert Variable"
-                    >
+                    <VariableAwareInput ref={areaRef} isTextarea={true} value={value} onValueChange={onChange} placeholder={placeholder} style={{ minHeight: '46px', height }} disabled={disabled} />
+                    <button onClick={() => onRequestVariable && onRequestVariable((val: string) => {
+                        const el = areaRef.current;
+                        if (el) {
+                            const start = el.selectionStart || 0;
+                            const end = el.selectionEnd || 0;
+                            const newVal = (value || '').slice(0, start) + val + (value || '').slice(end);
+                            onChange(newVal);
+                            setTimeout(() => { el.focus(); el.setSelectionRange(start + val.length, start + val.length); }, 0);
+                        } else onChange((value || '') + val);
+                    })} disabled={disabled} style={{ position: 'absolute', right: '12px', top: '12px', border: 'none', background: 'white', color: disabled ? '#ccc' : '#1976D2', cursor: disabled ? 'default' : 'pointer', padding: '4px', borderRadius: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', zIndex: 10 }}>
                         <Zap size={14} fill="currentColor" />
                     </button>
                 </div>
             ) : (
-                <textarea 
-                    ref={areaRef}
-                    value={value} 
-                    onChange={(e) => onChange(e.target.value)} 
-                    disabled={disabled}
-                    placeholder={placeholder}
-                    style={{ height, minHeight: '46px', resize: 'vertical', fontFamily: mono ? 'monospace' : 'inherit', opacity: disabled ? 0.6 : 1 }}
-                    className="material-box"
-                />
+                <textarea ref={areaRef} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder} style={{ height, minHeight: '46px', resize: 'vertical', fontFamily: mono ? 'monospace' : 'inherit', opacity: disabled ? 0.6 : 1 }} className="material-box" />
             )}
         </div>
     )
 }
 
-interface MaterialSelectProps {
-    label: string;
-    value: string;
-    onChange: (val: string) => void;
-    options: string[];
-    disabled?: boolean;
-}
-
-function MaterialSelect({ label, value, onChange, options, disabled = false }: MaterialSelectProps) {
+function MaterialSelect({ label, value, onChange, options, disabled = false }: any) {
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
-            <select 
-                value={value} 
-                onChange={(e) => onChange(e.target.value)} 
-                disabled={disabled}
-                className="material-box"
-                style={{ fontWeight: 'bold', opacity: disabled ? 0.6 : 1 }}
-            >
+            <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="material-box" style={{ fontWeight: 'bold', opacity: disabled ? 0.6 : 1 }}>
                 {options.map((o: string) => <option key={o} value={o}>{o}</option>)}
             </select>
-        </div>
-    )
-}
-
-function TagAdder({ onAdd }: { onAdd: (v: string) => void }) {
-    const [val, setVal] = useState('');
-    return (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input value={val} onChange={e => setVal(e.target.value)} placeholder="Add tag" style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e0e0e0' }} />
-            <button onClick={() => { if (val.trim()) { onAdd(val.trim()); setVal(''); } }} style={{ backgroundColor: '#1976D2', color: 'white', border: 'none', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }}>Add</button>
         </div>
     )
 }
