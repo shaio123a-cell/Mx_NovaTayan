@@ -78,7 +78,7 @@ export class WorkflowsService {
     }
 
     async update(id: string, updateWorkflowDto: UpdateWorkflowDto) {
-        await this.findOne(id);
+        const existing = await this.findOne(id);
         const data = updateWorkflowDto as any;
 
         // Map tags/nodes if they exist in the update
@@ -93,12 +93,65 @@ export class WorkflowsService {
                 ...node,
                 targetTags: node.targetTags || (node.workerGroup ? [node.workerGroup] : []),
             }));
+            
+            // Circular Dependency Detection
+            await this.validateCircularDependencies(id, updateData.nodes);
         }
 
         return this.prisma.workflow.update({
             where: { id },
             data: updateData,
         });
+    }
+
+    private async validateCircularDependencies(workflowId: string, nodes: any[]) {
+        const visited = new Set<string>();
+        const recStack = new Set<string>();
+
+        const checkUsage = async (currentId: string, currentNodes: any[]) => {
+            if (recStack.has(currentId)) {
+                throw new Error(`Circular dependency detected: Workflow ${currentId} calls itself via sub-workflows.`);
+            }
+            if (visited.has(currentId)) return;
+
+            visited.add(currentId);
+            recStack.add(currentId);
+
+            const subWorkflowIds = currentNodes
+                .filter((n: any) => n.taskType === 'WORKFLOW')
+                .map((n: any) => n.taskId)
+                .filter((id: any) => !!id);
+
+            for (const subId of subWorkflowIds) {
+                if (subId === currentId) {
+                    throw new Error(`Direct recursive call detected in workflow ${currentId}.`);
+                }
+                const subWorkflow = await this.prisma.workflow.findUnique({ where: { id: subId } });
+                if (subWorkflow) {
+                    await checkUsage(subId, subWorkflow.nodes as any[]);
+                }
+            }
+
+            recStack.delete(currentId);
+        };
+
+        await checkUsage(workflowId, nodes);
+    }
+
+    async getUsageStatus(id: string) {
+        const workflows = await this.prisma.workflow.findMany({
+            select: { id: true, name: true, nodes: true }
+        });
+
+        const dependents = workflows.filter(wf => {
+            const nodes = wf.nodes as any[];
+            return nodes?.some(n => n.taskType === 'WORKFLOW' && n.taskId === id);
+        }).map(wf => ({ id: wf.id, name: wf.name }));
+
+        return {
+            usageCount: dependents.length,
+            dependents
+        };
     }
 
     async remove(id: string) {
@@ -215,32 +268,27 @@ export class WorkflowsService {
 
                     // Create start tasks for this child execution
                     for (const node of startNodes) {
-                        const isUtility = (node as any).taskType === 'VARIABLE';
-                        const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
+                        const isUtility = (node as any).taskType === 'VARIABLE' || 
+                                          (node as any).taskId === '00000000-0000-0000-0000-000000000001' || 
+                                          (node as any).taskId === 'util-vars';
+                        const isNested = (node as any).taskType === 'WORKFLOW';
 
                         await this.prisma.taskExecution.create({
                             data: {
-                                taskId: isUtility ? SYSTEM_VAR_ID : node.taskId,
+                                taskId: (isUtility || isNested) ? null : node.taskId,
                                 nodeId: node.id,
                                 workflowExecutionId: childExecution.id,
-                                status: 'PENDING',
+                                status: isNested ? 'RUNNING' : 'PENDING',
                                 targetWorkerId: worker.id, // Explicitly target this worker
-                                input: isUtility ? { 
-                                    utility: true, 
-                                    taskType: 'VARIABLE',
-                                    variableExtraction: node.variableExtraction || { vars: {} },
-                                    sanityChecks: node.sanityChecks || [],
-                                authorization: node.authorization,
-                                    timeout: node.timeout,
-                                    body: node.body,
-                                    headers: node.headers
-                                } : {
+                                input: { 
+                                    utility: isUtility, 
+                                    nested: isNested,
+                                    taskType: (node as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
+                                    subWorkflowId: isNested ? node.taskId : undefined,
                                     variableExtraction: node.variableExtraction || { vars: {} },
                                     sanityChecks: node.sanityChecks || [],
                                     authorization: node.authorization,
-                                    timeout: node.timeout,
-                                    body: node.body,
-                                    headers: node.headers
+                                    inputMapping: node.inputMapping
                                 }
                             },
                         });
@@ -299,27 +347,29 @@ export class WorkflowsService {
                     }
                 }
 
-                const isUtility = (node as any).taskType === 'VARIABLE';
-                const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
+                this.logger.log(`[DEBUG] Evaluating node ${node.id} for VMA: taskType=${(node as any).taskType}, taskId=${node.taskId}`);
+                const isUtility = (node as any).taskType === 'VARIABLE' || 
+                                  (node as any).taskId === '00000000-0000-0000-0000-000000000001' || 
+                                  (node as any).taskId === 'util-vars';
+                const isNested = (node as any).taskType === 'WORKFLOW';
 
                 const taskExec = await this.prisma.taskExecution.create({
                     data: {
-                        taskId: isUtility ? SYSTEM_VAR_ID : node.taskId,
+                        taskId: (isUtility || isNested) ? null : node.taskId,
                         nodeId: node.id,
                         workflowExecutionId: execution.id,
-                        status: initialStatus,
+                        status: isNested ? 'RUNNING' : initialStatus,
                         targetWorkerId: node.targetWorkerId,
                         targetTags: nodeTags,
-                        input: isUtility ? { 
-                            utility: true, 
-                            taskType: 'VARIABLE',
+                        input: { 
+                            utility: isUtility, 
+                            nested: isNested,
+                            taskType: (node as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
+                            subWorkflowId: isNested ? node.taskId : undefined,
                             variableExtraction: node.variableExtraction || { vars: {} },
                             sanityChecks: node.sanityChecks || [],
-                            authorization: node.authorization
-                        } : {
-                            variableExtraction: node.variableExtraction || { vars: {} },
-                            sanityChecks: node.sanityChecks || [],
-                            authorization: node.authorization
+                            authorization: node.authorization,
+                            inputMapping: node.inputMapping
                         }
                     },
                 });
@@ -356,8 +406,14 @@ export class WorkflowsService {
             where: { id },
             include: {
                 workflow: true,
+                parentTaskExecution: true,
                 taskExecutionRecords: {
-                    include: { task: true },
+                    include: { 
+                        task: true,
+                        subWorkflows: {
+                            select: { id: true }
+                        }
+                    },
                     orderBy: { startedAt: 'asc' }
                 }
             }

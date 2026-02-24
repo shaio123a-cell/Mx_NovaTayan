@@ -39,6 +39,11 @@ export class WorkflowsController {
         return this.workflowsService.findOne(id);
     }
 
+    @Get(':id/usage')
+    getUsage(@Param('id') id: string) {
+        return this.workflowsService.getUsageStatus(id);
+    }
+
     @Put(':id')
     update(@Param('id') id: string, @Body() updateWorkflowDto: UpdateWorkflowDto) {
         return this.workflowsService.update(id, updateWorkflowDto);

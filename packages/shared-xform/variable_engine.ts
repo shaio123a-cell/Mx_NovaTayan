@@ -125,13 +125,46 @@ export class VariableEngine {
   }
 
   private getValue(obj: any, path: string): any {
-    if (!obj) return undefined;
+    if (!obj || typeof obj !== 'object') return undefined;
+
+    // 1. Try exact match first (the most common case)
+    if (path in obj) return obj[path];
+
+    // 2. Try trimmed exact match (robustness against leading/trailing spaces in DB)
+    const trimmedPath = path.trim();
+    if (trimmedPath !== path && trimmedPath in obj) return obj[trimmedPath];
+
+    // 3. Greedy matching for keys with dots (e.g. 'WF 2.0')
     const parts = path.split('.');
     let current = obj;
-    for (const part of parts) {
-      if (current === null || current === undefined) return undefined;
-      current = current[part];
+    let i = 0;
+    
+    while (i < parts.length) {
+      let found = false;
+      // Try to find the longest matching prefix starting from current index i
+      for (let j = parts.length; j > i; j--) {
+        const candidate = parts.slice(i, j).join('.');
+        if (current && typeof current === 'object') {
+            if (candidate in current) {
+                current = current[candidate];
+                i = j;
+                found = true;
+                break;
+            }
+            // Also try trimmed candidate
+            const trimmedCandidate = candidate.trim();
+            if (trimmedCandidate !== candidate && trimmedCandidate in current) {
+                current = current[trimmedCandidate];
+                i = j;
+                found = true;
+                break;
+            }
+        }
+      }
+      
+      if (!found) return undefined;
     }
+    
     return current;
   }
 

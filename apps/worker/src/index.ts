@@ -46,22 +46,28 @@ async function sendHeartbeat() {
 }
 
 async function executeTask(data: any) {
-    const { id, task } = data.execution;
-    const { name, command } = task;
-    let inputObj = data.execution?.input || {};
+    const execution = data.execution;
+    const { id, task } = execution;
+    const taskName = task?.name || execution.nodeId || 'Task';
+    let inputObj = execution?.input || {};
     if (typeof inputObj === 'string') {
         try { inputObj = JSON.parse(inputObj); } catch(e) { inputObj = {}; }
     }
-    const isUtility = inputObj?.utility === true;
+    
+    // DEBUG: Inspect incoming execution for VMA
+    logger.info(`[DEBUG] Worker execution input for ${taskName}: ${JSON.stringify(inputObj)}`);
+    
+    const isUtility = inputObj?.utility === true || inputObj?.taskType === 'VARIABLE';
+    logger.info(`[DEBUG] isUtility detected as: ${isUtility} (utility=${inputObj?.utility}, taskType=${inputObj?.taskType})`);
     
     // Derive output processing spec/vars from stored task fields (backwards compatibility)
-    const outputProcessingSpec = task.outputProcessingSpec
-        || (task.outputMutation && task.outputMutation.transformTemplate)
-        || (task.command && task.command.outputProcessing && task.command.outputProcessing.specYaml)
+    const outputProcessingSpec = task?.outputProcessingSpec
+        || (task?.outputMutation && (task.outputMutation as any).transformTemplate)
+        || (task?.command && (task.command as any).outputProcessing && (task.command as any).outputProcessing.specYaml)
         || null;
     
-    const libVars = (task.variableExtraction && task.variableExtraction.vars) 
-        || (task.command && task.command.outputProcessing && task.command.outputProcessing.vars)
+    const libVars = (task?.variableExtraction && (task.variableExtraction as any).vars) 
+        || (task?.command && (task.command as any).outputProcessing && (task.command as any).outputProcessing.vars)
         || {};
     const instVars = (inputObj?.variableExtraction?.vars) || {};
 
@@ -80,21 +86,27 @@ async function executeTask(data: any) {
             ].filter((v, i, a) => a.indexOf(v) === i)
         };
 
-    const { method, url, headers, body, timeout } = command || {};
+    const { method, url, headers, body, timeout } = (task?.command || {}) as any;
 
-    logger.info(`🚀 Executing task: ${name} (ID: ${task.id}, Execution ID: ${id})`);
+    logger.info(`🚀 Executing task: ${taskName} (ID: ${task?.id || 'synthetic'}, Execution ID: ${id})`);
     if (outputProcessingSpec) {
-        logger.info(`🔄 Output mutation enabled for task: ${name}`);
+        logger.info(`🔄 Output mutation enabled for task: ${taskName}`);
     }
 
     try {
         // Mark as running
+        logger.info(`📡 Marking execution ${id} as started...`);
         await axios.patch(`${API_URL}/worker/executions/${id}/start`, { hostname: HOSTNAME });
 
         // Create Variable Engine Context
+        logger.info(`🏗️ Creating variable engine context for ${taskName}...`);
+        const workflowVars = data.workflowVars || {};
+        const availableKeys = Object.keys(workflowVars);
+        logger.info(`📦 Workflow Context: ${availableKeys.length} variables available: [${availableKeys.join(', ')}]`);
+        
         const varContext: VariableContext = {
             global: data.globalVars || {},
-            workflow: data.workflowVars || {},
+            workflow: workflowVars,
             macros: data.macros || {},
             task: {} // Task local vars if any (computed after request)
         };
@@ -112,7 +124,7 @@ async function executeTask(data: any) {
             const nodeMethod = inputObj?.method;
             const nodeUrl = inputObj?.url;
 
-            const authorization = nodeAuth || command?.authorization || {};
+            const authorization = nodeAuth || (task?.command as any)?.authorization || {};
             
             // Note: method and url are currently read-only in UI for nodes, but we support overrides if provided.
             const finalMethod = (nodeMethod || method || 'GET').toUpperCase();
@@ -238,7 +250,7 @@ async function executeTask(data: any) {
                 logger.warn(`❌ Response Body: ${typeof response.data === 'string' ? response.data : JSON.stringify(response.data)}`);
             }
         } else {
-            logger.info(`⚡ Skipping HTTP request for utility task: ${name}`);
+            logger.info(`⚡ Skipping HTTP request for utility task: ${taskName}`);
         }
 
         let mutatedOutput = null;
@@ -270,14 +282,14 @@ async function executeTask(data: any) {
                 // If transform returned Uint8Array, convert to string
                 if (res instanceof Uint8Array) res = Buffer.from(res).toString('utf8');
                 mutatedOutput = res;
-                logger.info(`🧬 Output mutated for task: ${name}`);
+                logger.info(`🧬 Output mutated for task: ${taskName}`);
             } catch (mutationError: any) {
                 mutationErrorMsg = mutationError?.message || String(mutationError);
                 logger.error(`⚠️ Output mutation failed: ${mutationErrorMsg}`);
             }
         }
 
-        logger.info(`✅ Task ${name} completed with status ${response.status}`);
+        logger.info(`✅ Task ${taskName} completed with status ${response.status}`);
 
         // Update context with Current task results for variable evaluation
         varContext.macros = {
@@ -305,7 +317,7 @@ async function executeTask(data: any) {
         // Determine Processing Order
         let varNames: string[] = [];
         if (outputProcessingVars?.__order && Array.isArray(outputProcessingVars.__order)) {
-            varNames = outputProcessingVars.__order.filter((n: string) => outputProcessingVars.hasOwnProperty(n));
+            varNames = outputProcessingVars.__order.filter((n: string) => n in outputProcessingVars);
             logger.info(`📋 Processing variables in explicitly defined order: ${varNames.join(' -> ')}`);
         } else {
             varNames = Object.keys(outputProcessingVars || {}).filter(k => k !== '__scopes' && k !== '__order');
@@ -313,6 +325,7 @@ async function executeTask(data: any) {
 
         try {
             for (const name of varNames) {
+                logger.info(`🔄 [LOOP] Starting evaluation for: '${name}'`);
                 let def: any = null;
                 let t: any = null;
                 let inputForVar: any = null;
@@ -320,9 +333,19 @@ async function executeTask(data: any) {
                     def = outputProcessingVars[name];
                     // Backwards-compatible: if stored as simple value, resolve any variable references
                     if (!def || typeof def !== 'object' || def.valueMode !== 'transformer') {
-                        // If it's a string with variable references, resolve them
-                        if (typeof def === 'string') {
-                            // First check if this exact variable name exists in computedVars (for self-references)
+                        // Special Handling for "Parent" mode: 
+                        // It should resolve to the value already in context (from parent mapping) 
+                        // or its default value if we're running top-level.
+                        if (def && typeof def === 'object' && def.valueMode === 'parent') {
+                            const currentVal = varContext.workflow?.[name];
+                            // If the value in context is still the definition object itself, use defaultValue
+                            if (currentVal && typeof currentVal === 'object' && currentVal.valueMode === 'parent') {
+                                computedVars[name] = def.defaultValue || null;
+                            } else {
+                                computedVars[name] = currentVal !== undefined ? currentVal : (def.defaultValue || null);
+                            }
+                        } else if (typeof def === 'string') {
+                            // If it's a string with variable references, resolve them
                             // Update context so engine can see currently computed vars
                             varContext.task = computedVars;
                             const resolved = engine.resolve(def);
@@ -340,6 +363,9 @@ async function executeTask(data: any) {
                     } else if (t.inputSource === 'task_output') {
                         // 'task_output' refers to the original HTTP response body
                         inputForVar = response.data;
+                    } else if (t.inputSource === 'parent') {
+                        // 'parent' context is passed via workflowVars in sub-workflows
+                        inputForVar = data.workflowVars;
                     } else if (t.inputSource === 'variable' && t.inputVariable) {
                         // Resolve the variable expression (e.g. {{global.xxx}} or a local var)
                         const resolved = engine.resolve(t.inputVariable);
@@ -365,7 +391,13 @@ async function executeTask(data: any) {
                     }
 
                     // Apply transformer by type
-                    if (t.type === 'regex') {
+                    logger.info(`🔎 Applying transformer for '${name}' (type: ${t.type})`);
+
+                    if (t.type === 'constant') {
+                        const val = t.hasOwnProperty('value') ? t.value : (t.hasOwnProperty('spec') ? t.spec : t.specYaml);
+                        logger.info(`🔎 Constant block hit for '${name}', value found: ${val !== undefined}`);
+                        computedVars[name] = typeof val === 'string' ? engine.resolve(val) : val;
+                    } else if (t.type === 'regex') {
                         const text = typeof inputForVar === 'string' ? inputForVar : JSON.stringify(inputForVar);
                         const pattern = engine.resolve(t.spec || t.pattern || '');
                         const re = new RegExp(pattern);
@@ -444,14 +476,19 @@ async function executeTask(data: any) {
                         }
                         if (out instanceof Uint8Array) out = Buffer.from(out).toString('utf8');
                         computedVars[name] = out;
-                    } else if (t.type === 'constant') {
-                        computedVars[name] = typeof t.value === 'string' ? engine.resolve(t.value) : t.value;
                     } else if (t.type === 'none' || t.type === 'NONE') {
                         computedVars[name] = inputForVar;
                     } else {
                         // Unknown transformer type: attempt jmespath as fallback
+                        logger.warn(`🔎 Unknown transformer type '${t.type}' for '${name}', falling back to jmespath`);
                         const { evalExpr } = await import('../../../packages/shared-xform/xform_selectors_json');
                         computedVars[name] = evalExpr(inputForVar, t.spec || t.expr || '');
+                    }
+
+                    // Safety: Ensure undefined doesn't leak (JSON.stringify drops undefined keys)
+                    if (computedVars[name] === undefined) {
+                        logger.warn(`⚠️ Variable '${name}' resolved to undefined, coercing to null for visibility`);
+                        computedVars[name] = null;
                     }
                 } catch (ve: any) {
                     const msg = ve?.message || String(ve);
@@ -489,10 +526,23 @@ async function executeTask(data: any) {
 
                     variableErrors[name] = msg;
                 }
+                
+                // Final value log for debugging
+                const computedValue = computedVars[name];
+                const typeStr = typeof computedValue;
+                const valueSummary = typeStr === 'object' ? JSON.stringify(computedValue).slice(0, 200) : String(computedValue).slice(0, 200);
+                logger.info(`✅ Computed variable '${name}': [${typeStr}] ${valueSummary}`);
             }
         } catch (vErr: any) {
             logger.error(`⚠️ Error while evaluating variable transformers: ${vErr?.message || String(vErr)}`);
         }
+
+        // Final variables log
+        const finalKeys = Object.keys(computedVars);
+        const stringifiedVars = JSON.stringify(computedVars);
+        logger.info(`🏁 Final Computed Variables String Length: ${stringifiedVars.length}`);
+        logger.info(`🏁 Final Computed Variables JSON Snippet: ${stringifiedVars.slice(0, 500)}`);
+        logger.info(`🏁 Final Computed Variables (${finalKeys.length}): [${finalKeys.join(', ')}]`);
 
         // Complete execution
         await axios.post(`${API_URL}/worker/executions/${id}/complete`, {
@@ -503,14 +553,14 @@ async function executeTask(data: any) {
                 headers: response.headers,
                 outputMutation: !!outputProcessingSpec,
                 outputMutationError: mutationErrorMsg || (mutatedOutput === null && !!outputProcessingSpec ? 'Mutation failed' : undefined),
-                variables: Object.keys(computedVars).length ? computedVars : undefined,
+                variables: finalKeys.length ? computedVars : undefined,
                 variableInputs: Object.keys(variableInputs).length ? variableInputs : undefined,
                 variableErrors: Object.keys(variableErrors).length ? variableErrors : undefined,
                 variableScopes: Object.keys(varScopes).length ? varScopes : undefined
             }
         });
     } catch (error: any) {
-        logger.error(`❌ Task ${name} failed:`, error.message);
+        logger.error(`❌ Task ${taskName} failed: ${error.message}`);
 
         // Complete with error
         await axios.post(`${API_URL}/worker/executions/${id}/complete`, {

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { globalVarsApi } from '../api/globalVars';
 import { ChevronRight, Globe, Box, Workflow, X, Zap, Folder, Search } from 'lucide-react';
 
-type VarSource = { name: string, taskName: string };
+type VarSource = { name: string, taskName: string; source?: 'workflow' | 'task' | 'workflow_input' | 'workflow_output' };
 
 export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect: (v: string) => void, onClose: () => void, localVars?: (string | VarSource)[] }) {
     const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
@@ -87,7 +87,12 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
         const normalizedLocal = (localVars || []).filter(Boolean).map(v => {
             if (typeof v === 'string') return { label: v, value: `{{${v}}}`, taskName: 'Current Task' };
             const varObj = v as VarSource;
-            return { label: varObj.name || 'Unknown', value: `{{${varObj.name || ''}}}`, taskName: varObj.taskName || 'Task' };
+            return { 
+                label: varObj.name || 'Unknown', 
+                value: (varObj as any).value || `{{${varObj.name || ''}}}`, 
+                taskName: varObj.taskName || 'Task',
+                source: varObj.source
+            };
         }).filter(v => v.label.toLowerCase().includes(query) || v.taskName.toLowerCase().includes(query));
 
         // Process Global Vars
@@ -155,24 +160,53 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
                         <button onClick={() => toggle('local')} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded text-left transition-colors group">
                             <ChevronRight size={14} className={`transition-transform text-gray-400 group-hover:text-gray-600 ${expanded['local'] ? 'rotate-90' : ''}`} />
                             <Box size={14} className="text-blue-500"/>
-                            <span className="text-sm font-semibold text-gray-700">Extracted in Tasks</span>
+                            <span className="text-sm font-semibold text-gray-700">Workflow Context</span>
                             <span className="ml-auto text-[10px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{filteredSections.local.length}</span>
                         </button>
                         {expanded['local'] && (
                             <div className="ml-6 space-y-1 mt-1 border-l border-gray-100 pl-2">
-                                {filteredSections.local.map((item: any) => (
-                                    <button 
-                                        key={item.value} 
-                                        onClick={() => onSelect(item.value)} 
-                                        className="w-full text-left text-xs text-gray-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded transition-all group/item relative"
-                                        title={`${item.value}\nSource: ${item.taskName}`}
-                                    >
-                                        <div className="font-mono font-bold truncate">{item.label}</div>
-                                        <div className="text-[9px] text-gray-400 font-medium truncate uppercase tracking-tighter mt-0.5 group-hover/item:text-blue-400">
-                                            {item.taskName}
-                                        </div>
-                                    </button>
-                                ))}
+                                {filteredSections.local.map((item: any) => {
+                                    const isWorkflowSource = ['workflow', 'workflow_input', 'workflow_output'].includes(item.source);
+                                    let bgColor = 'hover:bg-blue-50';
+                                    let textColor = 'text-gray-600';
+                                    let subColor = 'text-gray-400 group-hover/item:text-blue-400';
+                                    let icon = <Box size={11} className="text-blue-500 shrink-0" />;
+
+                                    if (item.source === 'workflow_input') {
+                                        bgColor = 'hover:bg-amber-50';
+                                        textColor = 'text-amber-700 font-bold';
+                                        subColor = 'text-amber-400';
+                                        icon = <Zap size={11} className="text-amber-500 shrink-0" />;
+                                    } else if (item.source === 'workflow_output') {
+                                        bgColor = 'hover:bg-indigo-50';
+                                        textColor = 'text-indigo-700 font-bold';
+                                        subColor = 'text-indigo-400';
+                                        icon = <Workflow size={11} className="text-indigo-500 shrink-0" />;
+                                    } else if (item.source === 'workflow') {
+                                        bgColor = 'hover:bg-purple-50';
+                                        textColor = 'text-purple-700';
+                                        subColor = 'text-purple-400';
+                                        icon = <Workflow size={11} className="text-purple-500 shrink-0" />;
+                                    }
+
+                                    return (
+                                        <button 
+                                            key={item.value + Math.random()} 
+                                            onClick={() => onSelect(item.value)} 
+                                            className={`w-full text-left text-xs p-2 rounded transition-all group/item relative ${bgColor} ${textColor}`}
+                                            title={`${item.value}\nSource: ${item.taskName}`}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                {icon}
+                                                <div className="font-mono truncate">{item.label}</div>
+                                            </div>
+                                            <div className={`text-[9px] font-medium truncate uppercase tracking-tighter mt-0.5 ${subColor}`}>
+                                                {isWorkflowSource && <span className="mr-1">⚡</span>}
+                                                {item.taskName}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

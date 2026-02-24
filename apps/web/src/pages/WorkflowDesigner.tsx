@@ -295,16 +295,10 @@ function WorkflowNode({ data }: any) {
                         <Trash2 size={14} />
                     </button>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', padding: '0 4px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#3b82f6' }}>{inputCount}</div>
-                        <div style={{ fontSize: '8px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Inputs</div>
-                    </div>
-                    <div style={{ height: '20px', width: '1px', background: '#202226' }} />
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>{outputCount}</div>
-                        <div style={{ fontSize: '8px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Outputs</div>
-                    </div>
+                <div className="mt-2 pt-2 border-t border-[#202226] flex items-center justify-center">
+                    <span className="text-[9px] font-black text-primary-400 uppercase tracking-tighter">
+                        In Vars: {inputCount} • Out Vars: {outputCount}
+                    </span>
                 </div>
             </div>
 
@@ -511,6 +505,7 @@ function ReactFlowCanvas({
                     label: label,
                     taskId: taskData.id,
                     taskType: isWorkflow ? 'WORKFLOW' : (taskData.taskType || 'HTTP'),
+                    utility: isUtility,
                     inputVarsCount: isWorkflow ? Object.keys(taskData.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
                     outputVarsCount: isWorkflow ? Object.keys(taskData.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
                     method: isWorkflow ? 'WF' : (taskData.taskType === 'VARIABLE' ? 'VAR' : (taskData.command?.method || 'GET')),
@@ -625,17 +620,18 @@ function WorkflowDesignerContent() {
                 type: n.taskType === 'WORKFLOW' ? 'workflowNode' : 'taskNode',
                 position: n.position,
                 data: {
+                    ...n,
                     id: n.id,
                     label: n.taskType === 'WORKFLOW' ? (n.label || allWorkflows?.find((w: any) => w.id === n.taskId)?.name || 'Nested Workflow') : (tasks?.find((t: any) => t.id === n.taskId)?.name || n.label),
                     taskId: n.taskId,
                     taskType: n.taskType || 'HTTP',
                     inputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
                     outputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
-                    method: n.taskType === 'VARIABLE' ? 'VAR' : n.taskType === 'WORKFLOW' ? 'WF' : (tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'),
+                    method: n.taskType === 'VARIABLE' ? 'VAR' : n.taskType === 'WORKFLOW' ? 'WF' : (n.method || tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'),
                     targetTags: n.targetTags || [],
                     failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
                     failureStatusOverride: n.failureStatusOverride || 'FAILED',
-                    variableExtraction: n.variableExtraction, // Carry over for utility tasks
+                    variableExtraction: n.variableExtraction,
                     onDelete: (id: string) => {
                         setNodes(nds => nds.filter(node => node.id !== id));
                         setIsDirty(true);
@@ -725,18 +721,15 @@ function WorkflowDesignerContent() {
         const workflowData = {
             name: workflowName,
             tags: workflowTags,
-            nodes: nodes.map(n => ({
-                id: n.id,
-                taskId: n.data.taskId,
-                taskType: n.data.taskType || 'HTTP',
-                position: n.position,
-                label: n.data.label,
-                targetTags: n.data.targetTags || [],
-                failureStrategy: n.data.failureStrategy || 'SUCCESS_REQUIRED',
-                failureStatusOverride: n.data.failureStatusOverride || 'FAILED',
-                variableExtraction: n.data.variableExtraction, // Ensure utility task variables are saved
-                inputMapping: n.data.inputMapping // Ensure nested workflow mappings are saved
-            })),
+            nodes: nodes.map(n => {
+                // Remove UI-only functions before saving to DB
+                const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, ...cleanData } = n.data;
+                return {
+                    id: n.id,
+                    position: n.position,
+                    ...cleanData
+                };
+            }),
             edges: edges.map(e => ({
                 id: e.id,
                 source: e.source,
@@ -1123,15 +1116,46 @@ function WorkflowDesignerContent() {
                         queue.push(e.source);
                     });
                 }
+
+                // 1. Inputs from the current workflow
+                const parentInputNames = Object.keys(existingWorkflow?.inputVariables || {})
+                    .filter(k => !k.startsWith('__'))
+                    .map(name => ({ name, taskName: 'Workflow Input', value: '{{' + name + '}}', source: 'workflow_input' as const }));
+
+                const parentOutputNames = Object.keys(existingWorkflow?.outputVariables || {})
+                    .filter(k => !k.startsWith('__'))
+                    .map(name => ({ name, taskName: 'Workflow Output', value: '{{' + name + '}}', source: 'workflow_output' as const }));
+
+                // 2. Outputs from upstream tasks and workflows
                 const upstreamVarNames = nodes
                     .filter(n => upstreamNodes.includes(n.id))
                     .flatMap(n => {
-                        const taskDef = tasks?.find((t: any) => t.id === n.data.taskId);
-                        const vars = n.data.variableExtraction?.vars || (taskDef as any)?.variableExtraction?.vars || {};
-                        return Object.keys(vars)
+                        const isNodeWorkflow = n.data.taskType === 'WORKFLOW' || !!allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                        let libVars = {};
+                        if (isNodeWorkflow) {
+                            const wfDef = allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                            libVars = wfDef?.outputVariables || {};
+                        } else {
+                            const taskDef = tasks?.find((t: any) => t.id === n.data.taskId);
+                            libVars = (taskDef as any)?.variableExtraction?.vars || (taskDef as any)?.command?.outputProcessing?.vars || {};
+                        }
+                        
+                        // Merge library defaults with node-specific overlays
+                        const nodeVars = n.data.variableExtraction?.vars || {};
+                        const combinedNodeVars = { ...libVars, ...nodeVars };
+                        
+                        return Object.keys(combinedNodeVars)
                             .filter(k => !k.startsWith('__'))
-                            .map(name => ({ name, taskName: n.data.label || 'Task' }));
+                            .map(name => ({ 
+                                name, 
+                                taskName: n.data.label || 'Task',
+                                nodeId: n.id,
+                                value: `{{${name}}}`,
+                                source: (isNodeWorkflow ? 'workflow' : 'task') as 'workflow' | 'task' | 'workflow_input' | 'workflow_output'
+                            }));
                     });
+
+                const combinedVars = [...parentInputNames, ...parentOutputNames, ...upstreamVarNames];
 
                 const isUtil = editingNode.data.taskType === 'VARIABLE' || editingNode.data.taskId === '00000000-0000-0000-0000-000000000001';
 
@@ -1139,7 +1163,7 @@ function WorkflowDesignerContent() {
                     <TaskEditShelf 
                         taskId={editingNode?.data?.taskId}
                         nodeData={editingNode?.data}
-                        availableUpstreamVars={Array.from(new Set(upstreamVarNames))}
+                        availableUpstreamVars={combinedVars}
                         onClose={() => setEditingNode(null)}
                         onSaveNode={(data) => {
                             setNodes(nds => nds.map(n => n.id === editingNode.id ? { ...n, data: { ...n.data, ...data } } : n))
@@ -1149,15 +1173,51 @@ function WorkflowDesignerContent() {
                 );
             })()}
 
-            {isAdminPanelOpen && (
-                <WorkflowAdminShelf
-                    workflowId={workflowId}
-                    onClose={() => setIsAdminPanelOpen(false)}
-                    onSave={(data: any) => {
-                        // Saving logic if needed, usually shelf handles its own mutations or parent saves
-                    }}
-                />
-            )}
+            {isAdminPanelOpen && (() => {
+                // For global workflow context (Notifications / Output Vars), show ALL task outputs + workflow inputs
+                const allTaskVars = nodes.flatMap(n => {
+                    const isNodeWorkflow = n.data.taskType === 'WORKFLOW' || !!allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                    let libVars: any = {};
+                    if (isNodeWorkflow) {
+                        const wfDef = allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                        libVars = wfDef?.outputVariables || {};
+                    } else {
+                        const taskDef = tasks?.find((t: any) => t.id === n.data.taskId);
+                        libVars = (taskDef as any)?.variableExtraction?.vars || (taskDef as any)?.command?.outputProcessing?.vars || {};
+                    }
+                    const nodeVars = n.data.variableExtraction?.vars || {};
+                    const combined = { ...libVars, ...nodeVars };
+                    return Object.keys(combined).filter(k => !k.startsWith('__')).map(name => ({
+                        name,
+                        taskName: n.data.label || 'Task',
+                        source: (isNodeWorkflow ? 'workflow' : 'task') as 'workflow' | 'task' | 'workflow_input' | 'workflow_output',
+                        value: `{{${name}}}`
+                    }));
+                });
+
+                const parentInputs = Object.keys(existingWorkflow?.inputVariables || {})
+                    .filter(k => !k.startsWith('__'))
+                    .map(name => ({ name, taskName: 'Workflow Input', source: 'workflow_input', value: `{{${name}}}` }));
+
+                const parentOutputs = Object.keys(existingWorkflow?.outputVariables || {})
+                    .filter(k => !k.startsWith('__'))
+                    .map(name => ({ name, taskName: 'Workflow Output', source: 'workflow_output', value: `{{${name}}}` }));
+
+                const allAvailable = [...parentInputs, ...parentOutputs, ...allTaskVars];
+
+                return (
+                    <WorkflowAdminShelf
+                        workflowId={workflowId}
+                        availableVars={allAvailable}
+                        onClose={() => setIsAdminPanelOpen(false)}
+                        onSave={(data: any) => {
+                           if (data.name) setWorkflowName(data.name);
+                           if (data.tags) setWorkflowTags(data.tags);
+                           queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] });
+                        }}
+                    />
+                );
+            })()}
         </div>
     )
 }

@@ -4,7 +4,7 @@ import { workflowsApi } from '../api/workflows'
 import React, { useState, useEffect, useRef } from 'react'
 // Output processing is now per-variable; top-level preview removed.
 import { VariableManager } from './VariableManager';
-import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive } from 'lucide-react'
+import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive, Box, Activity } from 'lucide-react'
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
 import { useToast } from '../context/ToastContext';
@@ -12,7 +12,7 @@ import { useToast } from '../context/ToastContext';
 interface Props {
     taskId?: string | null;
     nodeData?: any;
-    availableUpstreamVars?: (string | { name: string, taskName: string, value?: any })[];
+    availableUpstreamVars?: (string | { name: string, taskName: string, value?: any, source?: 'workflow' | 'task' | 'workflow_input' | 'workflow_output' })[];
     onClose: () => void;
     onSaveNode?: (data: any) => void;
 }
@@ -191,7 +191,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                     setMethodOverride(true);
                 } else setMethodOverride(false);
 
-                setOverlayTags(nodeData.tags || []);
+                setOverlayTags(nodeData.targetTags || []);
             } else {
                 setTimeoutOverride(false);
                 setBodyOverride(false);
@@ -235,7 +235,13 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 setJwtAddTo(targetAuth.addTo || 'header')
             }
 
-            const libVars = (task as any).variableExtraction?.vars || (task as any).command?.outputProcessing?.vars || {};
+            let libVars = {};
+            if (isNestedWorkflow && childWorkflow) {
+                libVars = childWorkflow.outputVariables || {};
+            } else if (task) {
+                libVars = (task as any).variableExtraction?.vars || (task as any).command?.outputProcessing?.vars || {};
+            }
+
             if (isWorkflowNode) {
                 setInheritedVars(libVars);
                 setOutputVars(nodeData.variableExtraction?.vars || {});
@@ -286,7 +292,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                     url: urlOverride ? url : undefined,
                     body: bodyOverride ? body : undefined,
                     headers: headersOverride ? finalHeaders : undefined,
-                    tags: overlayTags.length > 0 ? overlayTags : undefined
+                    targetTags: overlayTags.length > 0 ? overlayTags : undefined
                 });
                 showToast(isUtility ? 'Variables saved successfully!' : 'Workflow node updated!', 'success');
                 onClose();
@@ -417,22 +423,34 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                         </h4>
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                                        {Object.entries(childWorkflow.inputVariables || {}).filter(([k]) => !k.startsWith('__')).map(([varName, defaultValue]: [string, any]) => (
-                                            <MaterialInput 
-                                                key={varName}
-                                                label={varName}
-                                                value={inputMapping[varName] !== undefined ? inputMapping[varName] : (typeof defaultValue === 'string' ? defaultValue : '')}
-                                                onChange={(val) => setInputMapping(prev => ({ ...prev, [varName]: val }))}
-                                                enableVariables={true}
-                                                onRequestVariable={openVarPicker}
-                                                placeholder={`Default: ${String(defaultValue || 'none')}`}
-                                            />
-                                        ))}
-                                        {Object.keys(childWorkflow.inputVariables || {}).filter(k => !k.startsWith('__')).length === 0 && (
-                                            <div style={{ fontSize: '13px', fontStyle: 'italic', color: '#94a3b8', padding: '16px', border: '2px dashed #f1f5f9', borderRadius: '12px', textAlign: 'center' }}>
-                                                This workflow has no input variables defined.
-                                            </div>
-                                        )}
+                                        {(() => {
+                                            const exposedInputs = Object.entries(childWorkflow.inputVariables || {})
+                                                .filter(([k, v]: [string, any]) => !k.startsWith('__') && (v?.useParentInput === true || typeof v !== 'object'));
+                                            
+                                            if (exposedInputs.length === 0) {
+                                                return (
+                                                    <div style={{ fontSize: '13px', fontStyle: 'italic', color: '#94a3b8', padding: '16px', border: '2px dashed #f1f5f9', borderRadius: '12px', textAlign: 'center' }}>
+                                                        This workflow has no variables exposed for parent input.
+                                                    </div>
+                                                );
+                                            }
+
+                                            return exposedInputs.map(([varName, config]: [string, any]) => {
+                                                const defaultValue = typeof config === 'object' ? (config.defaultValue || '') : config;
+                                                return (
+                                                    <MaterialInput 
+                                                        key={varName}
+                                                        label={varName}
+                                                        value={inputMapping[varName] !== undefined ? inputMapping[varName] : (typeof defaultValue === 'string' ? defaultValue : '')}
+                                                        onChange={(val) => setInputMapping(prev => ({ ...prev, [varName]: val }))}
+                                                        enableVariables={true}
+                                                        onRequestVariable={openVarPicker}
+                                                        placeholder={`Default: ${String(defaultValue || 'none')}`}
+                                                        availableVars={availableUpstreamVars}
+                                                    />
+                                                );
+                                            });
+                                        })()}
                                     </div>
                                 </div>
                             )}
@@ -486,6 +504,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                                         enableVariables 
                                                         onRequestVariable={openVarPicker}
                                                         disabled={isWorkflowNode ? !urlOverride : false}
+                                                        availableVars={availableUpstreamVars}
                                                     />
                                                 </div>
                                             </div>
@@ -632,6 +651,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                                         enableVariables 
                                                         onRequestVariable={openVarPicker}
                                                         disabled={isWorkflowNode ? !bodyOverride : false}
+                                                        availableVars={availableUpstreamVars}
                                                     />
                                                 </div>
                                             )}
@@ -758,6 +778,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                             enableVariables={true}
                                             onRequestVariable={openVarPicker}
                                             placeholder="Document purpose, expected outcomes, or dependencies..."
+                                            availableVars={availableUpstreamVars}
                                         />
                                     </div>
                                 </div>
@@ -773,11 +794,31 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                         <MaterialInput label="Task Name (Label)" value={name} onChange={setName} />
                                     </div>
                                 )}
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                {isNestedWorkflow && childWorkflow && (
+                                    <div className="mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <Box size={14} className="text-slate-400" />
+                                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Child Return Specification</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {Object.entries(childWorkflow.outputVariables || {}).filter(([k]) => !k.startsWith('__')).map(([name, config]: [string, any]) => (
+                                                <div key={name} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-100">
+                                                    <Zap size={10} className="text-indigo-400" />
+                                                    <span className="text-[11px] font-bold text-slate-700">{name}</span>
+                                                </div>
+                                            ))}
+                                            {Object.keys(childWorkflow.outputVariables || {}).filter(([k]) => !k.startsWith('__')).length === 0 && (
+                                                <div className="col-span-2 text-[10px] text-slate-400 italic">No output variables defined in child workflow.</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div className="flex items-center justify-between mb-4">
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Zap size={18} className="text-primary-600" fill="currentColor" />
+                                        <Activity size={18} className="text-primary-600" />
                                         <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                            VARIABLES CONFIGURATION
+                                            {isNestedWorkflow ? "Map Results to Parent" : "VARIABLES CONFIGURATION"}
                                         </h4>
                                     </div>
                                     <div style={{ fontSize: '10px', fontWeight: 'bold', background: '#eef2ff', color: '#4f46e5', padding: '4px 8px', borderRadius: '4px' }}>
@@ -874,12 +915,12 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                             <div className={`space-y-4 p-4 ${isWorkflowNode && !authOverride ? 'opacity-40 pointer-events-none' : ''}`}>
                                 {authType === 'basic' && (
                                     <>
-                                        <MaterialInput label="Username" value={basicAuthUser} onChange={setBasicAuthUser} enableVariables onRequestVariable={openVarPicker} />
-                                        <MaterialInput label="Password" type="password" value={basicAuthPassword} onChange={setBasicAuthPassword} enableVariables onRequestVariable={openVarPicker} />
+                                        <MaterialInput label="Username" value={basicAuthUser} onChange={setBasicAuthUser} enableVariables onRequestVariable={openVarPicker} availableVars={availableUpstreamVars} />
+                                        <MaterialInput label="Password" type="password" value={basicAuthPassword} onChange={setBasicAuthPassword} enableVariables onRequestVariable={openVarPicker} availableVars={availableUpstreamVars} />
                                     </>
                                 )}
                                 {authType === 'bearer' && (
-                                    <MaterialTextArea label="Bearer Token" value={bearerToken} onChange={setBearerToken} height="60px" mono enableVariables onRequestVariable={openVarPicker} />
+                                    <MaterialTextArea label="Bearer Token" value={bearerToken} onChange={setBearerToken} height="60px" mono enableVariables onRequestVariable={openVarPicker} availableVars={availableUpstreamVars} />
                                 )}
                                 {authType === 'jwt' && (
                                     <div className="space-y-6">
@@ -887,12 +928,12 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                             <MaterialSelect label="Algorithm" value={jwtAlgorithm} onChange={setJwtAlgorithm} options={['HS256', 'HS384', 'HS512', 'RS256']} />
                                             <MaterialInput label="Token Destination" value={jwtAddTo} onChange={setJwtAddTo} options={['header', 'query']} />
                                         </div>
-                                        <MaterialTextArea label="Secret / Private Key" value={jwtSecret} onChange={setJwtSecret} height="100px" mono />
+                                        <MaterialTextArea label="Secret / Private Key" value={jwtSecret} onChange={setJwtSecret} height="100px" mono enableVariables onRequestVariable={openVarPicker} availableVars={availableUpstreamVars} />
                                         <div className="flex items-center gap-2">
                                             <input type="checkbox" checked={jwtSecretIsBase64} onChange={e => setJwtSecretIsBase64(e.target.checked)} />
                                             <span className="text-xs font-bold text-gray-500 uppercase">Secret is Base64 encoded</span>
                                         </div>
-                                        <MaterialTextArea label="Payload (JSON)" value={jwtPayload} onChange={setJwtPayload} height="150px" mono />
+                                        <MaterialTextArea label="Payload (JSON)" value={jwtPayload} onChange={setJwtPayload} height="150px" mono enableVariables onRequestVariable={openVarPicker} availableVars={availableUpstreamVars} />
                                     </div>
                                 )}
                                 {authType === 'none' && (
@@ -1063,14 +1104,14 @@ function TabButton({ active, onClick, label }: any) {
     )
 }
 
-function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false }: any) {
+function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false, availableVars }: any) {
     const inputRef = useRef<any>(null);
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
             {enableVariables ? (
                 <div className="relative">
-                    <VariableAwareInput ref={inputRef} value={value} onValueChange={onChange} placeholder={placeholder} type={type} disabled={disabled} />
+                    <VariableAwareInput ref={inputRef} value={value} onValueChange={onChange} placeholder={placeholder} type={type} disabled={disabled} availableVars={availableVars} />
                     <button onClick={() => onRequestVariable && onRequestVariable((val: string) => {
                         const el = inputRef.current;
                         if (el) {
@@ -1091,14 +1132,14 @@ function MaterialInput({ label, value, onChange, placeholder, type = 'text', ena
     )
 }
 
-function MaterialTextArea({ label, value, onChange, height = '100px', mono = false, placeholder = '', enableVariables, onRequestVariable, disabled = false }: any) {
+function MaterialTextArea({ label, value, onChange, height = '100px', mono = false, placeholder = '', enableVariables, onRequestVariable, disabled = false, availableVars }: any) {
     const areaRef = useRef<any>(null);
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
             {enableVariables ? (
                 <div className="relative">
-                    <VariableAwareInput ref={areaRef} isTextarea={true} value={value} onValueChange={onChange} placeholder={placeholder} style={{ minHeight: '46px', height }} disabled={disabled} />
+                    <VariableAwareInput ref={areaRef} isTextarea={true} value={value} onValueChange={onChange} placeholder={placeholder} style={{ minHeight: '46px', height }} disabled={disabled} availableVars={availableVars} />
                     <button onClick={() => onRequestVariable && onRequestVariable((val: string) => {
                         const el = areaRef.current;
                         if (el) {

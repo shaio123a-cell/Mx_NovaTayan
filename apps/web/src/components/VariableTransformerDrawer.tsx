@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Box, Plus, X, Zap, Play } from 'lucide-react';
+import { Box, Plus, X, Zap, Play, ArrowUp } from 'lucide-react';
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
 import { useQuery } from '@tanstack/react-query';
@@ -7,14 +7,14 @@ import { globalVarsApi } from '../api/globalVars';
 
 // --- Main Drawer ---
 
-export function VariableTransformerDrawer({ open, name, initial, variables = [], onClose, onSave, readOnly = false }: any) {
+export function VariableTransformerDrawer({ open, name, initial, variables = [], onClose, onSave, readOnly = false, showWorkflowInputToggle = false }: any) {
   const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
   // State
   const [tab, setTab] = useState<'none'|'constant'|'regex'|'jmespath'|'xpath'|'advanced'>('none');
   const [spec, setSpec] = useState('');
   
   // UX State
-  const [inputSource, setInputSource] = useState<'task_output'|'variable'>('task_output');
+  const [inputSource, setInputSource] = useState<'task_output'|'variable'|'parent'>('task_output');
   const [inputVariable, setInputVariable] = useState<string>(''); // Stores {{...}} or raw var name? Lets assume raw for simplicity if from prop list, or {{}} if from picker.
   
   // Test State
@@ -248,6 +248,20 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                         </div>
                         <div className="text-xs text-gray-500 mt-1 pl-6">Use another variable as input</div>
                     </button>
+
+                    {showWorkflowInputToggle && (
+                        <button 
+                            onClick={() => { if (!readOnly) { setInputSource('parent'); setDirty(true); } }}
+                            disabled={readOnly}
+                            className={`flex-1 p-3 rounded-lg border text-left transition-all ${inputSource === 'parent' ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-500' : 'border-gray-200 hover:border-gray-300 bg-white'} ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                        >
+                            <div className="flex items-center gap-2 font-semibold text-gray-800 text-sm">
+                                <ArrowUp size={16} className={inputSource === 'parent' ? 'text-amber-500' : 'text-gray-400'} />
+                                Parent Input
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1 pl-6">Input from parent workflow</div>
+                        </button>
+                    )}
                 </div>
 
                 {/* Variable Selector Input */}

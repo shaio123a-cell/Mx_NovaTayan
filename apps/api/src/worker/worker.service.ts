@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { LoggerService } from '../common/logger/logger.service';
 import { GlobalVarsService } from '../global-vars/global-vars.service';
+import { VariableEngine } from '../../../../packages/shared-xform/variable_engine';
 
 @Injectable()
 export class WorkerService {
@@ -61,9 +62,17 @@ export class WorkerService {
                 let macros = {};
 
                 if (task.workflowExecutionId) {
-                    const ctx = await this.gatherWorkflowContext(task.workflowExecutionId);
-                    workflowVars = ctx.workflowVars;
-                    macros = ctx.macros;
+                    // Optimized: check if orchestration already stored vars in the input
+                    const input = (task.input as any) || {};
+                    if (input.workflowVars) {
+                        workflowVars = input.workflowVars;
+                        const ctx = await this.gatherWorkflowContext(task.workflowExecutionId);
+                        macros = ctx.macros; // Still need macro resolution
+                    } else {
+                        const ctx = await this.gatherWorkflowContext(task.workflowExecutionId);
+                        workflowVars = ctx.workflowVars;
+                        macros = ctx.macros;
+                    }
                 }
 
                 // Return enriched object
@@ -122,64 +131,93 @@ export class WorkerService {
     }
 
     private async gatherWorkflowContext(workflowExecutionId: string) {
+        // 1. Fetch the execution and its base workflow definition for initial variable state
+        const execution = await this.prisma.workflowExecution.findUnique({
+            where: { id: workflowExecutionId },
+            include: { workflow: true }
+        });
+
         const records = await this.prisma.taskExecution.findMany({
             where: { workflowExecutionId },
-            include: { task: true }
+            include: { task: true },
+            orderBy: { startedAt: 'asc' }
         });
 
         const workflowVars: Record<string, any> = {};
         const macros: Record<string, any> = {};
 
+        if (execution?.workflow) {
+            const wf = execution.workflow;
+            const inputDefs = (typeof wf.inputVariables === 'string' ? JSON.parse(wf.inputVariables) : wf.inputVariables) || {};
+            const outputDefs = (typeof wf.outputVariables === 'string' ? JSON.parse(wf.outputVariables) : wf.outputVariables) || {};
+            
+            // 1. Initialize with Admin defaults (both inputs and outputs)
+            const allDefs = { ...inputDefs, ...outputDefs };
+            Object.entries(allDefs).forEach(([k, v]: [string, any]) => {
+                if (!k.startsWith('__')) {
+                    workflowVars[k] = (v && typeof v === 'object' && v.hasOwnProperty('value')) ? v.value : v;
+                }
+            });
+            this.logger.debug(`[Context] Initialized ${Object.keys(workflowVars).length} baseline variables from CWF '${wf.name}' definition`);
+
+            // 2. Resolve Input variables provided by parent if this is a sub-workflow
+            if ((execution as any).parentTaskExecutionId) {
+                const parentExec = await this.prisma.taskExecution.findUnique({
+                    where: { id: (execution as any).parentTaskExecutionId }
+                });
+                if (parentExec?.input) {
+                    const input = typeof parentExec.input === 'string' ? JSON.parse(parentExec.input) : parentExec.input;
+                    const resolvedInput = input.resolvedInput || input.inputMapping;
+                    if (resolvedInput) {
+                        const resolvedObj = typeof resolvedInput === 'string' ? JSON.parse(resolvedInput) : resolvedInput;
+                        Object.assign(workflowVars, resolvedObj);
+                        this.logger.debug(`[Context] Overlaid ${Object.keys(resolvedObj).length} resolved inputs from parent task`);
+                    }
+                }
+            }
+        }
+
         for (const record of records) {
             const taskName = record.task?.name || record.nodeId || 'task';
-            const result = record.result as any;
+            let result = record.result as any;
             if (!result) continue;
 
-            // 1. Resolve variables
-            // Task variables are saved in result.variables
-            if (result.variables) {
-                Object.assign(workflowVars, result.variables);
+            // Robust JSON parsing for result
+            if (typeof result === 'string') {
+                try {
+                    result = JSON.parse(result);
+                } catch (e) {
+                    this.logger.debug(`[Context] Failed to parse result for task ${taskName}`);
+                    continue;
+                }
             }
 
-            // 2. HTTP Shortcuts (macros)
-            // HTTP.<taskName>.status, HTTP.<taskName>.body
+            // 3. Resolve variables from task completions in this execution
+            if (result.variables) {
+                const vars = (typeof result.variables === 'string') ? JSON.parse(result.variables) : result.variables;
+                Object.assign(workflowVars, vars);
+                this.logger.debug(`[Context] Merged ${Object.keys(vars).length} variables from task ${taskName}`);
+            }
+
+            // 4. HTTP Shortcuts (macros)
             if (['SUCCESS', 'COMPLETED', 'FAILED'].includes(record.status)) {
                 const shortcut = {
                     status: result.status,
                     body: result.data,
                     headers: result.headers
                 };
-                // Helper: key without spaces for easy dot access
                 const cleanName = String(taskName).replace(/\s+/g, '_');
                 macros[`HTTP.${cleanName}`] = shortcut;
-                // Also store raw name if possible (though pathing with spaces is harder)
                 macros[`HTTP.${taskName}`] = shortcut;
-                
-                // Save last shortcut too
                 macros[`HTTP.last`] = shortcut;
             }
         }
 
-        // 3. Workflow System Macros
-        const currentExecution = await this.prisma.workflowExecution.findUnique({
-            where: { id: workflowExecutionId }
-        });
-
-        if (currentExecution) {
+        if (execution) {
             macros['workflow.executionId'] = workflowExecutionId;
-            macros['workflow.name'] = currentExecution.workflowName;
+            macros['workflow.name'] = execution.workflowName;
 
-            // 4. Resolve Input variables from parent if this is a sub-workflow
-            if ((currentExecution as any).parentTaskExecutionId) {
-                const parentTask = await this.prisma.taskExecution.findUnique({
-                    where: { id: (currentExecution as any).parentTaskExecutionId }
-                });
-                if (parentTask && parentTask.input && (parentTask.input as any).resolvedInput) {
-                    Object.assign(workflowVars, (parentTask.input as any).resolvedInput);
-                }
-            }
-
-            const workflowId = currentExecution.workflowId;
+            const workflowId = execution.workflowId;
             const [lastExec, lastSuccess, lastFailed, lastCancelled] = await Promise.all([
                 this.prisma.workflowExecution.findFirst({
                     where: { workflowId, id: { not: workflowExecutionId } },
@@ -246,6 +284,15 @@ export class WorkerService {
 
         if (!execution) throw new Error('Execution not found');
 
+        // DEBUG: Log incoming result keys for VMA troubleshooting
+        if (result?.variables) {
+            const varKeys = Object.keys(result.variables);
+            const scopeKeys = Object.keys(result.variableScopes || {});
+            this.logger.log(`[Trace] Incoming execution ${executionId} variables: ${varKeys.length} keys: [${varKeys.join(', ')}]`);
+            this.logger.log(`[Trace] Incoming execution ${executionId} internal snippet: ${JSON.stringify(result.variables).slice(0, 500)}`);
+            this.logger.log(`[Trace] Incoming execution ${executionId} scopes: ${scopeKeys.length} keys: [${scopeKeys.join(', ')}]`);
+        }
+
         let { status, reason, sanityResults } = await this.evaluateStatus(execution, result, error);
 
         // Apply failureStatusOverride if this is part of a workflow and failed
@@ -275,11 +322,12 @@ export class WorkerService {
             data: {
                 status,
                 result: {
+                    ...(execution.result as any || {}),
                     ...(result || {}),
                     sanityResults: sanityResults || []
                 },
                 error: status === 'SUCCESS' ? null : (reason || error || null),
-                input: input || null,
+                ...(input ? { input } : {}),
                 completedAt: new Date(),
                 duration,
             },
@@ -293,45 +341,6 @@ export class WorkerService {
         return updated;
     }
 
-    private async executeUtilityTask(taskExec: any) {
-        this.logger.log(`[Utility] Executing Variable Manipulation task: ${taskExec.id}`);
-        
-        try {
-            await this.prisma.taskExecution.update({
-                where: { id: taskExec.id },
-                data: { status: 'RUNNING', startedAt: new Date() }
-            });
-
-            // Gather context
-            const { workflowVars } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
-            const globalVars = await this.globalVarsService.findAllResolved();
-            
-            // Resolve variables (this logic would typically happen in the worker, but for utility we do it here)
-            // For now, we'll just return the current variables or apply the extraction mapping
-            const extraction = taskExec.input?.variableExtraction || { vars: {} };
-            const results: Record<string, any> = {};
-
-            // Simple direct value assignment for utility tasks
-            for (const [key, config] of Object.entries(extraction.vars || {})) {
-                if (typeof config === 'object' && (config as any).valueMode === 'direct') {
-                    results[key] = (config as any).directValue;
-                } else if (typeof config === 'string') {
-                    results[key] = config;
-                }
-                // TRANSFORMER mode would need a full JS engine, skipping for now or adding basic support
-            }
-
-            await this.completeExecution(taskExec.id, {
-                status: 200,
-                data: "Variable manipulation completed",
-                variables: results
-            });
-
-        } catch (e) {
-            this.logger.error(`Failed to execute utility task ${taskExec.id}: ${e.message}`);
-            await this.completeExecution(taskExec.id, {}, `Internal error: ${e.message}`);
-        }
-    }
 
     private async triggerSubWorkflow(taskExec: any) {
         const workflowId = (taskExec.input as any)?.subWorkflowId || taskExec.taskId;
@@ -344,17 +353,31 @@ export class WorkerService {
         this.logger.log(`[Trace] Triggering sub-workflow: ${workflow.name} for parent task: ${taskExec.id}`);
         
         // Resolve input mapping from parent context
-        const { workflowVars } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
+        const { workflowVars, macros } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
         const globalVars = await this.globalVarsService.findAllResolved();
         const inputMapping = taskExec.input?.inputMapping || {};
-        const resolvedInput: Record<string, any> = {};
 
-        // Simple template resolution for input mapping
+        const engine = new VariableEngine({
+            global: globalVars || {},
+            workflow: workflowVars,
+            macros
+        });
+
+        const resolvedInput: Record<string, any> = {};
+        
+        // Resolve input mapping from parent context using VariableEngine
         for (const [key, value] of Object.entries(inputMapping)) {
-            if (typeof value === 'string' && value.includes('{{')) {
-                // Resolution logic... for now we'll just carry it as is or do basic replacement
-                // In a real scenario, we'd use a more robust resolver
-                resolvedInput[key] = value; 
+            if (typeof value === 'string') {
+                // If the value is a single template like "{{var}}", we try to get the raw object
+                // instead of a stringified version (to preserve JSON/Arrays).
+                const match = (value as string).match(/^\{\{\s*(.*?)\s*\}\}$/);
+                if (match) {
+                    const expr = match[1].trim();
+                    const evalResult = engine.evaluateExpression(expr);
+                    resolvedInput[key] = evalResult !== undefined ? evalResult : value;
+                } else {
+                    resolvedInput[key] = engine.resolve(value as string);
+                }
             } else {
                 resolvedInput[key] = value;
             }
@@ -386,6 +409,17 @@ export class WorkerService {
             } as any
         });
 
+        // Link child execution back to parent task for UI navigation
+        await this.prisma.taskExecution.update({
+            where: { id: taskExec.id },
+            data: {
+                result: {
+                    ...(taskExec.result as any || {}),
+                    childExecutionId: subExec.id
+                }
+            }
+        });
+
         // 2. Start sub-workflow nodes
         let nodes = workflow.nodes as any[];
         let edges = workflow.edges as any[];
@@ -409,6 +443,7 @@ export class WorkerService {
                     status: 'PENDING',
                     targetTags: node.targetTags || (workflow.tags || []),
                     input: {
+                        utility: isUtility,
                         taskType: (node as any).taskType,
                         subWorkflowId: isNested ? node.taskId : undefined,
                         variableExtraction: node.variableExtraction || { vars: {} },
@@ -425,8 +460,8 @@ export class WorkerService {
                     data: { status: 'RUNNING', startedAt: new Date() }
                 });
                 await this.triggerSubWorkflow(childExec);
-            } else if (isUtility) {
-                await this.executeUtilityTask(childExec);
+                // Utility tasks are now PENDING so workers can pick them up
+                // executeUtilityTask is deprecated
             }
         }
     }
@@ -632,8 +667,14 @@ export class WorkerService {
                 where: { workflowExecutionId, nodeId: nextNode.id }
             });
 
+            // Pre-gather workflow context to store in the task input. 
+            // This ensures the worker has everything it needs and the UI can inspect the EXACT state at trigger time.
+            const { workflowVars } = await this.gatherWorkflowContext(workflowExecutionId);
+
             if (!existing) {
-                const isUtility = (nextNode as any).taskType === 'VARIABLE';
+                const isUtility = (nextNode as any).taskType === 'VARIABLE' || 
+                                  (nextNode as any).taskId === '00000000-0000-0000-0000-000000000001' || 
+                                  (nextNode as any).taskId === 'util-vars';
                 const isNested = (nextNode as any).taskType === 'WORKFLOW';
                 const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -649,6 +690,7 @@ export class WorkerService {
                         input: { 
                             utility: isUtility,
                             nested: isNested,
+                            workflowVars, // Crucial for PWF VMA inspection
                             subWorkflowId: isNested ? nextNode.taskId : undefined,
                             taskType: (nextNode as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
                             variableExtraction: nextNode.variableExtraction || { vars: {} },
@@ -662,9 +704,9 @@ export class WorkerService {
                 
                 if (isNested) {
                     await this.triggerSubWorkflow(nextTaskExec);
-                } else if (isUtility) {
-                    await this.executeUtilityTask(nextTaskExec);
                 }
+                // Utility tasks (VARIABLE) are created as PENDING (initialStatus) 
+                // and will be picked up by workers. No special case needed here.
             }
         }
 
@@ -710,28 +752,86 @@ export class WorkerService {
         const startedAt = execution.startedAt ? new Date(execution.startedAt) : now;
         const duration = isFullyDone ? Math.max(0, now.getTime() - startedAt.getTime()) : null;
 
+        let filteredVars = {};
+        if (isFullyDone) {
+            // Gather sub-workflow variables to pass back to parent or save as result
+            const { workflowVars, macros } = await this.gatherWorkflowContext(workflowExecutionId);
+            filteredVars = workflowVars;
+
+            try {
+                const wf = await this.prisma.workflow.findUnique({
+                    where: { id: execution.workflowId },
+                    select: { outputVariables: true }
+                });
+                if (wf?.outputVariables) {
+                    const outputDefs = typeof wf.outputVariables === 'string' ? JSON.parse(wf.outputVariables) : wf.outputVariables;
+                    if (outputDefs && typeof outputDefs === 'object') {
+                        const declaredKeys = Object.keys(outputDefs).filter(k => !k.startsWith('__'));
+                        if (declaredKeys.length > 0) {
+                            const globalVars = await this.globalVarsService.findAllResolved();
+                            const engine = new VariableEngine({
+                                global: globalVars || {},
+                                workflow: workflowVars,
+                                macros
+                            });
+
+                            const newFiltered: Record<string, any> = {};
+                            for (const key of declaredKeys) {
+                                const def = outputDefs[key];
+                                let value = workflowVars[key];
+
+                                // Resolve if transformer or template string
+                                if (def && typeof def === 'object' && def.valueMode === 'transformer') {
+                                    const t = def.transformer || {};
+                                    if (t.type === 'constant') {
+                                        const val = t.hasOwnProperty('value') ? t.value : (t.hasOwnProperty('spec') ? t.spec : t.specYaml);
+                                        value = typeof val === 'string' ? engine.resolve(val) : val;
+                                    } else if (t.type === 'none' || t.type === 'NONE' || t.inputSource === 'variable') {
+                                        if (t.inputVariable) {
+                                            value = engine.resolve(t.inputVariable);
+                                        }
+                                    }
+                                } else if (typeof value === 'string') {
+                                    value = engine.resolve(value);
+                                }
+                                
+                                newFiltered[key] = value !== undefined ? value : null;
+                            }
+                            filteredVars = newFiltered;
+                            this.logger.debug(`[Orchestration] Resolved & Filtered ${Object.keys(filteredVars).length} output variables for CWF final state`);
+                        }
+                    }
+                }
+            } catch (err) {
+                this.logger.error(`[Orchestration] Failed to filter variables: ${err.message}`);
+            }
+        }
+
+        // 4. Update WorkflowExecution with final status and results
         await this.prisma.workflowExecution.update({
             where: { id: workflowExecutionId },
             data: {
                 status: finalStatus,
                 completedAt: isFullyDone ? now : null,
-                duration: duration
+                duration: duration,
+                taskExecutions: isFullyDone ? { 
+                    finalVariables: filteredVars,
+                    summary: `Workflow finished with ${Object.keys(filteredVars || {}).length} variables context.`
+                } : undefined
             }
         });
 
-        // If this was a sub-workflow, resume the parent task
+        // 5. If this was a sub-workflow, resume the parent task
         const exec = execution as any;
         if (isFullyDone && exec.parentTaskExecutionId) {
-            this.logger.log(`[Orchestration] Sub-workflow ${workflowExecutionId} finished. Resuming parent task ${exec.parentTaskExecutionId}`);
-            
-            // Gather sub-workflow variables to pass back to parent
-            const { workflowVars } = await this.gatherWorkflowContext(workflowExecutionId);
+            this.logger.log(`[Orchestration] Sub-workflow ${workflowExecutionId} finished. Resuming parent task ${exec.parentTaskExecutionId} with ${Object.keys(filteredVars || {}).length} variables.`);
             
             await this.completeExecution(exec.parentTaskExecutionId, { 
                 status: finalStatus === 'SUCCESS' ? 200 : 500,
                 data: `Sub-workflow ${execution.workflowName} finished with status ${finalStatus}`,
                 subWorkflowId: workflowExecutionId,
-                variables: workflowVars // Propagate variables to parent task
+                childExecutionId: workflowExecutionId, // For UI direct navigation
+                variables: filteredVars // Propagate only filtered variables to parent task context
             });
         }
     }

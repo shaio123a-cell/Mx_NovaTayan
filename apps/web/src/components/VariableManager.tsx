@@ -2,18 +2,21 @@ import { useState, useEffect } from 'react';
 import { VariableTransformerDrawer } from './VariableTransformerDrawer';
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
-import { ArrowUp, ArrowDown, Trash2, Edit2, Zap, MoreVertical, Globe, Library, Eye, Plus } from 'lucide-react';
+import { ArrowUp, ArrowDown, Trash2, Edit2, Zap, MoreVertical, Globe, Library, Eye, Plus, Check, Shield } from 'lucide-react';
 
 export interface VariableManagerProps {
   value: Record<string, any>;
   onChange: (vars: Record<string, any>) => void;
   usedNames?: string[];
-  availableUpstreamVars?: (string | { name: string, taskName: string, value?: any })[];
+  availableUpstreamVars?: (string | { name: string, taskName: string, value?: any, source?: 'workflow' | 'task' | 'workflow_input' | 'workflow_output' })[];
   forceWorkflowScope?: boolean;
   inheritedNames?: string[];
+  showWorkflowInputToggle?: boolean;
+  hideAdd?: boolean;
+  lockedNames?: string[];
 }
 
-export function VariableManager({ value, onChange, usedNames = [], availableUpstreamVars = [], forceWorkflowScope = false, inheritedNames = [] }: VariableManagerProps) {
+export function VariableManager({ value, onChange, usedNames = [], availableUpstreamVars = [], forceWorkflowScope = false, inheritedNames = [], showWorkflowInputToggle = false, hideAdd = false, lockedNames = [] }: VariableManagerProps) {
   const [newVar, setNewVar] = useState('');
   const [newVal, setNewVal] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +26,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
   const [openTransformerFor, setOpenTransformerFor] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [showVarPicker, setShowVarPicker] = useState(false);
+  const [useParentInput, setUseParentInput] = useState(false);
 
   // Derive variable names in order
   const [orderedNames, setOrderedNames] = useState<string[]>([]);
@@ -95,7 +99,11 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
     }
     
     // Assign value
-    copy[name] = finalVal;
+    if (useParentInput) {
+        copy[name] = { valueMode: 'parent', useParentInput: true };
+    } else {
+        copy[name] = finalVal;
+    }
     
     // Update scopes
     const newScopes = { ...scopes };
@@ -121,6 +129,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
     setNewVal('');
     setNewScope('WORKFLOW');
     setEditingName(null);
+    setUseParentInput(false);
   };
 
   const handleDelete = (name: string) => {
@@ -175,7 +184,9 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
          setNewVal(''); // Values are set via transformer drawer
          setNewScope((scopes[name] as any) || (val.transformer?.scope as any) || 'WORKFLOW');
     } else {
-         setNewVal(String(val));
+         const isParent = typeof val === 'object' && val.valueMode === 'parent';
+         setUseParentInput(isParent);
+         setNewVal(isParent ? '' : String(val));
          setNewScope((scopes[name] as any) || 'WORKFLOW');
     }
     setError(null);
@@ -186,6 +197,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
     setNewVar('');
     setNewVal('');
     setNewScope(forceWorkflowScope ? 'WORKFLOW' : 'LOCAL');
+    setUseParentInput(false);
     setError(null);
   };
 
@@ -214,9 +226,10 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
     <div style={{ marginTop: 24 }} className="space-y-4">
 
       {/* Add/Edit Form */}
-      <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-3">
+      {(!hideAdd || editingName) && (
+        <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-3">
           <div className="flex gap-3 items-end">
-            <div className="flex-1">
+            <div className={`flex-1 ${editingName && inheritedNames.includes(editingName) ? 'opacity-50 pointer-events-none' : ''}`}>
                 <label className="text-[10px] font-bold text-gray-400 mb-1 block">NAME</label>
                 <input
                     placeholder="e.g. user_id"
@@ -225,25 +238,39 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all font-mono"
                 />
             </div>
-            <div className="flex-1">
+            <div className={`flex-1 transition-all duration-300 ${useParentInput ? 'opacity-30 pointer-events-none' : ''}`}>
                 <label className="text-[10px] font-bold text-gray-400 mb-1 block">DIRECT VALUE</label>
                 <div className="relative">
                     <VariableAwareInput
-                        placeholder="Omit if using transformer"
+                        placeholder={useParentInput ? "Supplied By Parent" : "Omit if using transformer"}
                         value={newVal}
                         onValueChange={setNewVal}
                         availableVars={availableUpstreamVars}
                         className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all font-mono pr-12"
                     />
-                    <button 
-                        onClick={() => setShowVarPicker(true)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-all z-10"
-                        title="Pick Variable"
-                    >
-                        <Zap size={14} fill="currentColor" />
-                    </button>
+                    {!useParentInput && (
+                        <button 
+                            onClick={() => setShowVarPicker(true)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-all z-10"
+                            title="Pick Variable"
+                        >
+                            <Zap size={14} fill="currentColor" />
+                        </button>
+                    )}
                 </div>
             </div>
+            {showWorkflowInputToggle && (
+                <div className="flex flex-col justify-end">
+                    <label className="text-[10px] font-bold text-gray-400 mb-2 block uppercase tracking-tighter">Workflow Input</label>
+                    <button 
+                        onClick={() => setUseParentInput(!useParentInput)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg font-black text-[9px] transition-all border ${useParentInput ? 'bg-amber-500 border-amber-600 text-white shadow-lg shadow-amber-100' : 'bg-white border-slate-200 text-slate-400 hover:border-amber-200 hover:text-amber-500'}`}
+                    >
+                        {useParentInput ? <Check size={12}/> : <ArrowUp size={12}/>}
+                        {useParentInput ? 'PARENT INPUT ENABLED' : 'USE PARENT INPUT'}
+                    </button>
+                </div>
+            )}
               <div>
                   <label className="text-[10px] font-bold text-gray-400 mb-1 block">SCOPE</label>
                   <select 
@@ -275,7 +302,8 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
             </div>
           </div>
           {error && <div className="text-xs text-red-500 font-bold px-1">{error}</div>}
-      </div>
+        </div>
+      )}
 
       {/* Table / List with DND */}
       <div className="border border-gray-200 rounded-xl overflow-x-auto bg-white shadow-sm">
@@ -286,7 +314,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                     <th className="text-left px-4 py-3 text-[10px] font-extrabold text-gray-400 uppercase w-1/4">Name</th>
                     <th className="text-left px-4 py-3 text-[10px] font-extrabold text-gray-400 uppercase w-2/5">Value / Source</th>
                     {!forceWorkflowScope && <th className="text-left px-4 py-3 text-[10px] font-extrabold text-gray-400 uppercase w-[15%]">Scope</th>}
-                    <th className="text-right px-4 py-3 text-[10px] font-extrabold text-gray-400 uppercase w-1/5">Actions</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-extrabold text-gray-400 uppercase w-2/5">Value / Strategy</th>
                 </tr>
             </thead>
             <tbody>
@@ -295,6 +323,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                     const isTransformer = typeof val === 'object' && val.valueMode === 'transformer';
                     const scope = scopes[name] || 'LOCAL';
                     const isInherited = inheritedNames.includes(name);
+                    const isLocked = lockedNames.includes(name);
                     
                     return (
                         <tr 
@@ -322,6 +351,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                                 <div className={`font-mono font-bold truncate flex items-center gap-2 ${isInherited ? 'text-indigo-600' : 'text-gray-700'}`} title={name}>
                                     {name}
                                     {isInherited && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded uppercase tracking-tighter">Library</span>}
+                                    {isLocked && <span className="text-[8px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded uppercase tracking-tighter font-black flex items-center gap-1"><Shield size={8}/> IN USE</span>}
                                 </div>
                             </td>
                             <td className="px-4 py-3">
@@ -335,6 +365,13 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                                         {val.transformer?.inputVariable && (
                                             <span className="text-[10px] text-gray-400 font-mono truncate">← {val.transformer.inputVariable}</span>
                                         )}
+                                    </div>
+                                ) : (typeof val === 'object' && val.valueMode === 'parent') ? (
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                                        <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100">
+                                            External Payload Entry
+                                        </span>
                                     </div>
                                 ) : (
                                     <div className="font-mono text-gray-500 text-xs truncate w-full">{String(val)}</div>
@@ -352,43 +389,51 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                                             scope === 'WORKFLOW' ? 'bg-orange-100 text-orange-600' :
                                             'bg-blue-100 text-blue-600'
                                         }`}>
-                                            {isInherited ? 'LIBRARY (READ ONLY)' : scope}
+                                            {isInherited ? 'LIBRARY OVERLAY' : scope}
                                         </span>
                                     </div>
                                 </td>
                             )}
                             <td className="px-4 py-3 text-right whitespace-nowrap">
-                                {!isInherited ? (
                                     <div className="flex items-center justify-end gap-1">
-                                        <button onClick={() => handleMove(index, 'up')} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-all" title="Move Up">
-                                            <ArrowUp size={14} />
-                                        </button>
-                                        <button onClick={() => handleMove(index, 'down')} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-all" title="Move Down">
-                                            <ArrowDown size={14} />
-                                        </button>
-                                        <div className="w-px h-5 bg-gray-200 mx-2"></div>
-                                        <button onClick={() => setOpenTransformerFor(name)} className="p-2 text-blue-500 hover:bg-blue-50 border border-transparent hover:border-blue-200 rounded-lg transition-all" title="Config Transformer">
+                                        {!isInherited && (
+                                            <>
+                                                <button onClick={() => handleMove(index, 'up')} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-all" title="Move Up">
+                                                    <ArrowUp size={14} />
+                                                </button>
+                                                <button onClick={() => handleMove(index, 'down')} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-all" title="Move Down">
+                                                    <ArrowDown size={14} />
+                                                </button>
+                                                <div className="w-px h-5 bg-gray-200 mx-2"></div>
+                                            </>
+                                        )}
+                                        <button 
+                                            onClick={() => setOpenTransformerFor(name)} 
+                                            disabled={typeof val === 'object' && val.valueMode === 'parent'}
+                                            className={`p-2 rounded-lg transition-all border border-transparent ${typeof val === 'object' && val.valueMode === 'parent' ? 'text-gray-200 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-50 hover:border-blue-200'}`} 
+                                            title="Config Transformer"
+                                        >
                                             <Zap size={14} />
                                         </button>
-                                        <button onClick={() => handleEdit(name)} className="p-2 text-amber-500 hover:bg-amber-50 border border-transparent hover:border-amber-200 rounded-lg transition-all" title="Edit Name/Value">
+                                        <button 
+                                            onClick={() => handleEdit(name)} 
+                                            disabled={isLocked}
+                                            className={`p-2 rounded-lg transition-all border border-transparent ${isLocked ? 'text-gray-200 cursor-not-allowed' : 'text-amber-500 hover:bg-amber-50 hover:border-amber-200'}`} 
+                                            title={isLocked ? "Variable used by dependents - renaming blocked" : "Edit Value"}
+                                        >
                                             <Edit2 size={14} />
                                         </button>
-                                        <button onClick={() => handleSafeDelete(name)} className="p-2 text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-lg transition-all" title="Delete">
-                                            <Trash2 size={14} />
-                                        </button>
+                                        {!isInherited && (
+                                            <button 
+                                                onClick={() => handleSafeDelete(name)} 
+                                                disabled={isLocked}
+                                                className={`p-2 rounded-lg transition-all border border-transparent ${isLocked ? 'text-gray-200 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 hover:border-red-200'}`} 
+                                                title={isLocked ? "Variable used by dependents - deletion blocked" : "Delete"}
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
                                     </div>
-                                ) : (
-                                    <div className="flex items-center justify-end pr-2 gap-1">
-                                        <button 
-                                            onClick={() => setOpenTransformerFor(name)}
-                                            className="p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                                            title="View Variable Definition"
-                                        >
-                                            <Eye size={14} />
-                                        </button>
-                                        <Zap size={14} className="text-indigo-200" />
-                                    </div>
-                                )}
                             </td>
                         </tr>
                     );
@@ -412,6 +457,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
             const internalAbove = idx !== -1 ? orderedNames.slice(0, idx) : orderedNames;
             return Array.from(new Set([...internalAbove, ...availableUpstreamVars]));
         })()}
+        showWorkflowInputToggle={showWorkflowInputToggle}
         onClose={() => setOpenTransformerFor(null)}
         onSave={(t: any) => {
             if (openTransformerFor) {

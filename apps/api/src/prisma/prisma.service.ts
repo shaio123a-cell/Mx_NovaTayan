@@ -3,6 +3,14 @@ import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+    constructor() {
+        super({
+            log: process.env.DB_DEBUG === 'true' 
+                ? ['query', 'info', 'warn', 'error'] 
+                : ['error'],
+        });
+    }
+
     async onModuleInit() {
         console.log('⏳ Connecting to database...');
         try {

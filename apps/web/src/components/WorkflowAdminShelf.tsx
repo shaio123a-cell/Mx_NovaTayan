@@ -12,11 +12,12 @@ import { VariableManager } from './VariableManager';
 
 interface WorkflowAdminShelfProps {
     workflowId: string | null;
+    availableVars?: any[];
     onClose: () => void;
     onSave?: (data: any) => void;
 }
 
-export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdminShelfProps) {
+export function WorkflowAdminShelf({ workflowId, availableVars = [], onClose, onSave }: WorkflowAdminShelfProps) {
     const [activeTab, setActiveTab] = useState<'scheduling' | 'variables' | 'notifications'>('variables');
     const { showToast } = useToast();
     const queryClient = useQueryClient();
@@ -29,10 +30,21 @@ export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdmi
     const [notifications, setNotifications] = useState<any[]>([]);
     const [scope, setScope] = useState<'GLOBAL' | 'PRIVATE'>('GLOBAL');
 
+    const { data: usageData } = useQuery({
+        queryKey: ['workflow-usage', workflowId],
+        queryFn: () => workflowsApi.getWorkflowUsage(workflowId!),
+        enabled: !!workflowId
+    });
+
     const { data: workflow, isLoading } = useQuery({
         queryKey: ['workflow', workflowId],
         queryFn: () => workflowsApi.getWorkflow(workflowId!),
         enabled: !!workflowId
+    });
+
+    const { data: allWorkflows } = useQuery({
+        queryKey: ['workflows'],
+        queryFn: () => workflowsApi.getWorkflows()
     });
 
     useEffect(() => {
@@ -86,7 +98,7 @@ export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdmi
     if (isLoading && workflowId) return null;
 
     return (
-        <div className="fixed top-0 right-0 bottom-0 w-[650px] bg-slate-50 shadow-2xl z-[1000] flex flex-col border-l border-slate-200 animate-slide-in-right">
+        <div className="fixed top-0 right-0 bottom-0 w-[900px] bg-slate-50 shadow-2xl z-[1000] flex flex-col border-l border-slate-200 animate-slide-in-right">
             {/* Header */}
             <div className="bg-white border-b border-slate-200 p-6 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
@@ -129,7 +141,21 @@ export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdmi
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 overflow-y-auto p-8 pt-6">
+            <div className="flex-1 overflow-y-auto p-8 overflow-x-hidden no-scrollbar">
+                {usageData && usageData.usageCount > 0 && (
+                    <div className="mb-8 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                        <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
+                            <AlertTriangle size={20} />
+                        </div>
+                        <div>
+                            <h4 className="text-sm font-black text-amber-800 uppercase tracking-tighter">Shared Library Warning</h4>
+                            <p className="text-xs text-amber-700 font-medium leading-relaxed mt-1">
+                                This workflow is actively used in <span className="font-bold">{usageData.usageCount} other workflows</span>. 
+                                Significant interface changes (renaming inputs, changing output structure) <span className="underline">will break</span> dependent processes.
+                            </p>
+                        </div>
+                    </div>
+                )}
                 {activeTab === 'variables' && (
                     <div className="space-y-12">
                         {/* Input Variables Section */}
@@ -139,23 +165,30 @@ export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdmi
                                     <ArrowRight size={20} />
                                 </div>
                                 <div className="flex-1">
-                                    <h3 className="text-lg font-bold text-slate-800">Dynamic Inputs</h3>
-                                    <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Interface Definition</p>
+                                    <h3 className="text-lg font-bold text-slate-800">Input Registry</h3>
+                                    <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Workflow Interface</p>
                                 </div>
-                                <div className="text-[10px] bg-amber-100 text-amber-700 px-2 py-1 rounded font-black tracking-tighter">EXPOSED</div>
+                                <div className="text-[10px] bg-amber-100 text-amber-700 px-2 py-1 rounded font-black tracking-tighter">ARGUMENTS</div>
                             </div>
-                            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                                <VariableManager 
-                                    value={inputVars}
-                                    onChange={setInputVars}
-                                    forceWorkflowScope
-                                />
-                                <div className="mt-6 flex items-start gap-3 bg-blue-50/50 p-4 rounded-xl border border-blue-100/50">
-                                    <Info size={16} className="text-blue-500 mt-0.5 shrink-0" />
-                                    <p className="text-[11px] text-blue-700 font-medium leading-relaxed">
-                                        These variables will appear as "Input Mapping" when this workflow is called as a nested task. 
-                                        They act as the arguments for your automation.
-                                    </p>
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-6 border-b border-slate-100">
+                                    <VariableManager 
+                                        value={inputVars}
+                                        onChange={setInputVars}
+                                        forceWorkflowScope
+                                        showWorkflowInputToggle={true}
+                                        lockedNames={usageData && usageData.usageCount > 0 ? Object.keys(workflow?.inputVariables || {}) : []}
+                                    />
+                                </div>
+                                <div className="bg-slate-50/50 p-4 flex items-start gap-3">
+                                    <Info size={16} className="text-amber-500 mt-0.5 shrink-0" />
+                                    <div>
+                                        <p className="text-[11px] text-slate-700 font-bold mb-1">Parent Data Propagation</p>
+                                        <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                                            Variables with <span className="text-amber-600 font-black">"Use Parent Workflow Input"</span> enabled will be exposed as required fields 
+                                            whenever this workflow is called as a sub-workflow or triggered via notifications.
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         </section>
@@ -177,22 +210,8 @@ export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdmi
                                     value={outputVars}
                                     onChange={setOutputVars}
                                     forceWorkflowScope
-                                    availableUpstreamVars={(() => {
-                                        if (!workflow?.nodes) return [];
-                                        let nodes = workflow.nodes as any[];
-                                        if (typeof nodes === 'string') nodes = JSON.parse(nodes);
-                                        if (!Array.isArray(nodes)) nodes = Object.values(nodes || {});
-
-                                        return nodes.flatMap((n: any) => {
-                                            const vars = n.variableExtraction?.vars || {};
-                                            return Object.keys(vars)
-                                                .filter(k => !k.startsWith('__'))
-                                                .map(name => ({
-                                                    name,
-                                                    taskName: n.label || 'Task'
-                                                }));
-                                        });
-                                    })()}
+                                    availableUpstreamVars={availableVars}
+                                    lockedNames={usageData && usageData.usageCount > 0 ? Object.keys(workflow?.outputVariables || {}) : []}
                                 />
                                 <div className="mt-6 flex items-start gap-3 bg-purple-50/50 p-4 rounded-xl border border-purple-100/50">
                                     <Info size={16} className="text-purple-500 mt-0.5 shrink-0" />
@@ -294,18 +313,116 @@ export function WorkflowAdminShelf({ workflowId, onClose, onSave }: WorkflowAdmi
                 )}
 
                 {activeTab === 'notifications' && (
-                    <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
-                         <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 mb-6">
-                             <Bell size={32} />
-                         </div>
-                         <h3 className="text-xl font-bold text-slate-800 mb-2">Workflow Monitoring</h3>
-                         <p className="text-slate-500 font-medium text-center max-w-sm">
-                             Stay informed with Email, Slack, and Webhook alerts.
-                             Full alerting system integration is being polished.
-                         </p>
-                         <button className="mt-8 px-8 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-bold text-sm hover:bg-indigo-100 transition-all">
-                             Check Logs Instead
-                         </button>
+                    <div className="space-y-6">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800">Event Triggers</h3>
+                                <p className="text-sm text-slate-500 font-medium">Execute workflows automatically based on completion status.</p>
+                            </div>
+                            <button 
+                                onClick={() => setNotifications([...notifications, { id: Math.random().toString(36).substr(2, 9), event: 'ON_SUCCESS', workflowId: '', inputs: {} }])}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-bold text-xs hover:bg-indigo-100 transition-all"
+                            >
+                                <Plus size={16} />
+                                Add Notification
+                            </button>
+                        </div>
+
+                        {notifications.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
+                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 mb-6">
+                                    <Bell size={32} />
+                                </div>
+                                <h3 className="text-sm font-bold text-slate-400">No Notifications Configured</h3>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {notifications.map((n, idx) => (
+                                    <div key={n.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                                        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+                                            <div className="flex items-center gap-4">
+                                                <div className="bg-indigo-100 text-indigo-600 p-2 rounded-lg">
+                                                    <Zap size={16} />
+                                                </div>
+                                                <select 
+                                                    value={n.event}
+                                                    onChange={(e) => {
+                                                        const newNotifs = [...notifications];
+                                                        newNotifs[idx].event = e.target.value;
+                                                        setNotifications(newNotifs);
+                                                    }}
+                                                    className="bg-transparent border-none font-bold text-xs uppercase tracking-wider text-slate-700 focus:outline-none cursor-pointer"
+                                                >
+                                                    <option value="COMPLETED">Upon Completion</option>
+                                                    <option value="ON_SUCCESS">On Success Only</option>
+                                                    <option value="ON_FAILURE">On Failure Only</option>
+                                                    <option value="CANCELLED">On Cancelled</option>
+                                                </select>
+                                            </div>
+                                            <button 
+                                                onClick={() => setNotifications(notifications.filter((_, i) => i !== idx))}
+                                                className="text-slate-300 hover:text-red-500 transition-colors"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                        <div className="p-6 space-y-4">
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Target Workflow</label>
+                                                <select 
+                                                    value={n.workflowId}
+                                                    onChange={(e) => {
+                                                        const newNotifs = [...notifications];
+                                                        newNotifs[idx].workflowId = e.target.value;
+                                                        setNotifications(newNotifs);
+                                                    }}
+                                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-all font-bold text-slate-700"
+                                                >
+                                                    <option value="">Select a workflow...</option>
+                                                    {allWorkflows?.filter(w => w.id !== workflowId).map(w => (
+                                                        <option key={w.id} value={w.id}>{w.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            {n.workflowId && (
+                                                <div className="mt-4 p-4 bg-indigo-50/30 rounded-xl border border-indigo-100/50">
+                                                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-3">Input Mapping</p>
+                                                    <div className="space-y-3">
+                                                        {(() => {
+                                                            const childWf = allWorkflows?.find(w => w.id === n.workflowId);
+                                                            const expectedInputs = Object.keys(childWf?.inputVariables || {}).filter(k => (childWf?.inputVariables[k] as any).useParentInput);
+                                                            const currentInputs = n.inputs || {};
+                                                            
+                                                            // Ensure all expected keys exist in the value object for display
+                                                            const displayValue = { ...currentInputs };
+                                                            expectedInputs.forEach(k => { if(!(k in displayValue)) displayValue[k] = ''; });
+
+                                                            return (
+                                                                <VariableManager 
+                                                                    value={displayValue}
+                                                                    onChange={(newInputs) => {
+                                                                        const newNotifs = [...notifications];
+                                                                        // Only keep keys that are in expectedInputs
+                                                                        const filtered: any = {};
+                                                                        expectedInputs.forEach(k => { filtered[k] = newInputs[k]; });
+                                                                        newNotifs[idx].inputs = filtered;
+                                                                        setNotifications(newNotifs);
+                                                                    }}
+                                                                    inheritedNames={expectedInputs}
+                                                                    availableUpstreamVars={availableVars}
+                                                                    forceWorkflowScope
+                                                                    hideAdd
+                                                                />
+                                                            );
+                                                         })()}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

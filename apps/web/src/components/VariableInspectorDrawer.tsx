@@ -17,9 +17,9 @@ export default function VariableInspectorDrawer({ open, name, value, transformer
   if (!open) return null;
 
     return (
-    <div className="fixed inset-0 z-[10010] flex">
-      <div className="absolute inset-0 bg-black/20 z-[10010]" onClick={onClose} />
-      <div onClick={(e) => e.stopPropagation()} className="ml-auto w-[560px] h-full bg-white shadow-2xl p-6 overflow-auto z-[10011]">
+    <div className="fixed inset-0 z-[100100] flex">
+      <div className="absolute inset-0 bg-black/40 z-[100101]" onClick={onClose} />
+      <div onClick={(e) => e.stopPropagation()} className="ml-auto w-[560px] h-full bg-white shadow-2xl p-6 overflow-auto z-[100102]">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-lg font-semibold">Variable: <span className="font-mono">{name}</span></h3>
