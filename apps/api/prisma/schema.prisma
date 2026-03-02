@@ -58,6 +58,7 @@ model Task {
   retryPolicy        Json?   // RetryPolicy
   sanityChecks      Json?   // SanityCheck[]
   
+  icon      String?
   tags      String[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -150,6 +151,7 @@ model Workflow {
   scheduling      Json? // { enabled: boolean, cron: string }
   notifications   Json? // any[]
   
+  icon      String?
   tags      String[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

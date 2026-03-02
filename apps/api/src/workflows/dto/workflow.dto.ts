@@ -41,6 +41,10 @@ export class CreateWorkflowDto {
     @IsArray()
     @IsOptional()
     notifications?: any[];
+
+    @IsString()
+    @IsOptional()
+    icon?: string;
 }
 
 export class UpdateWorkflowDto {
@@ -83,4 +87,8 @@ export class UpdateWorkflowDto {
     @IsArray()
     @IsOptional()
     notifications?: any[];
+
+    @IsString()
+    @IsOptional()
+    icon?: string;
 }

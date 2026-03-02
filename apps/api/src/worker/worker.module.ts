@@ -6,6 +6,7 @@ import { GlobalVarsModule } from '../global-vars/global-vars.module';
 @Module({
   imports: [GlobalVarsModule],
   providers: [WorkerService],
-  controllers: [WorkerController]
+  controllers: [WorkerController],
+  exports: [WorkerService]
 })
 export class WorkerModule {}

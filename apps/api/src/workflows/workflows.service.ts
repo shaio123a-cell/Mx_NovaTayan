@@ -2,12 +2,15 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
 import { LoggerService } from '../common/logger/logger.service';
+import { suggestIcon } from '../tasks/utils/icon-mapper';
+import { WorkerService } from '../worker/worker.service';
 
 @Injectable()
 export class WorkflowsService {
     constructor(
         private prisma: PrismaService,
-        private logger: LoggerService
+        private logger: LoggerService,
+        private workerService: WorkerService
     ) {
         this.logger.setContext(WorkflowsService.name);
     }
@@ -17,6 +20,9 @@ export class WorkflowsService {
         
         // Map the legacy 'workerGroup' string to the 'tags' array if tags aren't provided
         const workflowTags = data.tags || (data.workerGroup ? [data.workerGroup] : []);
+
+        // Auto-suggest icon if not provided
+        const finalIcon = data.icon || suggestIcon(data.name);
 
         // Sanitize nodes to ensure they use targetTags/targetWorkerId correctly
         const processedNodes = (data.nodes || []).map((node: any) => {
@@ -35,8 +41,13 @@ export class WorkflowsService {
                 ownerId,
                 nodes: processedNodes,
                 edges: data.edges || [],
+                icon: finalIcon,
                 tags: workflowTags,
                 enabled: data.enabled ?? false,
+                inputVariables: data.inputVariables || {},
+                outputVariables: data.outputVariables || {},
+                scheduling: data.scheduling,
+                notifications: data.notifications || [],
             },
         });
     }
@@ -86,6 +97,11 @@ export class WorkflowsService {
 
         if (data.workerGroup !== undefined || data.tags !== undefined) {
             updateData.tags = data.tags || (data.workerGroup ? [data.workerGroup] : []);
+        }
+
+        // Auto-suggest icon on rename if not provided
+        if (data.name && !data.icon) {
+            updateData.icon = suggestIcon(data.name);
         }
 
         if (data.nodes) {
@@ -273,13 +289,16 @@ export class WorkflowsService {
                                           (node as any).taskId === 'util-vars';
                         const isNested = (node as any).taskType === 'WORKFLOW';
 
-                        await this.prisma.taskExecution.create({
+                        const { workflowVars } = await this.workerService.gatherWorkflowContext(childExecution.id);
+
+                        const taskExec = await this.prisma.taskExecution.create({
                             data: {
                                 taskId: (isUtility || isNested) ? null : node.taskId,
                                 nodeId: node.id,
                                 workflowExecutionId: childExecution.id,
                                 status: isNested ? 'RUNNING' : 'PENDING',
                                 targetWorkerId: worker.id, // Explicitly target this worker
+                                startedAt: new Date(),
                                 input: { 
                                     utility: isUtility, 
                                     nested: isNested,
@@ -288,10 +307,14 @@ export class WorkflowsService {
                                     variableExtraction: node.variableExtraction || { vars: {} },
                                     sanityChecks: node.sanityChecks || [],
                                     authorization: node.authorization,
-                                    inputMapping: node.inputMapping
+                                    inputMapping: node.inputMapping,
+                                    workflowVars
                                 }
                             },
                         });
+                        if (isNested) {
+                            await this.workerService.triggerSubWorkflow(taskExec);
+                        }
                     }
                     executions.push(childExecution);
                 }
@@ -321,6 +344,8 @@ export class WorkflowsService {
         // Standard Single Execution (No Workflow-level Fan-out)
         this.logger.log(`[Trace] Processing ${startNodes.length} start nodes for execution ${execution.id}`);
         let startedCount = 0;
+
+        const { workflowVars } = await this.workerService.gatherWorkflowContext(execution.id);
 
         for (const node of startNodes) {
             try {
@@ -361,6 +386,7 @@ export class WorkflowsService {
                         status: isNested ? 'RUNNING' : initialStatus,
                         targetWorkerId: node.targetWorkerId,
                         targetTags: nodeTags,
+                        startedAt: new Date(),
                         input: { 
                             utility: isUtility, 
                             nested: isNested,
@@ -369,12 +395,18 @@ export class WorkflowsService {
                             variableExtraction: node.variableExtraction || { vars: {} },
                             sanityChecks: node.sanityChecks || [],
                             authorization: node.authorization,
-                            inputMapping: node.inputMapping
+                            inputMapping: node.inputMapping,
+                            workflowVars
                         }
                     },
                 });
                 
                 this.logger.log(`[Trace] Created TaskExecution successfully: ${taskExec.id}`);
+                
+                if (isNested) {
+                    await this.workerService.triggerSubWorkflow(taskExec);
+                }
+                
                 startedCount++;
             } catch (err: any) {
                 this.logger.error(`[Trace] CRITICAL: Failed to create TaskExecution for node ${node.id}: ${err.message}`, err.stack);

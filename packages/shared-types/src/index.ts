@@ -129,6 +129,7 @@ export interface Task {
     // Metadata
     tags?: string[];
     groups?: TaskGroup[];
+    icon?: string;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -157,6 +158,7 @@ export interface WorkflowNode {
     body?: string;
     headers?: Record<string, string>;
     tags?: string[];
+    icon?: string;
 }
 
 export interface WorkflowEdge {
@@ -196,6 +198,7 @@ export interface Workflow {
 
     // Metadata
     tags?: string[];
+    icon?: string;
     createdAt: Date;
     updatedAt: Date;
 }

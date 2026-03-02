@@ -13,22 +13,23 @@ import { VariableManager } from './VariableManager';
 interface WorkflowAdminShelfProps {
     workflowId: string | null;
     availableVars?: any[];
+    draftMetadata?: any;
     onClose: () => void;
     onSave?: (data: any) => void;
 }
 
-export function WorkflowAdminShelf({ workflowId, availableVars = [], onClose, onSave }: WorkflowAdminShelfProps) {
+export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetadata, onClose, onSave }: WorkflowAdminShelfProps) {
     const [activeTab, setActiveTab] = useState<'scheduling' | 'variables' | 'notifications'>('variables');
     const { showToast } = useToast();
     const queryClient = useQueryClient();
     const initializedRef = useRef<string | null>(null);
 
     // Form state
-    const [inputVars, setInputVars] = useState<Record<string, any>>({});
-    const [outputVars, setOutputVars] = useState<Record<string, any>>({});
-    const [scheduling, setScheduling] = useState<any>({ enabled: false, cron: '0 * * * *' });
-    const [notifications, setNotifications] = useState<any[]>([]);
-    const [scope, setScope] = useState<'GLOBAL' | 'PRIVATE'>('GLOBAL');
+    const [inputVars, setInputVars] = useState<Record<string, any>>(draftMetadata?.inputVariables || {});
+    const [outputVars, setOutputVars] = useState<Record<string, any>>(draftMetadata?.outputVariables || {});
+    const [scheduling, setScheduling] = useState<any>(draftMetadata?.scheduling || { enabled: false, cron: '0 * * * *' });
+    const [notifications, setNotifications] = useState<any[]>(draftMetadata?.notifications || []);
+    const [scope, setScope] = useState<'GLOBAL' | 'PRIVATE'>(draftMetadata?.scope || 'GLOBAL');
 
     const { data: usageData } = useQuery({
         queryKey: ['workflow-usage', workflowId],

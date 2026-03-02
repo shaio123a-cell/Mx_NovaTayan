@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
 import { LoggerService } from '../common/logger/logger.service';
+import { suggestIcon } from './utils/icon-mapper';
 
 @Injectable()
 export class TasksService implements OnModuleInit {
@@ -14,13 +15,13 @@ export class TasksService implements OnModuleInit {
 
     async onModuleInit() {
         // Automatically create 'Global' group if it doesn't exist
-        const globalGroup = await (this.prisma as any).taskGroup.findUnique({
+        const globalGroup = await this.prisma.taskGroup.findUnique({
             where: { name: 'Global' }
         });
 
         if (!globalGroup) {
             this.logger.log('Creating default Global task group...');
-            await (this.prisma as any).taskGroup.create({
+            await this.prisma.taskGroup.create({
                 data: { name: 'Global', description: 'Default global group' }
             });
         }
@@ -28,17 +29,23 @@ export class TasksService implements OnModuleInit {
         // Cleanup: Remove legacy System Variables Utility Task if it exists
         const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
         try {
-            await this.prisma.task.delete({ where: { id: SYSTEM_VAR_ID } });
-            this.logger.log('Removed legacy System Variables Utility Task.');
+            // Using deleteMany prevents P2025 error if record is already gone
+            const { count } = await this.prisma.task.deleteMany({ where: { id: SYSTEM_VAR_ID } });
+            if (count > 0) {
+                this.logger.log('Removed legacy System Variables Utility Task.');
+            }
         } catch (e) {
-            // Ignore if already gone
+            this.logger.debug(`[Startup] Failed to cleanup legacy task: ${e.message}`);
         }
     }
 
     async create(createTaskDto: CreateTaskDto, ownerId: string) {
-        const { method, url, headers, body, timeout, scope, tags, groupIds, authorization, ...rest } = createTaskDto;
+        const { method, url, headers, body, timeout, scope, tags, groupIds, authorization, icon, ...rest } = createTaskDto;
         const cleanRest = { ...rest };
         if ('workerGroup' in cleanRest) delete (cleanRest as any).workerGroup;
+
+        // Auto-suggest icon if not provided
+        const finalIcon = icon || suggestIcon(createTaskDto.name);
 
         // Determine group connections
         const connections = groupIds && groupIds.length > 0
@@ -60,6 +67,7 @@ export class TasksService implements OnModuleInit {
                 scope: scope || 'GLOBAL',
                 ownerId,
                 command,
+                icon: finalIcon,
                 tags: tags || [],
                 groups: {
                     connect: connections.map(c => c.id ? { id: c.id } : { name: 'Global' })
@@ -129,6 +137,13 @@ export class TasksService implements OnModuleInit {
             updateData.groups = {
                 set: groupIds.map(gid => ({ id: gid }))
             };
+        }
+
+        // Auto-suggest icon on rename if not provided
+        if (updateTaskDto.name && !updateTaskDto.icon) {
+            updateData.icon = suggestIcon(updateTaskDto.name);
+        } else if (updateTaskDto.icon) {
+            updateData.icon = updateTaskDto.icon;
         }
 
         const updatedTask = await this.prisma.task.update({

@@ -130,7 +130,7 @@ export class WorkerService {
         });
     }
 
-    private async gatherWorkflowContext(workflowExecutionId: string) {
+    async gatherWorkflowContext(workflowExecutionId: string) {
         // 1. Fetch the execution and its base workflow definition for initial variable state
         const execution = await this.prisma.workflowExecution.findUnique({
             where: { id: workflowExecutionId },
@@ -155,7 +155,19 @@ export class WorkerService {
             const allDefs = { ...inputDefs, ...outputDefs };
             Object.entries(allDefs).forEach(([k, v]: [string, any]) => {
                 if (!k.startsWith('__')) {
-                    workflowVars[k] = (v && typeof v === 'object' && v.hasOwnProperty('value')) ? v.value : v;
+                    if (v && typeof v === 'object') {
+                        if (v.hasOwnProperty('value')) {
+                            workflowVars[k] = v.value;
+                        } else if (v.valueMode) {
+                            // It's a configuration definition, not a literal JSON object value
+                            workflowVars[k] = '';
+                        } else {
+                            // Literal JSON object
+                            workflowVars[k] = v;
+                        }
+                    } else {
+                        workflowVars[k] = v;
+                    }
                 }
             });
             this.logger.debug(`[Context] Initialized ${Object.keys(workflowVars).length} baseline variables from CWF '${wf.name}' definition`);
@@ -342,7 +354,7 @@ export class WorkerService {
     }
 
 
-    private async triggerSubWorkflow(taskExec: any) {
+    async triggerSubWorkflow(taskExec: any) {
         const workflowId = (taskExec.input as any)?.subWorkflowId || taskExec.taskId;
         const workflow = await this.prisma.workflow.findUnique({ where: { id: workflowId } });
         if (!workflow) {
@@ -430,11 +442,15 @@ export class WorkerService {
         const targetNodeIds = new Set(edges.map((e: any) => e.target));
         const startNodes = nodes.filter((n: any) => !targetNodeIds.has(n.id));
 
-        for (const node of startNodes) {
-            const isUtility = (node as any).taskType === 'VARIABLE';
-            const isNested = (node as any).taskType === 'WORKFLOW';
-            const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
+        // Pre-gather sub-workflow start context (baseline + resolved inputs)
+        const { workflowVars: subWorkflowStartContext } = await this.gatherWorkflowContext(subExec.id);
 
+        for (const node of startNodes) {
+            const isUtility = (node as any).taskType === 'VARIABLE' || 
+                              (node as any).taskId === '00000000-0000-0000-0000-000000000001' || 
+                              (node as any).taskId === 'util-vars';
+            const isNested = (node as any).taskType === 'WORKFLOW';
+            
             const childExec = await this.prisma.taskExecution.create({
                 data: {
                     taskId: (isUtility || isNested) ? null : node.taskId,
@@ -442,13 +458,17 @@ export class WorkerService {
                     workflowExecutionId: subExec.id,
                     status: 'PENDING',
                     targetTags: node.targetTags || (workflow.tags || []),
+                    startedAt: new Date(),
                     input: {
                         utility: isUtility,
-                        taskType: (node as any).taskType,
+                        nested: isNested,
+                        taskType: (node as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
                         subWorkflowId: isNested ? node.taskId : undefined,
                         variableExtraction: node.variableExtraction || { vars: {} },
                         sanityChecks: node.sanityChecks || [],
-                        authorization: node.authorization
+                        authorization: node.authorization,
+                        inputMapping: node.inputMapping,
+                        workflowVars: subWorkflowStartContext // Context snapshot
                     }
                 }
             });
@@ -460,8 +480,6 @@ export class WorkerService {
                     data: { status: 'RUNNING', startedAt: new Date() }
                 });
                 await this.triggerSubWorkflow(childExec);
-                // Utility tasks are now PENDING so workers can pick them up
-                // executeUtilityTask is deprecated
             }
         }
     }
@@ -814,10 +832,13 @@ export class WorkerService {
                 status: finalStatus,
                 completedAt: isFullyDone ? now : null,
                 duration: duration,
-                taskExecutions: isFullyDone ? { 
-                    finalVariables: filteredVars,
-                    summary: `Workflow finished with ${Object.keys(filteredVars || {}).length} variables context.`
-                } : undefined
+                // taskExecutions is a JSON column — store the final context snapshot there
+                ...(isFullyDone ? {
+                    taskExecutions: {
+                        finalVariables: filteredVars,
+                        summary: `Workflow finished with ${Object.keys(filteredVars || {}).length} variables context.`
+                    }
+                } : {})
             }
         });
 

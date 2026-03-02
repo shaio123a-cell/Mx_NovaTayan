@@ -57,6 +57,10 @@ export class CreateTaskDto {
     @IsObject()
     @IsOptional()
     authorization?: any;
+
+    @IsString()
+    @IsOptional()
+    icon?: string;
 }
 
 export class UpdateTaskDto {
@@ -98,4 +102,8 @@ export class UpdateTaskDto {
     @IsObject()
     @IsOptional()
     authorization?: any;
+
+    @IsString()
+    @IsOptional()
+    icon?: string;
 }
