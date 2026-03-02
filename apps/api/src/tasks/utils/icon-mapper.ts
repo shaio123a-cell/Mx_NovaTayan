@@ -1,10 +1,9 @@
-
-// Icon mapping using Simple Icons CDN — reliable brand SVGs for 100+ enterprise companies
+// Icon mapping using Simple Icons CDN — reliable brand SVGs for thousands of companies.
 // Source: https://cdn.simpleicons.org/{slug}/{hex-color}
 const ICON_MAPPING: Record<string, string> = {
     // ── Cloud Providers ───────────────────────────────────────────────────
     'aws':            'https://cdn.simpleicons.org/amazonaws/FF9900',
-    'amazon':         'https://cdn.simpleicons.org/amazonaws/FF9900',
+    'amazon':         'https://cdn.simpleicons.org/amazon/FF9900',
     'lambda':         'https://cdn.simpleicons.org/awslambda/FF9900',
     'ec2':            'https://cdn.simpleicons.org/amazonec2/FF9900',
     's3':             'https://cdn.simpleicons.org/amazons3/FF9900',
@@ -24,9 +23,9 @@ const ICON_MAPPING: Record<string, string> = {
 
     // ── ERP / Business Apps ───────────────────────────────────────────────
     'sap':            'https://cdn.simpleicons.org/sap/0FAAFF',
-    'bmc':            'https://cdn.simpleicons.org/bmc/FF2D9C',
-    'bmc helix':      'https://cdn.simpleicons.org/bmc/FF2D9C',
-    'helix':          'https://cdn.simpleicons.org/bmc/FF2D9C',
+    'bmc':            'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
+    'bmc helix':      'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
+    'helix':          'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
     'salesforce':     'https://cdn.simpleicons.org/salesforce/00A1E0',
     'servicenow':     'https://cdn.simpleicons.org/servicenow/62D84E',
     'workday':        'https://cdn.simpleicons.org/workday/FF7700',
@@ -138,18 +137,39 @@ const ICON_MAPPING: Record<string, string> = {
 };
 
 /**
+ * Normalizes a brand name to a Simple Icons slug.
+ * Removes spaces, dots, and special characters.
+ */
+function normalizeSlug(name: string): string {
+    return name.toLowerCase()
+        .replace(/\.com$/i, '')           // remove .com
+        .replace(/\s+/g, '')              // remove spaces
+        .replace(/[^\w]/g, '');           // remove non-alphanumeric
+}
+
+/**
  * Suggests an icon URL based on a task or workflow name.
  * Longer/more-specific keywords are checked first to avoid false matches
  * (e.g. 'bmc helix' must beat 'helix').
+ * 
+ * Now supports dynamic fallback to Simple Icons' 3000+ logos.
  */
 export function suggestIcon(name: string): string | null {
     if (!name) return null;
     const lower = name.toLowerCase();
 
-    // Sort keys longest-first so multi-word keys match before shorter ones
+    // 1. Check manual mapping first (overrides & specific color choices)
     const sorted = Object.keys(ICON_MAPPING).sort((a, b) => b.length - a.length);
     for (const key of sorted) {
         if (lower.includes(key)) return ICON_MAPPING[key];
     }
+
+    // 2. Dynamic slug fallback (supports 3000+ brands automatically)
+    // We attempt to guess the slug by normalizing the name.
+    const slug = normalizeSlug(name);
+    if (slug.length > 1) {
+        return `https://cdn.simpleicons.org/${slug}`;
+    }
+
     return null;
 }

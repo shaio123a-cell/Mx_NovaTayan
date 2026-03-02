@@ -11,7 +11,7 @@ import ReactFlow, {
     EdgeText,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap } from 'lucide-react'
+import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap, Layers } from 'lucide-react'
 
 /**
  * Node color mapping based on status
@@ -34,22 +34,21 @@ const getStatusStyles = (status: string) => {
 
 function ExecutionNode({ data }: any) {
     const isUtility = data.taskType === 'VARIABLE';
+    const isWorkflow = data.taskType === 'WORKFLOW';
     const { bg, border, icon } = getStatusStyles(data.status);
-    const nodeIcon = isUtility ? <Zap size={14} className="text-yellow-400" fill="currentColor" /> : icon;
-    const [showMenu, setShowMenu] = useState(false);
+    
+    const renderIcon = () => {
+        if (isUtility) return <Zap size={14} className="text-yellow-400" fill="currentColor" />;
+        if (isWorkflow) return <Layers size={14} className="text-white" />;
+        return icon;
+    };
+
     const isEditing = data.isEditing;
     
     return (
         <div 
             style={{ 
-                background: isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg, 
-                border: isUtility ? (isEditing ? '3px solid #f05a28' : '2px solid #ffcc00') : (isEditing ? '3px solid #f05a28' : `2px solid ${border}`), 
-                borderRadius: isUtility ? '24px' : '12px', 
-                minWidth: isUtility ? '160px' : '220px',
-                boxShadow: isEditing 
-                    ? '0 0 20px rgba(240, 90, 40, 0.4), 0 10px 15px -3px rgba(0, 0, 0, 0.4)' 
-                    : '0 10px 15px -3px rgba(0, 0, 0, 0.4)',
-                overflow: 'visible', // Allow menu to overflow
+                minWidth: isUtility ? '180px' : '240px',
                 position: 'relative',
                 opacity: data.status ? 1 : 0.5,
                 transition: 'all 0.2s',
@@ -58,56 +57,76 @@ function ExecutionNode({ data }: any) {
             }}
             className="group"
         >
-            <Handle type="target" position={Position.Left} style={{ visibility: 'hidden' }} />
+            {/* Shaped Background Layers */}
+            {/* Border Layer */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: isWorkflow ? '#32a895' : (isUtility ? (isEditing ? '#f05a28' : '#ffcc00') : (isEditing ? '#f05a28' : border)),
+                clipPath: isUtility 
+                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
+                borderRadius: isUtility || isWorkflow ? '0' : '12px',
+                zIndex: 0
+            }} />
             
-            <div style={{ padding: '12px' }}>
+            {/* Fill Layer */}
+            <div style={{
+                position: 'absolute',
+                inset: '1.5px', // Border width
+                background: isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg),
+                clipPath: isUtility 
+                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
+                borderRadius: isUtility || isWorkflow ? '0' : '11px',
+                zIndex: 1
+            }} />
+            
+            {/* Drop Shadow Wrapper (Non-clipped) */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                filter: isEditing 
+                    ? 'drop-shadow(0 0 10px rgba(240, 90, 40, 0.4))' 
+                    : 'drop-shadow(0 10px 15px rgba(0, 0, 0, 0.4))',
+                zIndex: -1,
+                pointerEvents: 'none'
+            }} />
+
+            <Handle type="target" position={Position.Left} style={{ visibility: 'hidden', zIndex: 10 }} />
+            
+            <div style={{ padding: '12px', position: 'relative', zIndex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <div style={{ 
                         width: '32px', 
                         height: '32px', 
                         background: 'rgba(0,0,0,0.3)', 
-                        borderRadius: isUtility ? '16px' : '8px', 
+                        borderRadius: isUtility || isWorkflow ? '0' : '8px', 
                         display: 'flex', 
                         alignItems: 'center', 
                         justifyContent: 'center',
-                        border: isUtility ? '1px solid rgba(255,204,0,0.2)' : '1px solid rgba(255,255,255,0.05)'
+                        border: isUtility ? '1px solid rgba(255,204,0,0.2)' : '1px solid rgba(255,255,255,0.05)',
+                        clipPath: isUtility ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' : 'none'
                     }}>
-                        {nodeIcon}
+                        {renderIcon()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
-                        <div style={{ fontSize: '9px', fontWeight: 'bold', color: border, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{data.status || 'NOT REACHED'}</div>
+                        <div style={{ fontSize: '9px', fontWeight: 'bold', color: isWorkflow ? '#fff' : border, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{data.status || 'NOT REACHED'}</div>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px' }}>
-                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
-                        {!isUtility && data.httpStatus ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
+                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontFamily: 'monospace' }}>
+                        {!isUtility && !isWorkflow && data.httpStatus ? (
                             <span style={{ color: data.httpStatus < 300 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>HTTP {data.httpStatus}</span>
-                        ) : (isUtility ? <span style={{ color: '#ffcc00', fontWeight: 'bold', fontSize: '10px' }}>⚡ LOCAL LOGIC</span> : '---')}
+                        ) : (isUtility ? <span style={{ color: '#ffcc00', fontWeight: 'bold', fontSize: '10px' }}>⚡ VMA LOGIC</span> : (isWorkflow ? <span style={{ color: '#fff', fontWeight: 'bold' }}>NESTED WF</span> : '---'))}
                     </div>
                     {data.duration && (
-                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                             <Clock size={10} /> {data.duration}ms
                         </div>
                     )}
-                </div>
-
-                {/* Failure Strategy Indicator */}
-                <div style={{ 
-                    marginTop: '8px', 
-                    fontSize: '9px', 
-                    color: data.failureStrategy === 'CONTINUE_ON_FAIL' ? '#10b981' : '#f97316',
-                    fontWeight: 'bold',
-                    textTransform: 'uppercase',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '2px 6px',
-                    background: 'rgba(0,0,0,0.2)',
-                    borderRadius: '4px'
-                }}>
-                    {data.failureStrategy === 'CONTINUE_ON_FAIL' ? 'Continue on Fail' : 'Stop on Fail'}
                 </div>
             </div>
 
@@ -115,7 +134,7 @@ function ExecutionNode({ data }: any) {
             <div 
                 onClick={(e) => { 
                     e.stopPropagation(); 
-                    setShowMenu(!showMenu);
+                    data.onInspect(data.id);
                 }}
                 style={{
                     position: 'absolute',
@@ -124,55 +143,16 @@ function ExecutionNode({ data }: any) {
                     padding: '6px',
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    color: showMenu ? '#fff' : 'rgba(255,255,255,0.4)',
-                    background: showMenu ? 'rgba(59, 130, 246, 0.5)' : 'rgba(0,0,0,0.2)',
+                    color: 'rgba(255,255,255,0.8)',
+                    background: 'rgba(0,0,0,0.2)',
                     zIndex: 20
                 }}
-                className="hover:text-white hover:bg-white/10 transition-all"
+                className="hover:text-white hover:bg-white/10 transition-all opacity-0 group-hover:opacity-100"
             >
-                <MoreVertical size={14} />
+                <Eye size={14} />
             </div>
 
-            {/* Dropdown Menu */}
-            {showMenu && (
-                <div style={{
-                    position: 'absolute',
-                    top: '40px',
-                    right: '8px',
-                    background: '#1c1d21',
-                    border: '1px solid #333',
-                    borderRadius: '8px',
-                    width: '140px',
-                    boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-                    zIndex: 100,
-                    overflow: 'hidden'
-                }}>
-                    <div 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            data.onInspect(data.id);
-                            setShowMenu(false);
-                        }}
-                        style={{ padding: '10px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#d8d9da' }}
-                        className="hover:bg-primary-500 hover:text-white transition-colors"
-                    >
-                        <Eye size={12} /> Inspect Result
-                    </div>
-                    <div 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            data.onEditTask(data.id);
-                            setShowMenu(false);
-                        }}
-                        style={{ padding: '10px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#d8d9da', borderTop: '1px solid #222' }}
-                        className="hover:bg-primary-500 hover:text-white transition-colors"
-                    >
-                        <Settings size={12} /> Edit Task
-                    </div>
-                </div>
-            )}
-
-            <Handle type="source" position={Position.Right} style={{ visibility: 'hidden' }} />
+            <Handle type="source" position={Position.Right} style={{ visibility: 'hidden', zIndex: 10 }} />
         </div>
     )
 }

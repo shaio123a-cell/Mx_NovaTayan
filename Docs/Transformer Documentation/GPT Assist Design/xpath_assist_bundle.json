@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "XPath assistant knowledge bundle.",
+  "examples": [
+    {
+      "title": "Select employees older than 30",
+      "expression": "//employee[age>30]",
+      "sample_input": "<root><employee><age>40</age></employee></root>",
+      "expected_output": "employee nodes where age > 30"
+    },
+    {
+      "title": "Select names",
+      "expression": "//employee/name/text()",
+      "sample_input": "<root><employee><name>Jordan</name></employee></root>",
+      "expected_output": [
+        "Jordan"
+      ]
+    }
+  ],
+  "prompt_template": "You generate XPath expressions. Use ONLY nodes in the provided XML. Return expression + explanation."
+}

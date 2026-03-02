@@ -31,18 +31,19 @@ import { WorkflowAdminShelf } from '../components/WorkflowAdminShelf'
 const initialNodes: Node[] = []
 const initialEdges: any[] = []
 
-// Icon mapping using Simple Icons CDN — reliable brand SVGs for 100+ enterprise companies
+// Icon mapping using Simple Icons CDN — reliable brand SVGs for thousands of companies
 // Source: https://cdn.simpleicons.org/{slug}/{color}
 const ICON_MAPPING: Record<string, string> = {
     // ── Cloud Providers ──────────────────────────────────────────────────
     'aws':            'https://cdn.simpleicons.org/amazonaws/FF9900',
-    'amazon':         'https://cdn.simpleicons.org/amazonaws/FF9900',
+    'amazon':         'https://cdn.simpleicons.org/amazon/FF9900',
     'lambda':         'https://cdn.simpleicons.org/awslambda/FF9900',
     'ec2':            'https://cdn.simpleicons.org/amazonec2/FF9900',
     's3':             'https://cdn.simpleicons.org/amazons3/FF9900',
     'google cloud':   'https://cdn.simpleicons.org/googlecloud/4285F4',
     'gcp':            'https://cdn.simpleicons.org/googlecloud/4285F4',
     'google':         'https://cdn.simpleicons.org/google/4285F4',
+    'microsoft':      'https://cdn.simpleicons.org/microsoft/5E5E5E',
     'azure':          'https://cdn.simpleicons.org/microsoftazure/0078D4',
     'ibm cloud':      'https://cdn.simpleicons.org/ibm/052FAD',
     'ibm':            'https://cdn.simpleicons.org/ibm/052FAD',
@@ -55,9 +56,9 @@ const ICON_MAPPING: Record<string, string> = {
     'netlify':        'https://cdn.simpleicons.org/netlify/00C7B7',
     // ── ERP / Business Apps ──────────────────────────────────────────────
     'sap':            'https://cdn.simpleicons.org/sap/0FAAFF',
-    'bmc':            'https://cdn.simpleicons.org/bmc/FF2D9C',
-    'bmc helix':      'https://cdn.simpleicons.org/bmc/FF2D9C',
-    'helix':          'https://cdn.simpleicons.org/bmc/FF2D9C',
+    'bmc':            'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
+    'bmc helix':      'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
+    'helix':          'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
     'salesforce':     'https://cdn.simpleicons.org/salesforce/00A1E0',
     'servicenow':     'https://cdn.simpleicons.org/servicenow/62D84E',
     'workday':        'https://cdn.simpleicons.org/workday/FF7700',
@@ -69,7 +70,6 @@ const ICON_MAPPING: Record<string, string> = {
     'zoho':           'https://cdn.simpleicons.org/zoho/E42527',
     'dynamics':       'https://cdn.simpleicons.org/microsoftdynamics365/002050',
     // ── Microsoft Suite ───────────────────────────────────────────────────
-    'microsoft':      'https://cdn.simpleicons.org/microsoft/5E5E5E',
     'teams':          'https://cdn.simpleicons.org/microsoftteams/6264A7',
     'sharepoint':     'https://cdn.simpleicons.org/microsoftsharepoint/0078D4',
     'excel':          'https://cdn.simpleicons.org/microsoftexcel/217346',
@@ -160,12 +160,27 @@ const ICON_MAPPING: Record<string, string> = {
     's3 bucket':      'https://cdn.simpleicons.org/amazons3/FF9900',
 };
 
+function normalizeSlug(name: string): string {
+    return name.toLowerCase()
+        .replace(/\.com$/i, '')
+        .replace(/\s+/g, '')              
+        .replace(/[^\w]/g, '');           
+}
+
 function getEffectiveIcon(item: any) {
     if (item.icon) return item.icon;
     const name = (item.name || item.label || '').toLowerCase();
-    for (const [key, url] of Object.entries(ICON_MAPPING)) {
-        if (name.includes(key)) return url;
+    
+    // 1. Check manual mapping
+    const sorted = Object.keys(ICON_MAPPING).sort((a, b) => b.length - a.length);
+    for (const key of sorted) {
+        if (name.includes(key)) return ICON_MAPPING[key];
     }
+    
+    // 2. Fallback to normalized slug (for 3000+ brands)
+    const slug = normalizeSlug(name);
+    if (slug.length > 2) return `https://cdn.simpleicons.org/${slug}`;
+    
     return null;
 }
 
@@ -176,34 +191,87 @@ function getEffectiveIcon(item: any) {
  * - Distinct color-coded icons
  */
 function N8nTaskNode({ data }: any) {
-    const getIcon = () => {
-        const effectiveIcon = getEffectiveIcon(data);
-        if (effectiveIcon) {
-            return <img src={effectiveIcon} style={{ width: '20px', height: '20px', objectFit: 'contain' }} alt="icon" />;
-        }
+    const [iconError, setIconError] = useState(false);
+    const effectiveIcon = getEffectiveIcon(data);
+    
+    // Reset error state when the icon source changes
+    useEffect(() => {
+        setIconError(false);
+    }, [effectiveIcon]);
+    
+    const renderIcon = () => {
         const method = data.method?.toUpperCase() || 'GET'
-        if (data.taskType === 'VARIABLE') return <Zap size={18} className="text-yellow-400" fill="currentColor" />;
-        switch (method) {
-            case 'POST': return <Send size={14} className="text-blue-400" />;
-            case 'PUT': return <RefreshCw size={14} className="text-yellow-400" />;
-            case 'DELETE': return <Trash2 size={14} className="text-red-400" />;
-            case 'GET': return <Activity size={14} className="text-green-400" />;
-            default: return <Terminal size={14} className="text-gray-400" />;
+        const isVariable = data.taskType === 'VARIABLE';
+
+        // Base Generic Icon
+        const FallbackIcon = () => {
+            if (isVariable) return <Zap size={18} className="text-yellow-400" fill="currentColor" />;
+            if (data.taskType === 'WORKFLOW') return <Layers size={18} className="text-white" />;
+            switch (method) {
+                case 'POST': return <Send size={14} className="text-blue-400" />;
+                case 'PUT': return <RefreshCw size={14} className="text-yellow-400" />;
+                case 'DELETE': return <Trash2 size={14} className="text-red-400" />;
+                case 'GET': return <Activity size={14} className="text-green-400" />;
+                default: return <Terminal size={14} className="text-gray-400" />;
+            }
+        };
+
+        if (effectiveIcon && !iconError) {
+            return (
+                <img 
+                    src={effectiveIcon} 
+                    style={{ width: '20px', height: '20px', objectFit: 'contain' }} 
+                    alt="icon" 
+                    onError={() => setIconError(true)}
+                />
+            );
         }
+
+        return <FallbackIcon />;
     }
 
     const isUtility = data.taskType === 'VARIABLE' || data.taskId === '00000000-0000-0000-0000-000000000001';
+    const isWorkflow = data.taskType === 'WORKFLOW';
+
     return (
         <div style={{ 
-            background: isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : '#111217', 
-            border: isUtility ? '1px solid #ffcc00' : '1px solid #202226', 
-            borderRadius: isUtility ? '24px' : '12px', 
-            minWidth: isUtility ? '160px' : '240px',
-            boxShadow: isUtility 
-                ? '0 0 20px rgba(255, 204, 0, 0.15), 0 10px 15px -3px rgba(0, 0, 0, 0.4)' 
-                : '0 10px 15px -3px rgba(0, 0, 0, 0.4)',
-            position: 'relative'
+            minWidth: isUtility ? '180px' : '240px',
+            position: 'relative',
         }} className="hover:border-primary-500/50 transition-all group">
+            
+            {/* Shaped Background Layers */}
+            {/* Border Layer */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: isWorkflow ? '#32a895' : (isUtility ? '#ffcc00' : '#202226'),
+                clipPath: isUtility 
+                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
+                borderRadius: isUtility || isWorkflow ? '0' : '12px',
+                zIndex: 0
+            }} />
+
+            {/* Fill Layer */}
+            <div style={{
+                position: 'absolute',
+                inset: '1.5px', // Border width
+                background: isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : '#111217'),
+                clipPath: isUtility 
+                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
+                borderRadius: isUtility || isWorkflow ? '0' : '11px',
+                zIndex: 1
+            }} />
+
+            {/* Shadow Wrapper (Shaped) */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                filter: 'drop-shadow(0 10px 15px rgba(0,0,0,0.4))',
+                zIndex: -1,
+                pointerEvents: 'none'
+            }} />
             
             {/* Input Port (n8n flavor) - Now Blue and Larger */}
             <Handle
@@ -221,7 +289,7 @@ function N8nTaskNode({ data }: any) {
             />
 
             {/* Node Content */}
-            <div style={{ padding: '12px' }}>
+            <div style={{ padding: '12px', position: 'relative', zIndex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', borderBottom: '1px solid #202226', paddingBottom: '8px' }}>
                     <div style={{ 
                         width: '32px', 
@@ -233,10 +301,12 @@ function N8nTaskNode({ data }: any) {
                         justifyContent: 'center',
                         border: '1px solid #202226'
                     }}>
-                        {getIcon()}
+                        {renderIcon()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{data.taskType === 'VARIABLE' ? 'UTILITY' : data.method}</div>
+                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: isWorkflow ? '#ffffff80' : '#464c54', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            {isWorkflow ? 'WORKFLOW' : (isUtility ? 'UTILITY' : data.method)}
+                        </div>
                         <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#f2f5f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
                     </div>
                     {/* Delete Toggle */}
@@ -372,15 +442,61 @@ function WorkflowNode({ data }: any) {
     const inputCount = data.inputVarsCount || 0;
     const outputCount = data.outputVarsCount || 0;
 
+    const [iconError, setIconError] = useState(false);
+    const effectiveIcon = getEffectiveIcon(data);
+    
+    // Reset error state when the icon source changes
+    useEffect(() => {
+        setIconError(false);
+    }, [effectiveIcon]);
+
+    const renderIcon = () => {
+        if (effectiveIcon && !iconError) {
+            return (
+                <img 
+                    src={effectiveIcon} 
+                    style={{ width: '20px', height: '20px', objectFit: 'contain' }} 
+                    alt="workflow-icon" 
+                    onError={() => setIconError(true)}
+                />
+            );
+        }
+        return <Layers size={18} className="text-white" />;
+    }
+
     return (
         <div style={{ 
-            background: 'linear-gradient(135deg, #0a1b1e 0%, #111217 100%)', 
-            border: '1px solid #3b82f6', 
-            borderRadius: '12px', 
             minWidth: '240px',
-            boxShadow: '0 0 20px rgba(59, 130, 246, 0.15), 0 10px 15px -3px rgba(0, 0, 0, 0.4)',
             position: 'relative'
         }} className="hover:border-primary-500/50 transition-all group">
+            
+            {/* Shaped Background Layers */}
+            {/* Border Layer */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: '#32a895',
+                clipPath: 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)',
+                zIndex: 0
+            }} />
+
+            {/* Fill Layer */}
+            <div style={{
+                position: 'absolute',
+                inset: '1.5px', // Border width
+                background: 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)',
+                clipPath: 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)',
+                zIndex: 1
+            }} />
+
+            {/* Shadow Wrapper (Shaped) */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                filter: 'drop-shadow(0 10px 15px rgba(0,0,0,0.4))',
+                zIndex: -1,
+                pointerEvents: 'none'
+            }} />
             
             <Handle
                 type="target"
@@ -396,28 +512,23 @@ function WorkflowNode({ data }: any) {
                 }}
             />
 
-            <div style={{ padding: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', borderBottom: '1px solid #202226', paddingBottom: '8px' }}>
+            <div style={{ padding: '12px', position: 'relative', zIndex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '8px' }}>
                     <div style={{ 
                         width: '32px', 
                         height: '32px', 
                         background: '#0b0c10', 
-                        borderRadius: '8px', 
+                        borderRadius: '0', 
                         display: 'flex', 
                         justifyContent: 'center',
                         alignItems: 'center',
-                        border: '1px solid #202226',
-                        color: '#3b82f6'
+                        border: '1px solid rgba(255,255,255,0.1)',
                     }}>
-                        {getEffectiveIcon(data) ? (
-                            <img src={getEffectiveIcon(data)!} style={{ width: '20px', height: '20px', objectFit: 'contain' }} alt="workflow-icon" />
-                        ) : (
-                            <GitBranch size={14} />
-                        )}
+                        {renderIcon()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#464c54', textTransform: 'uppercase', letterSpacing: '0.05em' }}>WORKFLOW</div>
-                        <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#f2f5f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
+                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>WORKFLOW</div>
+                        <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
                     </div>
                     <button 
                         onClick={(e) => {
@@ -427,7 +538,7 @@ function WorkflowNode({ data }: any) {
                         style={{ 
                             background: 'transparent',
                             border: 'none',
-                            color: '#464c54',
+                            color: 'rgba(255,255,255,0.5)',
                             cursor: 'pointer',
                             padding: '4px',
                             display: 'flex',
@@ -435,14 +546,14 @@ function WorkflowNode({ data }: any) {
                             justifyContent: 'center',
                             borderRadius: '4px'
                         }}
-                        className="hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                        className="hover:bg-red-500/20 hover:text-red-400 transition-colors"
                         title="Remove workflow"
                     >
                         <Trash2 size={14} />
                     </button>
                 </div>
-                <div className="mt-2 pt-2 border-t border-[#202226] flex items-center justify-center">
-                    <span className="text-[9px] font-black text-primary-400 uppercase tracking-tighter">
+                <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-center">
+                    <span className="text-[9px] font-black text-white/80 uppercase tracking-tighter">
                         In Vars: {inputCount} • Out Vars: {outputCount}
                     </span>
                 </div>

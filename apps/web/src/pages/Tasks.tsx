@@ -5,6 +5,71 @@ import { TaskEditShelf } from '../components/TaskEditShelf'
 import { Play, Edit2, Trash2, Plus, Search, FolderPlus, Folder, ChevronRight, ChevronDown, Clock, History } from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 
+const ICON_MAPPING: Record<string, string> = {
+    'aws':            'https://cdn.simpleicons.org/amazonaws/FF9900',
+    'amazon':         'https://cdn.simpleicons.org/amazon/FF9900',
+    'google':         'https://cdn.simpleicons.org/google/4285F4',
+    'google cloud':   'https://cdn.simpleicons.org/googlecloud/4285F4',
+    'microsoft':      'https://cdn.simpleicons.org/microsoft/5E5E5E',
+    'azure':          'https://cdn.simpleicons.org/microsoftazure/0078D4',
+    'ibm':            'https://cdn.simpleicons.org/ibm/052FAD',
+    'sap':            'https://cdn.simpleicons.org/sap/0FAAFF',
+    'bmc':            'https://cdn.simpleicons.org/bmcsoftware/FF2D9C',
+    'salesforce':     'https://cdn.simpleicons.org/salesforce/00A1E0',
+    'servicenow':     'https://cdn.simpleicons.org/servicenow/62D84E',
+    'github':         'https://cdn.simpleicons.org/github/181717',
+    'gitlab':         'https://cdn.simpleicons.org/gitlab/FC6D26',
+    'slack':          'https://cdn.simpleicons.org/slack/4A154B',
+    'jira':           'https://cdn.simpleicons.org/jira/0052CC',
+};
+
+function normalizeSlug(name: string): string {
+    return name.toLowerCase().replace(/\.com$/i, '').replace(/\s+/g, '').replace(/[^\w]/g, '');           
+}
+
+function getEffectiveIcon(item: any) {
+    if (item.icon) return item.icon;
+    const name = (item.name || '').toLowerCase();
+    const sorted = Object.keys(ICON_MAPPING).sort((a, b) => b.length - a.length);
+    for (const key of sorted) {
+        if (name.includes(key)) return ICON_MAPPING[key];
+    }
+    const slug = normalizeSlug(name);
+    if (slug.length > 1) return `https://cdn.simpleicons.org/${slug}`;
+    return null;
+}
+
+function BrandIcon({ task }: any) {
+    const [error, setError] = useState(false);
+    const icon = getEffectiveIcon(task);
+    const method = task.command?.method || 'GET';
+    const methodColors: any = {
+        GET: 'bg-green-100 text-green-700',
+        POST: 'bg-blue-100 text-blue-700',
+        PUT: 'bg-amber-100 text-amber-700',
+        DELETE: 'bg-red-100 text-red-700',
+    }
+
+    if (icon && !error) {
+        return (
+            <div className="w-12 h-12 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0">
+                <img 
+                    src={icon} 
+                    className="w-7 h-7 object-contain" 
+                    alt="brand" 
+                    onError={() => setError(true)} 
+                />
+            </div>
+        );
+    }
+
+    return (
+        <div className={`w-12 h-12 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${methodColors[method] || 'bg-gray-100'}`}>
+            {method}
+        </div>
+    );
+}
+
 function Tasks() {
     const [showDrawer, setShowDrawer] = useState(false)
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
@@ -249,9 +314,7 @@ function TaskCard({ task, onEdit, onDelete, onExecute }: any) {
     return (
         <div className="group bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-all flex items-center justify-between">
             <div className="flex items-center gap-6 flex-1 min-w-0">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${methodColors[task.command?.method] || 'bg-gray-100'}`}>
-                    {task.command?.method || 'GET'}
-                </div>
+                <BrandIcon task={task} />
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3">
                         <h3 className="font-bold text-gray-900 text-lg truncate">{task.name}</h3>

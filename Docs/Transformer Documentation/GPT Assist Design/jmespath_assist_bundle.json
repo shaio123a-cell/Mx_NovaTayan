@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "description": "JMESPath assistant knowledge bundle.",
+  "examples": [
+    {
+      "title": "Filter employees older than 30",
+      "expression": "employees[?age > `30`]",
+      "sample_input": {
+        "employees": [
+          {
+            "name": "A",
+            "age": 25
+          },
+          {
+            "name": "B",
+            "age": 35
+          }
+        ]
+      },
+      "expected_output": [
+        {
+          "name": "B",
+          "age": 35
+        }
+      ]
+    },
+    {
+      "title": "Select item names",
+      "expression": "items[].name",
+      "sample_input": {
+        "items": [
+          {
+            "name": "Pen"
+          },
+          {
+            "name": "Book"
+          }
+        ]
+      },
+      "expected_output": [
+        "Pen",
+        "Book"
+      ]
+    }
+  ],
+  "prompt_template": "You generate JMESPath expressions. Use ONLY fields in the provided input. Return expression + explanation."
+}

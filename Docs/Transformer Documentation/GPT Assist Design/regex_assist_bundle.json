@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "description": "Regex assistant knowledge bundle.",
+  "examples": [
+    {
+      "title": "Extract email",
+      "regex": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}",
+      "sample_input": "Contact me at john.doe@example.com.",
+      "expected_match": "john.doe@example.com"
+    },
+    {
+      "title": "Extract IPv4 address",
+      "regex": "\\\\b(?:[0-9]{1,3}\\\\.){3}[0-9]{1,3}\\\\b",
+      "sample_input": "Server IP is 192.168.1.10.",
+      "expected_match": "192.168.1.10"
+    }
+  ],
+  "prompt_template": "You generate strict REGEX patterns. Use only the sample input. Return: 1) regex 2) explanation."
+}
