@@ -107,8 +107,15 @@ async function executeTask(data: any) {
         const varContext: VariableContext = {
             global: data.globalVars || {},
             workflow: workflowVars,
-            macros: data.macros || {},
-            task: {} // Task local vars if any (computed after request)
+            macros: {
+                ...data.macros,
+                "task.name": taskName,
+                "task.id": task?.id || execution.nodeId,
+            },
+            task: {
+                name: taskName,
+                id: task?.id || execution.nodeId
+            }
         };
         const engine = new VariableEngine(varContext);
 

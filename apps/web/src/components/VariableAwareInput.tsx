@@ -20,6 +20,20 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         get selectionEnd() { return inputRef.current?.selectionEnd; },
         setSelectionRange: (start: number, end: number) => inputRef.current?.setSelectionRange(start, end),
         focus: () => inputRef.current?.focus(),
+        insertTextAtCursor: (text: string) => {
+            const input = inputRef.current;
+            if (!input) return;
+            const start = input.selectionStart ?? 0;
+            const end = input.selectionEnd ?? 0;
+            const value = input.value;
+            const nextValue = value.substring(0, start) + text + value.substring(end);
+            onValueChange(nextValue);
+            // Move cursor to after inserted text on next tick
+            setTimeout(() => {
+                input.focus();
+                input.setSelectionRange(start + text.length, start + text.length);
+            }, 0);
+        }
     }));
 
     const strValue = String(value || '');

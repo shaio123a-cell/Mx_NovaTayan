@@ -1,0 +1,3 @@
+New Utility Helpers:
+{{ value | formatDate:'YYYY-MM-DD HH:mm:ss' }}: Converts epoch (seconds or ms) or date strings into desired formats.
+{{ value | toEpoch:'ms' }}: Converts date strings into epoch (defaults to seconds, supports ms).

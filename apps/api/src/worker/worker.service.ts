@@ -131,11 +131,17 @@ export class WorkerService {
     }
 
     async gatherWorkflowContext(workflowExecutionId: string) {
+        this.logger.debug(`[Context] Gathering context for execution ${workflowExecutionId}`);
         // 1. Fetch the execution and its base workflow definition for initial variable state
         const execution = await this.prisma.workflowExecution.findUnique({
             where: { id: workflowExecutionId },
             include: { workflow: true }
         });
+
+        if (!execution) {
+            this.logger.warn(`[Context] WorkflowExecution ${workflowExecutionId} not found`);
+            return { workflowVars: {}, macros: {} };
+        }
 
         const records = await this.prisma.taskExecution.findMany({
             where: { workflowExecutionId },
@@ -211,25 +217,43 @@ export class WorkerService {
                 this.logger.debug(`[Context] Merged ${Object.keys(vars).length} variables from task ${taskName}`);
             }
 
-            // 4. HTTP Shortcuts (macros)
-            if (['SUCCESS', 'COMPLETED', 'FAILED'].includes(record.status)) {
+            // 4. HTTP / Task Shortcuts (macros)
+            if (['SUCCESS', 'COMPLETED', 'FAILED', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(record.status)) {
                 const shortcut = {
-                    status: result.status,
+                    status: result.status, // HTTP status if applicable
+                    executionStatus: record.status, 
+                    duration: record.duration,
                     body: result.data,
                     headers: result.headers
                 };
                 const cleanName = String(taskName).replace(/\s+/g, '_');
+                
+                // HTTP.<name> for backward compatibility (body and status)
                 macros[`HTTP.${cleanName}`] = shortcut;
                 macros[`HTTP.${taskName}`] = shortcut;
                 macros[`HTTP.last`] = shortcut;
+
+                // Task.<name> for more detailed info
+                macros[`Task.${cleanName}.status`] = record.status;
+                macros[`Task.${taskName}.status`] = record.status;
+                macros[`Task.${cleanName}.duration`] = record.duration;
+                macros[`Task.${taskName}.duration`] = record.duration;
+                
+                // If this was a CWF task, it might have workflowStatus and duration in result
+                if (result.workflowStatus) {
+                    macros[`Task.${cleanName}.workflowStatus`] = result.workflowStatus;
+                    macros[`Task.${taskName}.workflowStatus`] = result.workflowStatus;
+                }
             }
         }
 
         if (execution) {
             macros['workflow.executionId'] = workflowExecutionId;
-            macros['workflow.name'] = execution.workflowName;
+            macros['workflow.name'] = execution.workflowName || execution.workflow?.name || 'Unknown Workflow';
+            macros['workflow.id'] = execution.workflowId;
 
             const workflowId = execution.workflowId;
+            this.logger.debug(`[Context] Fetching workflow history for macro resolution (workflowId: ${workflowId})`);
             const [lastExec, lastSuccess, lastFailed, lastCancelled] = await Promise.all([
                 this.prisma.workflowExecution.findFirst({
                     where: { workflowId, id: { not: workflowExecutionId } },
@@ -253,6 +277,32 @@ export class WorkerService {
             macros['workflow.lastSuccessEpoch'] = lastSuccess?.startedAt ? Math.floor(lastSuccess.startedAt.getTime() / 1000) : 0;
             macros['workflow.lastFailedEpoch'] = lastFailed?.startedAt ? Math.floor(lastFailed.startedAt.getTime() / 1000) : 0;
             macros['workflow.lastCancelledEpoch'] = lastCancelled?.startedAt ? Math.floor(lastCancelled.startedAt.getTime() / 1000) : 0;
+            macros['workflow.lastSuccessDuration'] = lastSuccess?.duration || 0;
+
+            // Per-task last success duration
+            const nodeIds = records.map(r => r.nodeId).filter(Boolean) as string[];
+            if (nodeIds.length > 0) {
+                const taskLastSuccesses = await this.prisma.taskExecution.findMany({
+                    where: {
+                        nodeId: { in: nodeIds },
+                        status: 'SUCCESS',
+                        workflowExecutionId: { not: workflowExecutionId } // Previous runs
+                    },
+                    orderBy: { completedAt: 'desc' },
+                    select: { nodeId: true, duration: true, task: { select: { name: true } } }
+                });
+
+                const seenNodes = new Set();
+                for (const tls of taskLastSuccesses) {
+                    if (seenNodes.has(tls.nodeId)) continue;
+                    seenNodes.add(tls.nodeId);
+                    
+                    const tName = tls.task?.name || tls.nodeId;
+                    const cName = String(tName).replace(/\s+/g, '_');
+                    macros[`Task.${tName}.lastSuccessDuration`] = tls.duration;
+                    macros[`Task.${cName}.lastSuccessDuration`] = tls.duration;
+                }
+            }
         }
 
         return { workflowVars, macros };
@@ -443,7 +493,7 @@ export class WorkerService {
         const startNodes = nodes.filter((n: any) => !targetNodeIds.has(n.id));
 
         // Pre-gather sub-workflow start context (baseline + resolved inputs)
-        const { workflowVars: subWorkflowStartContext } = await this.gatherWorkflowContext(subExec.id);
+        const { workflowVars: subWorkflowStartContext, macros: subWorkflowMacros } = await this.gatherWorkflowContext(subExec.id);
 
         for (const node of startNodes) {
             const isUtility = (node as any).taskType === 'VARIABLE' || 
@@ -468,7 +518,8 @@ export class WorkerService {
                         sanityChecks: node.sanityChecks || [],
                         authorization: node.authorization,
                         inputMapping: node.inputMapping,
-                        workflowVars: subWorkflowStartContext // Context snapshot
+                        workflowVars: subWorkflowStartContext, // Context snapshot
+                        macros: subWorkflowMacros
                     }
                 }
             });
@@ -687,7 +738,7 @@ export class WorkerService {
 
             // Pre-gather workflow context to store in the task input. 
             // This ensures the worker has everything it needs and the UI can inspect the EXACT state at trigger time.
-            const { workflowVars } = await this.gatherWorkflowContext(workflowExecutionId);
+            const { workflowVars, macros: orchestrationMacros } = await this.gatherWorkflowContext(workflowExecutionId);
 
             if (!existing) {
                 const isUtility = (nextNode as any).taskType === 'VARIABLE' || 
@@ -709,6 +760,7 @@ export class WorkerService {
                             utility: isUtility,
                             nested: isNested,
                             workflowVars, // Crucial for PWF VMA inspection
+                            macros: orchestrationMacros,
                             subWorkflowId: isNested ? nextNode.taskId : undefined,
                             taskType: (nextNode as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
                             variableExtraction: nextNode.variableExtraction || { vars: {} },
@@ -852,7 +904,9 @@ export class WorkerService {
                 data: `Sub-workflow ${execution.workflowName} finished with status ${finalStatus}`,
                 subWorkflowId: workflowExecutionId,
                 childExecutionId: workflowExecutionId, // For UI direct navigation
-                variables: filteredVars // Propagate only filtered variables to parent task context
+                variables: filteredVars, // Propagate only filtered variables to parent task context
+                duration: duration,
+                workflowStatus: finalStatus
             });
         }
     }

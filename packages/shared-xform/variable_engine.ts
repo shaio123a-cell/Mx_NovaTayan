@@ -64,17 +64,20 @@ export class VariableEngine {
   private resolvePath(path: string): any {
     // 1. Explicit global
     if (path.startsWith('global.')) {
-        return this.resolveGlobal(path.substring(7), path);
+        const val = this.resolveGlobal(path.substring(7), path);
+        if (val !== undefined) return val;
     }
     
     // 2. Explicit workflow
     if (path.startsWith('workflow.')) {
-        return this.getValue(this.context.workflow, path.substring(9));
+        const val = this.getValue(this.context.workflow, path.substring(9));
+        if (val !== undefined) return val;
     }
 
     // 3. Explicit task
     if (path.startsWith('task.')) {
-        return this.getValue(this.context.task, path.substring(5));
+        const val = this.getValue(this.context.task, path.substring(5));
+        if (val !== undefined) return val;
     }
 
     // 4. Precedence: task -> workflow -> global -> macros -> literal
@@ -83,18 +86,16 @@ export class VariableEngine {
 
     val = this.getValue(this.context.workflow, path);
     if (val !== undefined) {
-         // If workflow var is a template string, should we recurse?
-         // Spec mentions cycles in "workflow defaults". 
-         // Assuming if it looks like a template, we try to resolve it.
          if (typeof val === 'string' && val.includes('{{')) {
              return this.resolveRecursive(val, path);
          }
          return val;
     }
 
-    val = this.resolveGlobal(path, path); // Implicit global lookup
+    val = this.resolveGlobal(path, path);
     if (val !== undefined) return val;
     
+    // 5. Fallback to macros (this handles Task.X, HTTP.X, and workflow.X if not in vars)
     val = this.getMacro(path);
     if (val !== undefined) return val;
 
@@ -181,9 +182,23 @@ export class VariableEngine {
       case 'env': return process.env.NODE_ENV || 'production';
       case 'appVer': return '0.1.0'; 
       case 'region': return process.env.REGION || 'local';
+      case 'task.name': return this.context.task?.name || this.context.macros?.['task.name'];
+      case 'task.id': return this.context.task?.id || this.context.macros?.['task.id'];
+      case 'workflow.name': return this.context.workflow?.name || this.context.macros?.['workflow.name'];
+      case 'workflow.id': return this.context.workflow?.id || this.context.macros?.['workflow.id'];
+      case 'workflow.executionId': return this.context.workflow?.executionId || this.context.macros?.['workflow.executionId'];
+      case 'workflow.lastExecutionEpoch': return this.context.workflow?.lastExecutionEpoch || this.context.macros?.['workflow.lastExecutionEpoch'];
+      case 'workflow.lastSuccessEpoch': return this.context.workflow?.lastSuccessEpoch || this.context.macros?.['workflow.lastSuccessEpoch'];
+      case 'workflow.lastFailedEpoch': return this.context.workflow?.lastFailedEpoch || this.context.macros?.['workflow.lastFailedEpoch'];
+      case 'workflow.lastCancelledEpoch': return this.context.workflow?.lastCancelledEpoch || this.context.macros?.['workflow.lastCancelledEpoch'];
+      case 'workflow.lastSuccessDuration': return this.context.workflow?.lastSuccessDuration || this.context.macros?.['workflow.lastSuccessDuration'];
       default: 
         if (name.startsWith('HTTP.')) {
-            // Support HTTP.<taskName>.status, HTTP.<taskName>.body.path, HTTP.last.body
+            // Support HTTP.<taskName>.status, HTTP.<taskName>.body.path, HTTP.last.body, HTTP.<taskName>.duration
+            return this.getValue(this.context.macros, name.substring(5));
+        }
+        if (name.startsWith('Task.')) {
+            // Support Task.<taskName>.status, Task.<taskName>.duration, Task.<taskName>.lastSuccessDuration
             return this.getValue(this.context.macros, name.substring(5));
         }
         return undefined;
@@ -226,11 +241,42 @@ export class VariableEngine {
              }
           } catch (e) {}
           return 'sha256_unavailable'; 
+      case 'formatDate': {
+          if (!value) return '';
+          let d: Date;
+          if (typeof value === 'number' || !isNaN(Number(value))) {
+              const num = Number(value);
+              d = new Date(num < 10000000000 ? num * 1000 : num);
+          } else {
+              d = new Date(value);
+          }
+          if (isNaN(d.getTime())) return String(value);
+          
+          const format = args[0] || 'YYYY-MM-DD HH:mm:ss';
+          const pad = (n: number) => n.toString().padStart(2, '0');
+          
+          return format
+              .replace(/YYYY/g, d.getFullYear().toString())
+              .replace(/MM/g, pad(d.getMonth() + 1))
+              .replace(/DD/g, pad(d.getDate()))
+              .replace(/HH/g, pad(d.getHours()))
+              .replace(/mm/g, pad(d.getMinutes()))
+              .replace(/ss/g, pad(d.getSeconds()))
+              .replace(/SSS/g, d.getMilliseconds().toString().padStart(3, '0'));
+      }
+      case 'toEpoch': {
+          if (!value) return 0;
+          const d = new Date(value);
+          if (isNaN(d.getTime())) return 0;
+          const mode = args[0] || 's'; // s or ms
+          return mode === 'ms' ? d.getTime() : Math.floor(d.getTime() / 1000);
+      }
       default: return value;
     }
   }
   
   private formatResult(value: any): string {
+      if (value === undefined || value === null) return '';
       if (typeof value === 'object') return JSON.stringify(value);
       return String(value);
   }

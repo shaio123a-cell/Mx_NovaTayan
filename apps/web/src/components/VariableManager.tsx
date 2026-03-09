@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { VariableTransformerDrawer } from './VariableTransformerDrawer';
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
@@ -27,6 +27,11 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [showVarPicker, setShowVarPicker] = useState(false);
   const [useParentInput, setUseParentInput] = useState(false);
+  
+  // Refs for focusing and inserting variables
+  const newValInputRef = useRef<any>(null);
+  const transformerInputRef = useRef<any>(null); // To be passed to drawer if needed, but for now just newVal
+  const [pickerTarget, setPickerTarget] = useState<'newVal' | 'transformer'>('newVal');
 
   // Derive variable names in order
   const [orderedNames, setOrderedNames] = useState<string[]>([]);
@@ -242,6 +247,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                 <label className="text-[10px] font-bold text-gray-400 mb-1 block">DIRECT VALUE</label>
                 <div className="relative">
                     <VariableAwareInput
+                        ref={newValInputRef}
                         placeholder={useParentInput ? "Supplied By Parent" : "Omit if using transformer"}
                         value={newVal}
                         onValueChange={setNewVal}
@@ -250,7 +256,10 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                     />
                     {!useParentInput && (
                         <button 
-                            onClick={() => setShowVarPicker(true)}
+                            onClick={() => {
+                                setPickerTarget('newVal');
+                                setShowVarPicker(true);
+                            }}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-all z-10"
                             title="Pick Variable"
                         >
@@ -475,7 +484,12 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
               <div className="relative w-80 h-full">
                 <VariablePicker 
                     onSelect={(v) => {
-                        setNewVal(prev => prev + v);
+                        if (pickerTarget === 'newVal' && newValInputRef.current) {
+                            newValInputRef.current.insertTextAtCursor(v);
+                        } else {
+                            // Fallback if ref or target not set
+                            setNewVal(prev => prev + v);
+                        }
                         setShowVarPicker(false);
                     }} 
                     onClose={() => setShowVarPicker(false)} 

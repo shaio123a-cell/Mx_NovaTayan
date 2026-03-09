@@ -40,10 +40,12 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
             icon: Workflow, 
             items: [
                 { label: 'executionId', value: '{{workflow.executionId}}' },
+                { label: 'Workflow Name', value: '{{workflow.name}}' },
                 { label: 'Last execution epoch', value: '{{workflow.lastExecutionEpoch}}' },
                 { label: 'Last successful epoch', value: '{{workflow.lastSuccessEpoch}}' },
                 { label: 'Last failed epoch', value: '{{workflow.lastFailedEpoch}}' },
-                { label: 'Last cancelled epoch', value: '{{workflow.lastCancelledEpoch}}' }
+                { label: 'Last cancelled epoch', value: '{{workflow.lastCancelledEpoch}}' },
+                { label: 'Last success duration (ms)', value: '{{workflow.lastSuccessDuration}}' }
             ] 
         },
         {
@@ -58,6 +60,8 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
                 { label: 'env', value: '{{env}}' },
                 { label: 'appVer', value: '{{appVer}}' },
                 { label: 'region', value: '{{region}}' },
+                { label: 'Current Task Name', value: '{{task.name}}' },
+                { label: 'Current Task ID', value: '{{task.id}}' },
                 { label: 'Last Body', value: '{{HTTP.last.body}}' },
                 { label: 'Last Status', value: '{{HTTP.last.status}}' }
             ]
@@ -69,6 +73,9 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
             items: [
                 { label: 'Upper Case', value: '{{ value | upper }}' },
                 { label: 'Lower Case', value: '{{ value | lower }}' },
+                { label: 'Format Date', value: '{{ epoch | formatDate:\'YYYY-MM-DD HH:mm:ss\' }}' },
+                { label: 'To Epoch (sec)', value: '{{ date | toEpoch:\'s\' }}' },
+                { label: 'To Epoch (ms)', value: '{{ date | toEpoch:\'ms\' }}' },
                 { label: 'JSON Path', value: '{{ payload | jsonPath:$.token }}' },
                 { label: 'Coalesce', value: '{{ val1 | coalesce:val2,fallback }}' },
                 { label: 'To JSON', value: '{{ obj | toJson }}' },

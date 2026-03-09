@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Plus, X, Zap, Play, ArrowUp } from 'lucide-react';
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
@@ -29,6 +29,10 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
   const [showVarPicker, setShowVarPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'input'|'spec'>('spec'); // Where to insert variable?
 
+  // Refs for focusing and inserting variables
+  const inputVarRef = useRef<any>(null);
+  const specInputRef = useRef<any>(null);
+
   useEffect(() => {
     if (initial) {
       setTab(initial.type || initial.transformType || 'jmespath');
@@ -46,13 +50,17 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
   if (!open) return null;
 
   const handleVarSelect = (val: string) => {
-      if (pickerMode === 'input') {
-          // If input source is variable, we set the input variable
-          setInputVariable(val);
-          setInputSource('variable');
+      if (pickerMode === 'input' && inputVarRef.current) {
+          inputVarRef.current.insertTextAtCursor(val);
+      } else if (pickerMode === 'spec' && specInputRef.current) {
+          specInputRef.current.insertTextAtCursor(val);
       } else {
-          // Inserting into spec
-          setSpec(prev => prev + val);
+          // Fallback
+          if (pickerMode === 'input') {
+              setInputVariable(prev => prev + val);
+          } else {
+              setSpec(prev => prev + val);
+          }
       }
       setDirty(true);
       setShowVarPicker(false);
@@ -98,6 +106,24 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
       if (!context.macros.last) {
           context.macros.last = context.macros.Current;
       }
+
+      // 5. System mock data for macros
+      if (!context.macros['workflow.name']) context.macros['workflow.name'] = 'Test Workflow';
+      if (!context.macros['workflow.executionId']) context.macros['workflow.executionId'] = 'exec-test-123-abc';
+      if (!context.macros['workflow.lastExecutionEpoch']) context.macros['workflow.lastExecutionEpoch'] = Math.floor(Date.now() / 1000) - 3600;
+      if (!context.macros['workflow.lastSuccessEpoch']) context.macros['workflow.lastSuccessEpoch'] = Math.floor(Date.now() / 1000) - 7200;
+      if (!context.macros['workflow.lastFailedEpoch']) context.macros['workflow.lastFailedEpoch'] = 0;
+      if (!context.macros['workflow.lastSuccessDuration']) context.macros['workflow.lastSuccessDuration'] = 1250;
+      if (!context.macros['task.name']) context.macros['task.name'] = name;
+      if (!context.macros['task.id']) context.macros['task.id'] = 'node-test-123';
+
+      // Ensure task and workflow objects are also semi-populated if not present
+      if (!context.task) context.task = {};
+      if (!context.task.name) context.task.name = name;
+      if (!context.task.id) context.task.id = 'node-test-123';
+      if (!context.workflow) context.workflow = {};
+      if (!context.workflow.name) context.workflow.name = 'Test Workflow';
+      if (!context.workflow.executionId) context.workflow.executionId = 'exec-test-123-abc';
 
       // Fill in actual global variables if not overridden by mock
       if (globalVars) {
@@ -270,6 +296,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                         <label className="block text-xs font-bold text-gray-500 mb-1">Select Input Variable</label>
                         <div className="flex gap-2">
                             <VariableAwareInput 
+                                ref={inputVarRef}
                                 value={inputVariable} 
                                 onValueChange={val => { if (!readOnly) { setInputVariable(val); setDirty(true); } }}
                                 placeholder="{{global.myVar}}"
@@ -320,6 +347,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                     </div>
                     {tab !== 'none' ? (
                         <VariableAwareInput 
+                            ref={specInputRef}
                             value={spec} 
                             onValueChange={val => { if (!readOnly) { setSpec(val); setDirty(true); } }} 
                             isTextarea={true}
