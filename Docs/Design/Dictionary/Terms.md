@@ -8,5 +8,6 @@
 - EWF - Event Workflow - a Workflow triggered as an Event Trigger that is defined in the WFA 
 - WFM - Is the Workflow Meta shelf opened from the WF Inspect 
 - WFI - is Workflow Inspect Shelf 
+- VMA - Variables Manipulation Activity - is a task that is used to manipulate variables in a workflow
 
 

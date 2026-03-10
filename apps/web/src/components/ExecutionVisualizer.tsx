@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import ReactFlow, {
     Background,
     Controls,
@@ -9,6 +9,9 @@ import ReactFlow, {
     BackgroundVariant,
     getBezierPath,
     EdgeText,
+    ReactFlowProvider,
+    useNodesState,
+    useEdgesState,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap, Layers } from 'lucide-react'
@@ -223,18 +226,23 @@ interface Props {
 }
 
 export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, onNodeClick, onInspect, onEditTask }: Props) {
-    const nodes = useMemo(() => {
-        if (!workflow?.nodes) return [];
-        return (workflow.nodes as any[]).map((n: any) => {
+    const [nodes, setNodes, onNodesChange] = useNodesState([]);
+    
+    useEffect(() => {
+        const rawNodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
+        setNodes(currNodes => rawNodes.map((n: any) => {
             const record = taskExecutions.find(r => r.nodeId === n.id);
+            const existingNode = currNodes.find(node => node.id === n.id);
             return {
                 id: n.id,
                 type: 'executionNode',
-                position: n.position,
+                position: existingNode?.position || n.position || { x: 0, y: 0 },
+                width: existingNode?.width,
+                height: existingNode?.height,
                 data: {
                     id: n.id,
                     taskId: n.taskId,
-                    label: n.label,
+                    label: n.label || n.name || 'Task',
                     taskType: n.taskType || record?.input?.taskType || 'HTTP',
                     status: record?.status,
                     duration: record?.duration,
@@ -245,22 +253,22 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                     onEditTask: onEditTask || (() => {})
                 }
             } as Node;
-        });
-    }, [workflow, taskExecutions, editingTaskId, onInspect, onEditTask]);
+        }));
+    }, [workflow?.nodes, taskExecutions, editingTaskId, onInspect, onEditTask, setNodes]);
 
-    const edges = useMemo(() => {
-        if (!workflow?.edges) return [];
-        return (workflow.edges as any[]).map((e: any) => {
-            const sourceNode = (workflow.nodes as any[]).find(n => n.id === e.source);
-            const sourceRecord = taskExecutions.find(r => r.nodeId === e.source);
+    const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+    useEffect(() => {
+        const rawEdges = Array.isArray(workflow?.edges) ? workflow.edges : [];
+        const rawNodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
+
+        const newEdges = rawEdges.map((e: any) => {
+            const sourceNode = rawNodes.find((n: any) => n.id === e.source);
+            const sourceRecord = taskExecutions?.find(r => r.nodeId === e.source);
             
             const strategy = sourceNode?.failureStrategy || 'SUCCESS_REQUIRED';
             const isSourceFinished = sourceRecord && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(sourceRecord.status);
             
-            // A path is "active" if:
-            // 1. Source is finished
-            // 2. Edge condition is met
-            // 3. AND if source failed, strategy MUST be CONTINUE_ON_FAIL
             const conditionMet = sourceRecord && (
                 (e.condition === 'ON_SUCCESS' && sourceRecord.status === 'SUCCESS') ||
                 (e.condition === 'ON_FAILURE' && sourceRecord.status !== 'SUCCESS') ||
@@ -277,28 +285,43 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                 animated: sourceRecord?.status === 'RUNNING',
                 data: { 
                     condition: e.condition || 'ALWAYS',
-                    isActive: isActive
+                    isActive: !!isActive
                 }
             } as Edge;
         });
-    }, [workflow, taskExecutions]);
+        setEdges(newEdges);
+    }, [workflow?.edges, workflow?.nodes, taskExecutions, setEdges]);
+
+    if (!workflow?.nodes || !Array.isArray(workflow.nodes) || workflow.nodes.length === 0) {
+        return (
+            <div className="flex items-center justify-center w-full h-full bg-[#020617]">
+                <div className="text-slate-500 text-xs font-mono animate-pulse uppercase tracking-[0.3em]">Synchronizing Graph UI...</div>
+            </div>
+        );
+    }
 
     return (
-        <div style={{ width: '100%', height: '600px', background: '#020617', borderRadius: '16px', border: '1px solid #1e293b', overflow: 'hidden', position: 'relative' }}>
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                fitView
-                nodesConnectable={false}
-                nodesDraggable={true}
-                elementsSelectable={true}
-                onNodeClick={(_, node) => onNodeClick?.(node.id)}
-            >
-                <Background variant={BackgroundVariant.Lines} gap={0} size={0} color="transparent" />
-                <Controls />
-            </ReactFlow>
+        <div style={{ flex: 1, width: '100%', background: '#020617', overflow: 'hidden', position: 'relative' }}>
+            <ReactFlowProvider>
+                <ReactFlow
+                    style={{ background: '#020617' }}
+                    nodes={nodes}
+                    edges={edges}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    fitView
+                    fitViewOptions={{ padding: 0.05 }}
+                    nodesConnectable={false}
+                    nodesDraggable={true}
+                    elementsSelectable={true}
+                    onNodeClick={(_, node) => onNodeClick?.(node.id)}
+                >
+                    <Background variant={BackgroundVariant.Lines} gap={0} size={0} color="transparent" />
+                    <Controls />
+                </ReactFlow>
+            </ReactFlowProvider>
         </div>
     )
 }

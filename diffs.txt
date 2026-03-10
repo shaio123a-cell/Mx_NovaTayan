@@ -1,0 +1,459 @@
+﻿commit 9b4942cf7035a24d9c1f6d3a525e0b9601c83263
+Author: Shai Ovadia <shaio123@gmail.com>
+Date:   Tue Mar 10 21:05:25 2026 +0200
+
+    0.5.5 Notification Workflow Fixes
+
+diff --git a/apps/web/src/pages/WorkflowExecutionDetail.tsx b/apps/web/src/pages/WorkflowExecutionDetail.tsx
+index a271707..5c8c0ff 100644
+--- a/apps/web/src/pages/WorkflowExecutionDetail.tsx
++++ b/apps/web/src/pages/WorkflowExecutionDetail.tsx
+@@ -22,7 +22,8 @@ import {
+     Cpu,
+     ArrowRight,
+     Box,
+-    FileText
++    FileText,
++    Bell
+ } from 'lucide-react'
+ 
+ function WorkflowExecutionDetail() {
+@@ -452,11 +453,11 @@ function WorkflowExecutionDetail() {
+                                             <div>
+                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Trigger Path</div>
+                                                 <div className="text-xs font-bold text-slate-700">
+-                                                    {execution.triggeredBy} ({execution.triggeredByUser})
++                                                    {execution.sourceExecutionId ? 'Monitoring Event Trigger' : `${execution.triggeredBy} (${execution.triggeredByUser})`}
+                                                 </div>
+                                                 {execution.parentTaskExecution?.workflowExecution && (
+                                                     <div className="mt-2 pt-2 border-t border-slate-200/50">
+-                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Parent Workflow</div>
++                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Parent Workflow (PWF)</div>
+                                                         <a 
+                                                             href={`/workflows/history/${execution.parentTaskExecution.workflowExecution.id}`}
+                                                             target="_blank"
+@@ -469,6 +470,21 @@ function WorkflowExecutionDetail() {
+                                                         </a>
+                                                     </div>
+                                                 )}
++                                                {execution.sourceExecution && (
++                                                    <div className="mt-2 pt-2 border-t border-slate-200/50">
++                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Source Trigger</div>
++                                                        <a 
++                                                            href={`/workflows/history/${execution.sourceExecution.id}`}
++                                                            target="_blank"
++                                                            rel="noopener noreferrer"
++                                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 transition-colors group"
++                                                        >
++                                                            <Bell size={10} />
++                                                            <span className="underline underline-offset-2">{execution.sourceExecution.workflowName}</span>
++                                                            <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
++                                                        </a>
++                                                    </div>
++                                                )}
+                                             </div>
+                                             <div>
+                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Current State</div>
+@@ -483,13 +499,88 @@ function WorkflowExecutionDetail() {
+                                                 <div className="text-xs font-bold text-slate-700">{execution.targetWorkerId || 'Shared Global Cluster'}</div>
+                                             </div>
+                                             <div>
+-                                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Uptime</div>
+-                                                <div className="text-xs font-bold text-slate-700">{Math.floor((new Date().getTime() - new Date(execution.startedAt).getTime())/1000)}s total</div>
++                                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Executed At</div>
++                                                <div className="text-xs font-bold text-slate-700">
++                                                    {(() => {
++                                                        const d = new Date(execution.startedAt);
++                                                        const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
++                                                        const year = d.getFullYear();
++                                                        const month = months[d.getMonth()];
++                                                        const day = d.getDate().toString().padStart(2, '0');
++                                                        const hours = d.getHours().toString().padStart(2, '0');
++                                                        const minutes = d.getMinutes().toString().padStart(2, '0');
++                                                        const seconds = d.getSeconds().toString().padStart(2, '0');
++                                                        const ms = d.getMilliseconds().toString().padStart(3, '0');
++                                                        return `${year}, ${month} ${day} - ${hours}:${minutes}:${seconds}.${ms}`;
++                                                    })()}
++                                                </div>
++                                            </div>
++                                            <div>
++                                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Run Time</div>
++                                                <div className="text-xs font-bold text-slate-700">
++                                                    {execution.duration ? `${(execution.duration / 1000).toFixed(2)}s total` : `${Math.floor((new Date().getTime() - new Date(execution.startedAt).getTime())/1000)}s total (alive)`}
++                                                </div>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 </section>
+ 
++                                {execution.triggeredExecutions && execution.triggeredExecutions.length > 0 && (
++                                    <section>
++                                        <h4 className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-6 border-b border-indigo-50 pb-2 flex items-center gap-2">
++                                            <Bell size={12} /> Triggered Events
++                                        </h4>
++                                        <div className="grid grid-cols-1 gap-3">
++                                            {execution.triggeredExecutions.map((te: any) => {
++                                                // Robust JSON extraction for taskExecutions
++                                                let taskExec = te.taskExecutions;
++                                                if (typeof taskExec === 'string') {
++                                                    try { taskExec = JSON.parse(taskExec); } catch (e) { taskExec = {}; }
++                                                }
++                                                
++                                                // Extract initialVariables from object or array format
++                                                const initialVars = (taskExec && typeof taskExec === 'object' && !Array.isArray(taskExec)) 
++                                                    ? (taskExec as any).initialVariables 
++                                                    : (Array.isArray(taskExec) ? (taskExec.find((v: any) => v.initialVariables) || taskExec[0])?.initialVariables : (taskExec as any)?.initialVariables);
++                                                
++                                                const eventTypeRaw = initialVars?.__source_event || (te as any).triggeredBy || 'SIGNAL';
++                                                const eventLabels: Record<string, string> = {
++                                                    'ON_SUCCESS': 'On Workflow Success',
++                                                    'ON_FAILURE': 'On Workflow Failure',
++                                                    'COMPLETED': 'On Workflow Completion',
++                                                    'CANCELLED': 'On Workflow Cancel'
++                                                };
++                                                const eventType = eventLabels[eventTypeRaw] || (eventTypeRaw === 'SIGNAL' ? 'Monitoring Signal' : eventTypeRaw);
++                                                
++                                                return (
++                                                    <a 
++                                                        key={te.id}
++                                                        href={`/workflows/history/${te.id}`}
++                                                        target="_blank"
++                                                        rel="noopener noreferrer"
++                                                        className="group flex items-center justify-between p-4 bg-indigo-50/20 border border-indigo-100/50 rounded-xl hover:bg-white hover:border-indigo-300 transition-all shadow-sm"
++                                                    >
++                                                        <div className="flex flex-col">
++                                                            <div className="flex items-center gap-2">
++                                                                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Criteria</span>
++                                                                <span className="text-[10px] bg-indigo-200 text-indigo-700 font-black px-1.5 py-0.5 rounded uppercase tracking-widest">{eventType}</span>
++                                                            </div>
++                                                            <div className="mt-1.5 flex items-center gap-2">
++                                                                <Layers size={14} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
++                                                                <span className="text-xs font-bold text-slate-800 line-clamp-1">{te.workflowName || 'Triggered WF'}</span>
++                                                            </div>
++                                                        </div>
++                                                        <div className="flex items-center gap-4">
++                                                            <StatusBadge status={te.status || 'RUNNING'} size="sm" />
++                                                            <ArrowRight size={14} className="text-indigo-300 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
++                                                        </div>
++                                                    </a>
++                                                );
++                                            })}
++                                        </div>
++                                    </section>
++                                )}
++
+                                 {(() => {
+                                     const { inputs, outputs, internal } = (() => {
+                                         const allVars: Record<string, any> = {};
+@@ -519,6 +610,17 @@ function WorkflowExecutionDetail() {
+                                                 }
+                                             }
+                                         }
++
++                                        // Case B: This IS an event-triggered workflow (EWF), get from taskExecutions.initialVariables
++                                        let summaryMetadata = (execution as any).taskExecutions;
++                                        if (summaryMetadata) {
++                                            if (typeof summaryMetadata === 'string') {
++                                                try { summaryMetadata = JSON.parse(summaryMetadata); } catch (e) { summaryMetadata = null; }
++                                            }
++                                            if (summaryMetadata?.initialVariables) {
++                                                Object.assign(allVars, summaryMetadata.initialVariables);
++                                            }
++                                        }
+                                         // Case B: Fallback - search child records for initialization inputs
+                                         const recordWithInput = execution.taskExecutionRecords?.find((r: any) => r.input?.resolvedInput);
+                                         if (recordWithInput?.input?.resolvedInput) {
+@@ -556,16 +658,41 @@ function WorkflowExecutionDetail() {
+                                         const outputKeys = Object.keys(outputDefinitions).filter(k => !k.startsWith('__'));
+ 
+                                         inputKeys.forEach(k => {
+-                                            resInputs[k] = allVars[k];
++                                            let rawVal = allVars[k];
++                                            // Robust extraction if technical config objects leaked into the view list
++                                            if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
++                                                if (rawVal.valueMode) {
++                                                    rawVal = rawVal.value || (rawVal.useParentInput ? `Pending ${k}` : JSON.stringify(rawVal));
++                                                } else if (rawVal.hasOwnProperty('value') && Object.keys(rawVal).length <= 2) {
++                                                    rawVal = rawVal.value;
++                                                }
++                                            }
++                                            resInputs[k] = rawVal;
+                                         });
+ 
+                                         outputKeys.forEach(k => {
+-                                            resOutputs[k] = allVars[k];
++                                            let rawVal = allVars[k];
++                                            if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
++                                                if (rawVal.valueMode) {
++                                                    rawVal = rawVal.value || JSON.stringify(rawVal);
++                                                } else if (rawVal.hasOwnProperty('value') && Object.keys(rawVal).length <= 2) {
++                                                    rawVal = rawVal.value;
++                                                }
++                                            }
++                                            resOutputs[k] = rawVal;
+                                         });
+ 
+                                         Object.keys(allVars).forEach(k => {
+                                             if (!inputKeys.includes(k) && !outputKeys.includes(k) && !k.startsWith('__')) {
+-                                                resInternal[k] = allVars[k];
++                                                let rawVal = allVars[k];
++                                                if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
++                                                    if (rawVal.valueMode) {
++                                                        rawVal = rawVal.value || JSON.stringify(rawVal);
++                                                    } else if (rawVal.hasOwnProperty('value') && Object.keys(rawVal).length <= 2) {
++                                                        rawVal = rawVal.value;
++                                                    }
++                                                }
++                                                resInternal[k] = rawVal;
+                                             }
+                                         });
+ 
+@@ -921,8 +1048,8 @@ function StatusBadge({ status, size = 'sm' }: { status: string, size?: 'sm' | 'l
+         }
+     }
+     return (
+-        <span className={`${size === 'lg' ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'} font-black rounded border ${getStyles(status)} uppercase tracking-widest`}>
+-            {status.replace(/_/g, ' ')}
++        <span className={`${size === 'lg' ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'} font-black rounded border ${getStyles(status || 'PENDING')} uppercase tracking-widest`}>
++            {(status || 'PENDING').replace(/_/g, ' ')}
+         </span>
+     )
+ }
+
+commit da0a6a568af759430077997fa14b9c0420d991d6
+Author: Shai Ovadia <shaio123@gmail.com>
+Date:   Tue Mar 10 19:15:35 2026 +0200
+
+    0.5.4.5 - PWF and CWF Dependencies informaiton in WF Meta and in WF Admin Shelf.  Additional Fixes to Breadcrumbs in the WF Inspect Window
+
+diff --git a/apps/web/src/pages/WorkflowExecutionDetail.tsx b/apps/web/src/pages/WorkflowExecutionDetail.tsx
+index 2005256..a271707 100644
+--- a/apps/web/src/pages/WorkflowExecutionDetail.tsx
++++ b/apps/web/src/pages/WorkflowExecutionDetail.tsx
+@@ -39,10 +39,14 @@ function WorkflowExecutionDetail() {
+ 
+     const queryClient = useQueryClient();
+ 
+-    const { data: execution, isLoading, isFetching: isFetchingExecution, refetch: refetchExecution } = useQuery({
++    const { data: execution, isLoading, isFetching: isFetchingExecution, refetch: refetchExecution, error: executionError } = useQuery({
+         queryKey: ['workflow-execution', id],
+         queryFn: () => workflowsApi.getExecutionDetail(id!),
+-        refetchInterval: (query) => (['RUNNING', 'PENDING'].includes(query.state.data?.status) ? 3000 : false)
++        refetchInterval: (query) => (['RUNNING', 'PENDING'].includes(query.state.data?.status) ? 3000 : false),
++        // We remove placeholderData here to ensure that when we navigate to a NEW execution ID,
++        // we show the 'Synchronizing' screen specifically for that runner, avoiding stale UI from the previous ID.
++        retry: 3,
++        staleTime: 500
+     })
+ 
+     const terminateMutation = useMutation({
+@@ -58,19 +62,32 @@ function WorkflowExecutionDetail() {
+         queryKey: ['workflow-history', execution?.workflowId],
+         queryFn: () => workflowsApi.getWorkflowExecutions(execution!.workflowId),
+         enabled: !!execution?.workflowId,
+-        refetchInterval: 30000
++        refetchInterval: 30000,
++        //@ts-ignore
++        placeholderData: (prev: any) => prev,
++        retry: 2
+     });
+ 
+     const { data: workflow } = useQuery({
+         queryKey: ['workflow', execution?.workflowId],
+         queryFn: () => workflowsApi.getWorkflow(execution!.workflowId),
+-        enabled: !!execution?.workflowId
++        enabled: !!execution?.workflowId,
++        //@ts-ignore
++        placeholderData: (prev: any) => prev,
++        retry: 2
+     });
+ 
+     const runMutation = useMutation({
+         mutationFn: () => workflowsApi.executeWorkflow(execution.workflowId),
+         onSuccess: (newExec) => {
+             if (newExec?.id) {
++                // Optimistically update the history cache so the 'recap' shows the new runner immediately
++                const historyKey = ['workflow-history', execution.workflowId];
++                const oldHistory = queryClient.getQueryData<any[]>(historyKey) || [];
++                queryClient.setQueryData(historyKey, [newExec, ...oldHistory]);
++                
++                // Clear state for clean root run
++                setNavigationHistory([]);
+                 navigate(`/workflows/history/${newExec.id}`);
+             }
+         }
+@@ -138,8 +155,31 @@ function WorkflowExecutionDetail() {
+         }
+     };
+ 
+-    if (isLoading) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
+-    if (!execution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
++    if (isLoading && !execution && !executionError) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
++    
++    if (executionError) return (
++        <div className="p-12 text-center max-w-md mx-auto">
++            <div className="text-red-500 text-xl font-bold mb-4">Error loading execution</div>
++            <p className="text-slate-500 mb-8">{(executionError as any).message || 'An unexpected error occurred'}</p>
++            <button 
++                onClick={() => refetchExecution()}
++                className="px-6 py-2 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 transition-all"
++            >
++                Retry Connection
++            </button>
++        </div>
++    );
++
++    if (!execution && !isFetchingExecution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
++    
++    // Final defensive check: if no execution OR no workflow relation found yet
++    if (!execution || !execution.workflow) return (
++        <div className="flex flex-col items-center justify-center p-12 h-screen bg-slate-950">
++            <div className="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-6"></div>
++            <div className="text-xl text-slate-400 font-bold animate-pulse">Synchronizing Workflow State...</div>
++            <p className="text-slate-600 mt-2 text-sm italic">Finalizing results and closing tasks</p>
++        </div>
++    );
+ 
+     return (
+         <div className="h-full flex flex-col bg-slate-950">
+@@ -411,7 +451,24 @@ function WorkflowExecutionDetail() {
+                                         <div className="space-y-4">
+                                             <div>
+                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Trigger Path</div>
+-                                                <div className="text-xs font-bold text-slate-700">{execution.triggeredBy} ({execution.triggeredByUser})</div>
++                                                <div className="text-xs font-bold text-slate-700">
++                                                    {execution.triggeredBy} ({execution.triggeredByUser})
++                                                </div>
++                                                {execution.parentTaskExecution?.workflowExecution && (
++                                                    <div className="mt-2 pt-2 border-t border-slate-200/50">
++                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Parent Workflow</div>
++                                                        <a 
++                                                            href={`/workflows/history/${execution.parentTaskExecution.workflowExecution.id}`}
++                                                            target="_blank"
++                                                            rel="noopener noreferrer"
++                                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 transition-colors group"
++                                                        >
++                                                            <Layers size={10} />
++                                                            <span className="underline underline-offset-2">{execution.parentTaskExecution.workflowExecution.workflowName}</span>
++                                                            <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
++                                                        </a>
++                                                    </div>
++                                                )}
+                                             </div>
+                                             <div>
+                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Current State</div>
+@@ -819,7 +876,13 @@ function WorkflowExecutionDetail() {
+ }
+ 
+ function ExecutionHistoryGraph({ executions, currentId, onNavigate }: { executions: any[], currentId: string, onNavigate: (id: string) => void }) {
+-    const data = [...executions].reverse();
++    // If the current ID isn't in history yet, it's a fresh run. Ensure we include it.
++    let data = [...executions];
++    if (currentId && !data.some(ex => ex.id === currentId)) {
++        // Find if we have current execution data (shell) from parent state
++        data = [{ id: currentId, status: 'RUNNING', startedAt: new Date().toISOString() }, ...data];
++    }
++    data = data.reverse();
+     const maxDuration = Math.max(...data.map(ex => ex.duration || 0), 100);
+     const colors: Record<string, string> = {
+         SUCCESS: '#10b981', FAILED: '#ef4444', MAJOR: '#f97316', MINOR: '#fbbf24', WARNING: '#fbbf24',
+
+commit 53bc2d3a28fbc86887406da90a0ac8961cb8041c
+Author: Shai Ovadia <shaio123@gmail.com>
+Date:   Tue Mar 10 11:40:26 2026 +0200
+
+    0.5.4.4 Breadcrumbs Defect Fixed
+
+diff --git a/apps/web/src/pages/WorkflowExecutionDetail.tsx b/apps/web/src/pages/WorkflowExecutionDetail.tsx
+index d3c15e2..2005256 100644
+--- a/apps/web/src/pages/WorkflowExecutionDetail.tsx
++++ b/apps/web/src/pages/WorkflowExecutionDetail.tsx
+@@ -1,7 +1,8 @@
+ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+ import { useParams, useNavigate } from 'react-router-dom'
+ import { workflowsApi } from '../api/workflows'
+-import { useState } from 'react'
++import { useState, useEffect } from 'react'
++import { useBreadcrumbs } from '../context/BreadcrumbContext'
+ import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
+ import { TaskEditShelf } from '../components/TaskEditShelf'
+ import VariableInspectorDrawer from '../components/VariableInspectorDrawer'
+@@ -84,19 +85,54 @@ function WorkflowExecutionDetail() {
+         }
+     });
+ 
+-    const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
++    const [navigationHistory, setNavigationHistory] = useState<{ id: string, name: string }[]>([]);
++    const { setExtraSegments } = useBreadcrumbs();
++
++    // Sync breadcrumbs
++    useEffect(() => {
++        if (!execution) return;
++
++        // If we navigate back to an ID that is already in our trail, truncate the trail
++        const existingIndex = navigationHistory.findIndex(item => item.id === id);
++        if (existingIndex !== -1) {
++            setNavigationHistory(prev => prev.slice(0, existingIndex));
++        } else if (!execution.parentTaskExecutionId && navigationHistory.length > 0) {
++            // If we navigate to a root execution (no parent) and it's not in our trail, 
++            // it means we switched to a different workflow entirely (e.g. from list or sidebar).
++            setNavigationHistory([]);
++        }
++
++        const segments = [
++            { label: 'Workflow', path: '/designer' },
++            { label: 'History', path: '/history' },
++            ...navigationHistory.map(item => ({
++                label: item.name,
++                path: `/workflows/history/${item.id}`
++            })),
++            { label: execution.workflowName }
++        ];
++        
++        setExtraSegments(segments);
++
++        return () => setExtraSegments([]);
++    }, [execution, id, navigationHistory, setExtraSegments]);
++
++    const handleDeepDive = (childId: string) => {
++        setNavigationHistory(prev => [...prev, { id: id!, name: execution.workflowName }]);
++        navigate(`/workflows/history/${childId}`);
++    };
+ 
+-    const handleNavigate = (newId: string) => {
+-        setNavigationHistory(prev => [...prev, id!]);
++    const handleNavigateSibling = (newId: string) => {
++        // Just navigate, don't update navigation history (keep current trail)
+         navigate(`/workflows/history/${newId}`);
+     };
+ 
+     const handleBack = () => {
+         const prev = [...navigationHistory];
+-        const lastId = prev.pop();
++        const last = prev.pop();
+         setNavigationHistory(prev);
+-        if (lastId) {
+-            navigate(`/workflows/history/${lastId}`);
++        if (last) {
++            navigate(`/workflows/history/${last.id}`);
+         } else {
+             navigate('/history');
+         }
+@@ -128,7 +164,7 @@ function WorkflowExecutionDetail() {
+                     <ExecutionHistoryGraph 
+                         executions={history || []} 
+                         currentId={id!} 
+-                        onNavigate={handleNavigate}
++                        onNavigate={handleNavigateSibling}
+                     />
+ 
+                     <div className="h-8 w-px bg-slate-800" />
+@@ -607,7 +643,7 @@ function WorkflowExecutionDetail() {
+                                                 onClick={() => {
+                                                     const childId = selectedTask.result?.childExecutionId || selectedTask.subWorkflows?.[0]?.id;
+                                                     if (childId) {
+-                                                        handleNavigate(childId);
++                                                        handleDeepDive(childId);
+                                                         setShowInspector(false);
+                                                     } else {
+                                                         alert("Sub-workflow execution ID not yet available. It may be initializing.");

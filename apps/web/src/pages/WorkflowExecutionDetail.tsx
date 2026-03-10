@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
 import { workflowsApi } from '../api/workflows'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useBreadcrumbs } from '../context/BreadcrumbContext'
 import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
 import { TaskEditShelf } from '../components/TaskEditShelf'
@@ -156,6 +156,24 @@ function WorkflowExecutionDetail() {
         }
     };
 
+    // Use a ref to keep the workflow definition visible even if the query flickers at the end of execution
+    const lastKnownWorkflowRef = useRef<any>(null);
+    const incomingWf = workflow || execution?.workflow;
+    const incomingNodes = incomingWf?.nodes ? (typeof incomingWf.nodes === 'string' ? JSON.parse(incomingWf.nodes) : incomingWf.nodes) : [];
+    
+    // ONLY update our rock-solid reference if the incoming data actually contains nodes.
+    // This prevents the 'flicker' at the end of a run from overwriting good coordinates with empty ones.
+    if (Array.isArray(incomingNodes) && incomingNodes.length > 0) {
+        lastKnownWorkflowRef.current = incomingWf;
+    }
+
+    // Invalidate history when the current execution finishes to update the Recap indicators immediately
+    useEffect(() => {
+        if (execution?.status && !['RUNNING', 'PENDING'].includes(execution.status)) {
+            queryClient.invalidateQueries({ queryKey: ['workflow-history', execution.workflowId] });
+        }
+    }, [execution?.status, execution?.workflowId, queryClient]);
+
     if (isLoading && !execution && !executionError) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
     
     if (executionError) return (
@@ -173,8 +191,8 @@ function WorkflowExecutionDetail() {
 
     if (!execution && !isFetchingExecution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
     
-    // Final defensive check: if no execution OR no workflow relation found yet
-    if (!execution || !execution.workflow) return (
+    // Final defensive check: ONLY show loading if we have NO execution AND no historical workflow data to show
+    if (!execution || (!execution.workflow && !lastKnownWorkflowRef.current)) return (
         <div className="flex flex-col items-center justify-center p-12 h-screen bg-slate-950">
             <div className="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-6"></div>
             <div className="text-xl text-slate-400 font-bold animate-pulse">Synchronizing Workflow State...</div>
@@ -183,9 +201,9 @@ function WorkflowExecutionDetail() {
     );
 
     return (
-        <div className="h-full flex flex-col bg-slate-950">
+        <div className="h-full flex flex-col bg-slate-950 overflow-hidden">
             {/* Main Header */}
-            <div className="bg-slate-900 border-b border-slate-800 p-4 px-8 flex justify-between items-center shadow-xl z-20">
+            <div className="bg-slate-900 border-b border-slate-800 p-4 px-8 flex justify-between items-center shadow-xl z-20 shrink-0">
                 <div className="flex items-center gap-6">
                     <button 
                         onClick={handleBack}
@@ -205,6 +223,7 @@ function WorkflowExecutionDetail() {
                     <ExecutionHistoryGraph 
                         executions={history || []} 
                         currentId={id!} 
+                        currentStatus={execution.status}
                         onNavigate={handleNavigateSibling}
                     />
 
@@ -252,71 +271,98 @@ function WorkflowExecutionDetail() {
                 </div>
             </div>
 
-            <div className="flex-1 relative bg-slate-950 overflow-hidden">
-                <ExecutionVisualizer 
-                    workflow={execution.workflow} 
-                    taskExecutions={execution.taskExecutionRecords || []} 
-                    editingTaskId={editingTaskId}
-                    onNodeClick={(nodeId) => {
-                        const record = execution.taskExecutionRecords.find((r: any) => r.nodeId === nodeId);
-                        if (record) {
-                            const isUtil = record.input?.taskType === 'VARIABLE' || 
-                                          record.input?.utility === true || 
-                                          record.task?.taskType === 'VARIABLE' || 
-                                          record.taskId === '00000000-0000-0000-0000-000000000001' ||
-                                          record.taskId === 'util-vars' ||
-                                          record.task?.id === '00000000-0000-0000-0000-000000000001' ||
-                                          record.task?.name?.toLowerCase().includes('variable');
-                            
-                            const isNested = record.input?.taskType === 'WORKFLOW' || 
-                                           record.input?.nested === true ||
-                                           record.task?.taskType === 'WORKFLOW' ||
-                                           (execution.workflow?.nodes as any[])?.find(n => n.id === nodeId)?.taskType === 'WORKFLOW';
+            <div className="flex-1 relative bg-[#020617] overflow-hidden flex flex-col">
+                {(() => {
+                    // Try to extract nodes to determine if this update is "valid" or a "completion flicker"
+                    const currentWf = workflow || execution?.workflow;
+                    const getNodes = (wf: any) => {
+                        if (!wf?.nodes) return [];
+                        return typeof wf.nodes === 'string' ? JSON.parse(wf.nodes) : wf.nodes;
+                    };
 
-                            console.log('[DEBUG] Node Click Inspection:', { 
-                                nodeId, 
-                                isUtil, 
-                                isNested, 
-                                recordTaskType: record.task?.taskType, 
-                                inputTaskType: record.input?.taskType 
-                            });
+                    const currentNodes = getNodes(currentWf);
+                    const hasNodes = Array.isArray(currentNodes) && currentNodes.length > 0;
+                    
+                    // IF we have nodes now, update the ref for future flickers
+                    if (hasNodes) {
+                        lastKnownWorkflowRef.current = currentWf;
+                    }
 
-                            setSelectedTask({
-                                ...record,
-                                taskType: isUtil ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (record.task?.taskType || 'HTTP'))
-                            });
-                            setInspectMode('task');
-                            setShowInspector(true);
-                        }
-                    }}
-                    onEditTask={(nodeId) => {
-                        const record = execution.taskExecutionRecords.find((r: any) => r.nodeId === nodeId);
-                        if (record) {
-                            const isUtil = record.input?.taskType === 'VARIABLE' || 
-                                          record.task?.taskType === 'VARIABLE' || 
-                                          record.task?.id === '00000000-0000-0000-0000-000000000001' ||
-                                          record.task?.name?.toLowerCase().includes('variable');
+                    // Source definition is either the fresh one (if it has nodes) or our rock-solid historical ref
+                    const sourceWf = hasNodes ? currentWf : lastKnownWorkflowRef.current;
+                    
+                    if (!sourceWf) return (
+                        <div className="flex items-center justify-center w-full h-full bg-[#020617] text-slate-500 font-mono text-xs animate-pulse">
+                            RESOLVING GRAPH ENTITIES...
+                        </div>
+                    );
 
-                            if (isUtil) {
-                                const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === nodeId);
-                                setEditingNodeData({
-                                    id: nodeId,
-                                    label: nodeDef?.label || record.label || record.task?.name,
-                                    taskType: 'VARIABLE',
-                                    variableExtraction: nodeDef?.variableExtraction || record.input?.variableExtraction || record.task?.variableExtraction || { vars: {} }
-                                });
-                            } else if (record.task) {
-                                const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === nodeId);
-                                setEditingTaskId(record.task.id);
-                                setEditingNodeData({
-                                    id: nodeId,
-                                    label: nodeDef?.label || record.label || record.task?.name,
-                                    ...nodeDef
-                                });
-                            }
-                        }
-                    }}
-                />
+                    const stableWorkflow = {
+                        ...sourceWf,
+                        nodes: getNodes(sourceWf),
+                        edges: typeof sourceWf.edges === 'string' ? JSON.parse(sourceWf.edges) : (sourceWf.edges || [])
+                    };
+
+                    return (
+                        <ExecutionVisualizer 
+                            key={`${id}`} // Only remount when specific execution ID changes
+                            workflow={stableWorkflow}
+                            taskExecutions={execution.taskExecutionRecords || []} 
+                            editingTaskId={editingTaskId}
+                            onNodeClick={(nodeId) => {
+                                const record = execution.taskExecutionRecords.find((r: any) => r.nodeId === nodeId);
+                                if (record) {
+                                    const isUtil = record.input?.taskType === 'VARIABLE' || 
+                                                  record.input?.utility === true || 
+                                                  record.task?.taskType === 'VARIABLE' || 
+                                                  record.taskId === '00000000-0000-0000-0000-000000000001' ||
+                                                  record.taskId === 'util-vars' ||
+                                                  record.task?.id === '00000000-0000-0000-0000-000000000001' ||
+                                                  record.task?.name?.toLowerCase().includes('variable');
+                                    
+                                    const isNested = record.input?.taskType === 'WORKFLOW' || 
+                                                   record.input?.nested === true ||
+                                                   record.task?.taskType === 'WORKFLOW' ||
+                                                   (stableWorkflow?.nodes as any[])?.find(n => n.id === nodeId)?.taskType === 'WORKFLOW';
+
+                                    setSelectedTask({
+                                        ...record,
+                                        taskType: isUtil ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (record.task?.taskType || 'HTTP'))
+                                    });
+                                    setInspectMode('task');
+                                    setShowInspector(true);
+                                }
+                            }}
+                            onEditTask={(nodeId) => {
+                                const record = execution.taskExecutionRecords.find((r: any) => r.nodeId === nodeId);
+                                if (record) {
+                                    const isUtil = record.input?.taskType === 'VARIABLE' || 
+                                                  record.task?.taskType === 'VARIABLE' || 
+                                                  record.task?.id === '00000000-0000-0000-0000-000000000001' ||
+                                                  record.task?.name?.toLowerCase().includes('variable');
+
+                                    if (isUtil) {
+                                        const nodeDef = (stableWorkflow?.nodes as any[])?.find((n: any) => n.id === nodeId);
+                                        setEditingNodeData({
+                                            id: nodeId,
+                                            label: nodeDef?.label || record.label || record.task?.name,
+                                            taskType: 'VARIABLE',
+                                            variableExtraction: nodeDef?.variableExtraction || record.input?.variableExtraction || record.task?.variableExtraction || { vars: {} }
+                                        });
+                                    } else if (record.task) {
+                                        const nodeDef = (stableWorkflow?.nodes as any[])?.find((n: any) => n.id === nodeId);
+                                        setEditingTaskId(record.task.id);
+                                        setEditingNodeData({
+                                            id: nodeId,
+                                            label: nodeDef?.label || record.label || record.task?.name,
+                                            ...nodeDef
+                                        });
+                                    }
+                                }
+                            }}
+                        />
+                    );
+                })()}
             </div>
 
             {(editingTaskId || editingNodeData) && (
@@ -511,7 +557,7 @@ function WorkflowExecutionDetail() {
                                                         const minutes = d.getMinutes().toString().padStart(2, '0');
                                                         const seconds = d.getSeconds().toString().padStart(2, '0');
                                                         const ms = d.getMilliseconds().toString().padStart(3, '0');
-                                                        return `${year}, ${month} ${day} - ${hours}:${minutes}:${seconds}.${ms}`;
+                                                        return `${year}, ${month} ${day} , ${hours}:${minutes}:${seconds}.${ms}`;
                                                     })()}
                                                 </div>
                                             </div>
@@ -1002,12 +1048,15 @@ function WorkflowExecutionDetail() {
     )
 }
 
-function ExecutionHistoryGraph({ executions, currentId, onNavigate }: { executions: any[], currentId: string, onNavigate: (id: string) => void }) {
+function ExecutionHistoryGraph({ executions, currentId, currentStatus, onNavigate }: { executions: any[], currentId: string, currentStatus: string, onNavigate: (id: string) => void }) {
     // If the current ID isn't in history yet, it's a fresh run. Ensure we include it.
     let data = [...executions];
     if (currentId && !data.some(ex => ex.id === currentId)) {
-        // Find if we have current execution data (shell) from parent state
-        data = [{ id: currentId, status: 'RUNNING', startedAt: new Date().toISOString() }, ...data];
+        // Use the LIVE status from the main view instead of hardcoding RUNNING
+        data = [{ id: currentId, status: currentStatus || 'RUNNING', startedAt: new Date().toISOString() }, ...data];
+    } else if (currentId) {
+        // If it IS in history, still prefer the live status if the history query is stale
+        data = data.map(ex => ex.id === currentId ? { ...ex, status: currentStatus || ex.status } : ex);
     }
     data = data.reverse();
     const maxDuration = Math.max(...data.map(ex => ex.duration || 0), 100);
