@@ -210,6 +210,10 @@ model WorkflowExecution {
   parentTaskExecutionId String?
   parentTaskExecution   TaskExecution? @relation("TaskExecutionToSubWorkflow", fields: [parentTaskExecutionId], references: [id])
 
+  sourceExecutionId     String?
+  sourceExecution       WorkflowExecution? @relation("SourceToTriggeredExecutions", fields: [sourceExecutionId], references: [id])
+  triggeredExecutions   WorkflowExecution[] @relation("SourceToTriggeredExecutions")
+
   targetWorkerId String?
   targetWorker   Worker? @relation("WorkerToWorkflowExecutions", fields: [targetWorkerId], references: [id])
 

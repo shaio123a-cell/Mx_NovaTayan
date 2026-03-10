@@ -22,7 +22,8 @@ import {
     Cpu,
     ArrowRight,
     Box,
-    FileText
+    FileText,
+    Bell
 } from 'lucide-react'
 
 function WorkflowExecutionDetail() {
@@ -452,11 +453,11 @@ function WorkflowExecutionDetail() {
                                             <div>
                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Trigger Path</div>
                                                 <div className="text-xs font-bold text-slate-700">
-                                                    {execution.triggeredBy} ({execution.triggeredByUser})
+                                                    {execution.sourceExecutionId ? 'Monitoring Event Trigger' : `${execution.triggeredBy} (${execution.triggeredByUser})`}
                                                 </div>
                                                 {execution.parentTaskExecution?.workflowExecution && (
                                                     <div className="mt-2 pt-2 border-t border-slate-200/50">
-                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Parent Workflow</div>
+                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Parent Workflow (PWF)</div>
                                                         <a 
                                                             href={`/workflows/history/${execution.parentTaskExecution.workflowExecution.id}`}
                                                             target="_blank"
@@ -465,6 +466,21 @@ function WorkflowExecutionDetail() {
                                                         >
                                                             <Layers size={10} />
                                                             <span className="underline underline-offset-2">{execution.parentTaskExecution.workflowExecution.workflowName}</span>
+                                                            <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                                                        </a>
+                                                    </div>
+                                                )}
+                                                {execution.sourceExecution && (
+                                                    <div className="mt-2 pt-2 border-t border-slate-200/50">
+                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Source Trigger</div>
+                                                        <a 
+                                                            href={`/workflows/history/${execution.sourceExecution.id}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 transition-colors group"
+                                                        >
+                                                            <Bell size={10} />
+                                                            <span className="underline underline-offset-2">{execution.sourceExecution.workflowName}</span>
                                                             <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
                                                         </a>
                                                     </div>
@@ -483,12 +499,87 @@ function WorkflowExecutionDetail() {
                                                 <div className="text-xs font-bold text-slate-700">{execution.targetWorkerId || 'Shared Global Cluster'}</div>
                                             </div>
                                             <div>
-                                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Uptime</div>
-                                                <div className="text-xs font-bold text-slate-700">{Math.floor((new Date().getTime() - new Date(execution.startedAt).getTime())/1000)}s total</div>
+                                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Executed At</div>
+                                                <div className="text-xs font-bold text-slate-700">
+                                                    {(() => {
+                                                        const d = new Date(execution.startedAt);
+                                                        const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+                                                        const year = d.getFullYear();
+                                                        const month = months[d.getMonth()];
+                                                        const day = d.getDate().toString().padStart(2, '0');
+                                                        const hours = d.getHours().toString().padStart(2, '0');
+                                                        const minutes = d.getMinutes().toString().padStart(2, '0');
+                                                        const seconds = d.getSeconds().toString().padStart(2, '0');
+                                                        const ms = d.getMilliseconds().toString().padStart(3, '0');
+                                                        return `${year}, ${month} ${day} - ${hours}:${minutes}:${seconds}.${ms}`;
+                                                    })()}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Run Time</div>
+                                                <div className="text-xs font-bold text-slate-700">
+                                                    {execution.duration ? `${(execution.duration / 1000).toFixed(2)}s total` : `${Math.floor((new Date().getTime() - new Date(execution.startedAt).getTime())/1000)}s total (alive)`}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
                                 </section>
+
+                                {execution.triggeredExecutions && execution.triggeredExecutions.length > 0 && (
+                                    <section>
+                                        <h4 className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-6 border-b border-indigo-50 pb-2 flex items-center gap-2">
+                                            <Bell size={12} /> Triggered Events
+                                        </h4>
+                                        <div className="grid grid-cols-1 gap-3">
+                                            {execution.triggeredExecutions.map((te: any) => {
+                                                // Robust JSON extraction for taskExecutions
+                                                let taskExec = te.taskExecutions;
+                                                if (typeof taskExec === 'string') {
+                                                    try { taskExec = JSON.parse(taskExec); } catch (e) { taskExec = {}; }
+                                                }
+                                                
+                                                // Extract initialVariables from object or array format
+                                                const initialVars = (taskExec && typeof taskExec === 'object' && !Array.isArray(taskExec)) 
+                                                    ? (taskExec as any).initialVariables 
+                                                    : (Array.isArray(taskExec) ? (taskExec.find((v: any) => v.initialVariables) || taskExec[0])?.initialVariables : (taskExec as any)?.initialVariables);
+                                                
+                                                const eventTypeRaw = initialVars?.__source_event || (te as any).triggeredBy || 'SIGNAL';
+                                                const eventLabels: Record<string, string> = {
+                                                    'ON_SUCCESS': 'On Workflow Success',
+                                                    'ON_FAILURE': 'On Workflow Failure',
+                                                    'COMPLETED': 'On Workflow Completion',
+                                                    'CANCELLED': 'On Workflow Cancel'
+                                                };
+                                                const eventType = eventLabels[eventTypeRaw] || (eventTypeRaw === 'SIGNAL' ? 'Monitoring Signal' : eventTypeRaw);
+                                                
+                                                return (
+                                                    <a 
+                                                        key={te.id}
+                                                        href={`/workflows/history/${te.id}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="group flex items-center justify-between p-4 bg-indigo-50/20 border border-indigo-100/50 rounded-xl hover:bg-white hover:border-indigo-300 transition-all shadow-sm"
+                                                    >
+                                                        <div className="flex flex-col">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Criteria</span>
+                                                                <span className="text-[10px] bg-indigo-200 text-indigo-700 font-black px-1.5 py-0.5 rounded uppercase tracking-widest">{eventType}</span>
+                                                            </div>
+                                                            <div className="mt-1.5 flex items-center gap-2">
+                                                                <Layers size={14} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                                                                <span className="text-xs font-bold text-slate-800 line-clamp-1">{te.workflowName || 'Triggered WF'}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-4">
+                                                            <StatusBadge status={te.status || 'RUNNING'} size="sm" />
+                                                            <ArrowRight size={14} className="text-indigo-300 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
+                                                        </div>
+                                                    </a>
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                )}
 
                                 {(() => {
                                     const { inputs, outputs, internal } = (() => {
@@ -517,6 +608,17 @@ function WorkflowExecutionDetail() {
                                                     const resolvedObj = typeof resolved === 'string' ? JSON.parse(resolved) : resolved;
                                                     Object.assign(allVars, resolvedObj);
                                                 }
+                                            }
+                                        }
+
+                                        // Case B: This IS an event-triggered workflow (EWF), get from taskExecutions.initialVariables
+                                        let summaryMetadata = (execution as any).taskExecutions;
+                                        if (summaryMetadata) {
+                                            if (typeof summaryMetadata === 'string') {
+                                                try { summaryMetadata = JSON.parse(summaryMetadata); } catch (e) { summaryMetadata = null; }
+                                            }
+                                            if (summaryMetadata?.initialVariables) {
+                                                Object.assign(allVars, summaryMetadata.initialVariables);
                                             }
                                         }
                                         // Case B: Fallback - search child records for initialization inputs
@@ -556,16 +658,41 @@ function WorkflowExecutionDetail() {
                                         const outputKeys = Object.keys(outputDefinitions).filter(k => !k.startsWith('__'));
 
                                         inputKeys.forEach(k => {
-                                            resInputs[k] = allVars[k];
+                                            let rawVal = allVars[k];
+                                            // Robust extraction if technical config objects leaked into the view list
+                                            if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+                                                if (rawVal.valueMode) {
+                                                    rawVal = rawVal.value || (rawVal.useParentInput ? `Pending ${k}` : JSON.stringify(rawVal));
+                                                } else if (rawVal.hasOwnProperty('value') && Object.keys(rawVal).length <= 2) {
+                                                    rawVal = rawVal.value;
+                                                }
+                                            }
+                                            resInputs[k] = rawVal;
                                         });
 
                                         outputKeys.forEach(k => {
-                                            resOutputs[k] = allVars[k];
+                                            let rawVal = allVars[k];
+                                            if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+                                                if (rawVal.valueMode) {
+                                                    rawVal = rawVal.value || JSON.stringify(rawVal);
+                                                } else if (rawVal.hasOwnProperty('value') && Object.keys(rawVal).length <= 2) {
+                                                    rawVal = rawVal.value;
+                                                }
+                                            }
+                                            resOutputs[k] = rawVal;
                                         });
 
                                         Object.keys(allVars).forEach(k => {
                                             if (!inputKeys.includes(k) && !outputKeys.includes(k) && !k.startsWith('__')) {
-                                                resInternal[k] = allVars[k];
+                                                let rawVal = allVars[k];
+                                                if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+                                                    if (rawVal.valueMode) {
+                                                        rawVal = rawVal.value || JSON.stringify(rawVal);
+                                                    } else if (rawVal.hasOwnProperty('value') && Object.keys(rawVal).length <= 2) {
+                                                        rawVal = rawVal.value;
+                                                    }
+                                                }
+                                                resInternal[k] = rawVal;
                                             }
                                         });
 
@@ -921,8 +1048,8 @@ function StatusBadge({ status, size = 'sm' }: { status: string, size?: 'sm' | 'l
         }
     }
     return (
-        <span className={`${size === 'lg' ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'} font-black rounded border ${getStyles(status)} uppercase tracking-widest`}>
-            {status.replace(/_/g, ' ')}
+        <span className={`${size === 'lg' ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'} font-black rounded border ${getStyles(status || 'PENDING')} uppercase tracking-widest`}>
+            {(status || 'PENDING').replace(/_/g, ' ')}
         </span>
     )
 }

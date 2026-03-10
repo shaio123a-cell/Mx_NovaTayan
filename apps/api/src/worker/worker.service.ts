@@ -184,8 +184,15 @@ export class WorkerService {
             // 2. Resolve Input variables provided by initial metadata (for triggered workflows)
             const taskExecData = execution.taskExecutions as any;
             if (taskExecData && taskExecData.initialVariables) {
-                Object.assign(workflowVars, taskExecData.initialVariables);
-                this.logger.log(`[Context] Overlaid ${Object.keys(taskExecData.initialVariables).length} variables from initial execution metadata`);
+                const engine = new VariableEngine({
+                    global: {}, // Will be resolved if needed recursively
+                    workflow: workflowVars,
+                    macros: {}
+                });
+                Object.entries(taskExecData.initialVariables).forEach(([k, v]: [string, any]) => {
+                    workflowVars[k] = engine.resolveValue(v, k);
+                });
+                this.logger.log(`[Context] Overlaid and resolved ${Object.keys(taskExecData.initialVariables).length} variables from initial execution metadata`);
             }
 
             // 3. Resolve Input variables provided by parent if this is a sub-workflow
@@ -439,20 +446,7 @@ export class WorkerService {
         
         // Resolve input mapping from parent context using VariableEngine
         for (const [key, value] of Object.entries(inputMapping)) {
-            if (typeof value === 'string') {
-                // If the value is a single template like "{{var}}", we try to get the raw object
-                // instead of a stringified version (to preserve JSON/Arrays).
-                const match = (value as string).match(/^\{\{\s*(.*?)\s*\}\}$/);
-                if (match) {
-                    const expr = match[1].trim();
-                    const evalResult = engine.evaluateExpression(expr);
-                    resolvedInput[key] = evalResult !== undefined ? evalResult : value;
-                } else {
-                    resolvedInput[key] = engine.resolve(value as string);
-                }
-            } else {
-                resolvedInput[key] = value;
-            }
+            resolvedInput[key] = engine.resolveValue(value, key);
         }
 
         // Store resolved input in taskExec for persistence
@@ -887,6 +881,10 @@ export class WorkerService {
             }
 
             // 4. Update WorkflowExecution with final status and results
+            // Preserve initialVariables if they exist in the current metadata
+            const currentMetadata = execution.taskExecutions as any || {};
+            const initialVars = currentMetadata.initialVariables || null;
+
             await this.prisma.workflowExecution.update({
                 where: { id: workflowExecutionId },
                 data: {
@@ -894,6 +892,7 @@ export class WorkerService {
                     completedAt: now,
                     duration: duration,
                     taskExecutions: {
+                        ...(initialVars ? { initialVariables: initialVars } : {}),
                         finalVariables: filteredVars,
                         summary: `Workflow finished with ${Object.keys(filteredVars || {}).length} variables context.`
                     }
@@ -946,7 +945,7 @@ export class WorkerService {
                                         macros
                                     });
                                     for (const [k, v] of Object.entries(notif.inputs)) {
-                                        resolvedNotifInputs[k] = typeof v === 'string' ? engine.resolve(v) : v;
+                                        resolvedNotifInputs[k] = engine.resolveValue(v, k);
                                     }
                                 } catch (e) {
                                     this.logger.warn(`[Analytics] Failed to resolve some notification inputs for ${notif.workflowId}: ${e.message}`);
@@ -958,8 +957,9 @@ export class WorkerService {
                                 ...resolvedNotifInputs,
                                 __source_execution_id: workflowExecutionId,
                                 __source_status: finalStatus,
+                                __source_event: notif.event, // Pass trigger criteria metadata
                                 __source_variables: filteredVars
-                            });
+                            }, workflowExecutionId);
                         }
                     }
                 }

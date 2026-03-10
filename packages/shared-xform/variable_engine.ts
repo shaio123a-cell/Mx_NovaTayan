@@ -44,6 +44,49 @@ export class VariableEngine {
     });
   }
 
+  /**
+   * Resolves a value that could be a string template or a UI configuration object.
+   * Handles standard modes: static, variable, parent.
+   */
+  public resolveValue(val: any, defaultKey?: string): any {
+    if (val === null || val === undefined) return val;
+    
+    // 1. Handle common string templates
+    if (typeof val === 'string') {
+        // Optimization: If it's a pure {{expr}}, return the raw result (e.g. object/array)
+        const match = val.match(/^\{\{\s*(.*?)\s*\}\}$/);
+        if (match) {
+            return this.evaluateExpression(match[1].trim());
+        }
+        // Otherwise resolve as a string template (interpolated)
+        return this.resolve(val);
+    }
+
+    // 2. Handle UI configuration objects
+    if (typeof val === 'object' && !Array.isArray(val)) {
+        const mode = val.valueMode;
+        if (mode === 'static') {
+            const staticVal = val.value;
+            // Static values might still contain templates
+            return typeof staticVal === 'string' ? this.resolve(staticVal) : staticVal;
+        }
+        if (mode === 'variable') {
+            return this.evaluateExpression(val.value);
+        }
+        if (mode === 'parent' && val.useParentInput) {
+            // Use provided 'value' field (target variable name) or fallback to defaultKey
+            const lookupKey = val.value || defaultKey;
+            return this.evaluateExpression(lookupKey);
+        }
+        // Fallback for objects that aren't config objects but have a 'value' field (legacy)
+        if (val.hasOwnProperty('value') && Object.keys(val).length <= 2) {
+            return val.value;
+        }
+    }
+
+    return val;
+  }
+
   public evaluateExpression(expression: string): any {
     // 1. Check for helpers (pipe)
     const pipeParts = expression.split('|').map(s => s.trim());

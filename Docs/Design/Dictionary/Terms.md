@@ -4,5 +4,9 @@
 - PWF - Parent Workflow is a workflow that executes a CWF 
 - CCWF - Is a CWF of a CWF of a PWF 
 - CCCWF - is a CWF of a
+- WFA - The Workflow Admin shelf of the Workflow that is can be opened from the workflow designer. 
+- EWF - Event Workflow - a Workflow triggered as an Event Trigger that is defined in the WFA 
+- WFM - Is the Workflow Meta shelf opened from the WF Inspect 
+- WFI - is Workflow Inspect Shelf 
 
 

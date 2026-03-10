@@ -213,7 +213,7 @@ export class WorkflowsService {
         });
     }
 
-    async enqueueExecution(workflowId: string, triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', userId?: string, initialVariables: Record<string, any> = {}) {
+    async enqueueExecution(workflowId: string, triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', userId?: string, initialVariables: Record<string, any> = {}, sourceExecutionId?: string) {
         const workflow = await this.findOne(workflowId);
         this.logger.log(`[Trace] Enqueuing execution for workflow: ${workflow.name} (${workflowId})`);
         
@@ -228,6 +228,7 @@ export class WorkflowsService {
                 triggeredByUser: userId || 'system',
                 startedAt: new Date(),
                 taskExecutions: initialVariables ? { initialVariables } : [], // Historical compatibility or metadata
+                sourceExecutionId,
             },
         });
 
@@ -459,6 +460,21 @@ export class WorkflowsService {
                         }
                     },
                     orderBy: { startedAt: 'asc' }
+                },
+                triggeredExecutions: {
+                    select: {
+                        id: true,
+                        workflowName: true,
+                        status: true,
+                        taskExecutions: true, // Holds metadata about trigger criteria
+                        startedAt: true
+                    }
+                },
+                sourceExecution: {
+                    select: {
+                        id: true,
+                        workflowName: true
+                    }
                 }
             }
         });

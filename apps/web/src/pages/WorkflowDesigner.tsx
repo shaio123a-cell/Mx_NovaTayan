@@ -246,9 +246,9 @@ function N8nTaskNode({ data }: any) {
                 inset: 0,
                 background: isWorkflow ? '#32a895' : (isUtility ? '#ffcc00' : '#202226'),
                 clipPath: isUtility 
-                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    ? 'none' 
                     : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility || isWorkflow ? '0' : '12px',
+                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '12px'),
                 zIndex: 0
             }} />
 
@@ -258,9 +258,9 @@ function N8nTaskNode({ data }: any) {
                 inset: '1.5px', // Border width
                 background: isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : '#111217'),
                 clipPath: isUtility 
-                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    ? 'none' 
                     : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility || isWorkflow ? '0' : '11px',
+                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '11px'),
                 zIndex: 1
             }} />
 
@@ -289,13 +289,13 @@ function N8nTaskNode({ data }: any) {
             />
 
             {/* Node Content */}
-            <div style={{ padding: '12px', position: 'relative', zIndex: 1 }}>
+            <div style={{ padding: isUtility ? '12px 24px' : '12px', position: 'relative', zIndex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', borderBottom: '1px solid #202226', paddingBottom: '8px' }}>
                     <div style={{ 
                         width: '32px', 
                         height: '32px', 
                         background: '#0b0c10', 
-                        borderRadius: '8px', 
+                        borderRadius: isUtility ? '50%' : '8px', 
                         display: 'flex', 
                         alignItems: 'center', 
                         justifyContent: 'center',

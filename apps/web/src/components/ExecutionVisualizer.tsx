@@ -64,9 +64,9 @@ function ExecutionNode({ data }: any) {
                 inset: 0,
                 background: isWorkflow ? '#32a895' : (isUtility ? (isEditing ? '#f05a28' : '#ffcc00') : (isEditing ? '#f05a28' : border)),
                 clipPath: isUtility 
-                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    ? 'none' 
                     : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility || isWorkflow ? '0' : '12px',
+                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '12px'),
                 zIndex: 0
             }} />
             
@@ -76,9 +76,9 @@ function ExecutionNode({ data }: any) {
                 inset: '1.5px', // Border width
                 background: isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg),
                 clipPath: isUtility 
-                    ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' 
+                    ? 'none' 
                     : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility || isWorkflow ? '0' : '11px',
+                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '11px'),
                 zIndex: 1
             }} />
             
@@ -95,18 +95,17 @@ function ExecutionNode({ data }: any) {
 
             <Handle type="target" position={Position.Left} style={{ visibility: 'hidden', zIndex: 10 }} />
             
-            <div style={{ padding: '12px', position: 'relative', zIndex: 1 }}>
+            <div style={{ padding: isUtility ? '12px 24px' : '12px', position: 'relative', zIndex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <div style={{ 
                         width: '32px', 
                         height: '32px', 
                         background: 'rgba(0,0,0,0.3)', 
-                        borderRadius: isUtility || isWorkflow ? '0' : '8px', 
+                        borderRadius: isUtility ? '50%' : (isWorkflow ? '0' : '8px'), 
                         display: 'flex', 
                         alignItems: 'center', 
                         justifyContent: 'center',
                         border: isUtility ? '1px solid rgba(255,204,0,0.2)' : '1px solid rgba(255,255,255,0.05)',
-                        clipPath: isUtility ? 'polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%)' : 'none'
                     }}>
                         {renderIcon()}
                     </div>
