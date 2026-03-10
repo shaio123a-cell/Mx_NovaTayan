@@ -39,10 +39,14 @@ function WorkflowExecutionDetail() {
 
     const queryClient = useQueryClient();
 
-    const { data: execution, isLoading, isFetching: isFetchingExecution, refetch: refetchExecution } = useQuery({
+    const { data: execution, isLoading, isFetching: isFetchingExecution, refetch: refetchExecution, error: executionError } = useQuery({
         queryKey: ['workflow-execution', id],
         queryFn: () => workflowsApi.getExecutionDetail(id!),
-        refetchInterval: (query) => (['RUNNING', 'PENDING'].includes(query.state.data?.status) ? 3000 : false)
+        refetchInterval: (query) => (['RUNNING', 'PENDING'].includes(query.state.data?.status) ? 3000 : false),
+        // We remove placeholderData here to ensure that when we navigate to a NEW execution ID,
+        // we show the 'Synchronizing' screen specifically for that runner, avoiding stale UI from the previous ID.
+        retry: 3,
+        staleTime: 500
     })
 
     const terminateMutation = useMutation({
@@ -58,19 +62,32 @@ function WorkflowExecutionDetail() {
         queryKey: ['workflow-history', execution?.workflowId],
         queryFn: () => workflowsApi.getWorkflowExecutions(execution!.workflowId),
         enabled: !!execution?.workflowId,
-        refetchInterval: 30000
+        refetchInterval: 30000,
+        //@ts-ignore
+        placeholderData: (prev: any) => prev,
+        retry: 2
     });
 
     const { data: workflow } = useQuery({
         queryKey: ['workflow', execution?.workflowId],
         queryFn: () => workflowsApi.getWorkflow(execution!.workflowId),
-        enabled: !!execution?.workflowId
+        enabled: !!execution?.workflowId,
+        //@ts-ignore
+        placeholderData: (prev: any) => prev,
+        retry: 2
     });
 
     const runMutation = useMutation({
         mutationFn: () => workflowsApi.executeWorkflow(execution.workflowId),
         onSuccess: (newExec) => {
             if (newExec?.id) {
+                // Optimistically update the history cache so the 'recap' shows the new runner immediately
+                const historyKey = ['workflow-history', execution.workflowId];
+                const oldHistory = queryClient.getQueryData<any[]>(historyKey) || [];
+                queryClient.setQueryData(historyKey, [newExec, ...oldHistory]);
+                
+                // Clear state for clean root run
+                setNavigationHistory([]);
                 navigate(`/workflows/history/${newExec.id}`);
             }
         }
@@ -138,8 +155,31 @@ function WorkflowExecutionDetail() {
         }
     };
 
-    if (isLoading) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
-    if (!execution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
+    if (isLoading && !execution && !executionError) return <div className="p-8 text-center text-xl text-gray-500 animate-pulse">Loading execution details...</div>
+    
+    if (executionError) return (
+        <div className="p-12 text-center max-w-md mx-auto">
+            <div className="text-red-500 text-xl font-bold mb-4">Error loading execution</div>
+            <p className="text-slate-500 mb-8">{(executionError as any).message || 'An unexpected error occurred'}</p>
+            <button 
+                onClick={() => refetchExecution()}
+                className="px-6 py-2 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 transition-all"
+            >
+                Retry Connection
+            </button>
+        </div>
+    );
+
+    if (!execution && !isFetchingExecution) return <div className="p-8 text-center text-xl text-red-500">Execution not found</div>
+    
+    // Final defensive check: if no execution OR no workflow relation found yet
+    if (!execution || !execution.workflow) return (
+        <div className="flex flex-col items-center justify-center p-12 h-screen bg-slate-950">
+            <div className="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+            <div className="text-xl text-slate-400 font-bold animate-pulse">Synchronizing Workflow State...</div>
+            <p className="text-slate-600 mt-2 text-sm italic">Finalizing results and closing tasks</p>
+        </div>
+    );
 
     return (
         <div className="h-full flex flex-col bg-slate-950">
@@ -411,7 +451,24 @@ function WorkflowExecutionDetail() {
                                         <div className="space-y-4">
                                             <div>
                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Trigger Path</div>
-                                                <div className="text-xs font-bold text-slate-700">{execution.triggeredBy} ({execution.triggeredByUser})</div>
+                                                <div className="text-xs font-bold text-slate-700">
+                                                    {execution.triggeredBy} ({execution.triggeredByUser})
+                                                </div>
+                                                {execution.parentTaskExecution?.workflowExecution && (
+                                                    <div className="mt-2 pt-2 border-t border-slate-200/50">
+                                                        <div className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter mb-1">Parent Workflow</div>
+                                                        <a 
+                                                            href={`/workflows/history/${execution.parentTaskExecution.workflowExecution.id}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 transition-colors group"
+                                                        >
+                                                            <Layers size={10} />
+                                                            <span className="underline underline-offset-2">{execution.parentTaskExecution.workflowExecution.workflowName}</span>
+                                                            <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                                                        </a>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div>
                                                 <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-1">Current State</div>
@@ -819,7 +876,13 @@ function WorkflowExecutionDetail() {
 }
 
 function ExecutionHistoryGraph({ executions, currentId, onNavigate }: { executions: any[], currentId: string, onNavigate: (id: string) => void }) {
-    const data = [...executions].reverse();
+    // If the current ID isn't in history yet, it's a fresh run. Ensure we include it.
+    let data = [...executions];
+    if (currentId && !data.some(ex => ex.id === currentId)) {
+        // Find if we have current execution data (shell) from parent state
+        data = [{ id: currentId, status: 'RUNNING', startedAt: new Date().toISOString() }, ...data];
+    }
+    data = data.reverse();
     const maxDuration = Math.max(...data.map(ex => ex.duration || 0), 100);
     const colors: Record<string, string> = {
         SUCCESS: '#10b981', FAILED: '#ef4444', MAJOR: '#f97316', MINOR: '#fbbf24', WARNING: '#fbbf24',

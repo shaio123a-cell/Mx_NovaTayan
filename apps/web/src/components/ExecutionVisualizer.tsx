@@ -285,7 +285,7 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
     }, [workflow, taskExecutions]);
 
     return (
-        <div style={{ width: '100%', height: '600px', background: 'white', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ width: '100%', height: '600px', background: '#020617', borderRadius: '16px', border: '1px solid #1e293b', overflow: 'hidden', position: 'relative' }}>
             <ReactFlow
                 nodes={nodes}
                 edges={edges}

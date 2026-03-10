@@ -1,16 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 import { LoggerService } from '../common/logger/logger.service';
 import { GlobalVarsService } from '../global-vars/global-vars.service';
 import { VariableEngine } from '../../../../packages/shared-xform/variable_engine';
+import { WorkflowsService } from '../workflows/workflows.service';
 
 @Injectable()
 export class WorkerService {
     constructor(
         private prisma: PrismaService,
         private logger: LoggerService,
-        private globalVarsService: GlobalVarsService
+        private globalVarsService: GlobalVarsService,
+        @Inject(forwardRef(() => WorkflowsService))
+        private workflowsService: WorkflowsService
     ) {
         this.logger.setContext(WorkerService.name);
     }
@@ -178,7 +181,14 @@ export class WorkerService {
             });
             this.logger.debug(`[Context] Initialized ${Object.keys(workflowVars).length} baseline variables from CWF '${wf.name}' definition`);
 
-            // 2. Resolve Input variables provided by parent if this is a sub-workflow
+            // 2. Resolve Input variables provided by initial metadata (for triggered workflows)
+            const taskExecData = execution.taskExecutions as any;
+            if (taskExecData && taskExecData.initialVariables) {
+                Object.assign(workflowVars, taskExecData.initialVariables);
+                this.logger.log(`[Context] Overlaid ${Object.keys(taskExecData.initialVariables).length} variables from initial execution metadata`);
+            }
+
+            // 3. Resolve Input variables provided by parent if this is a sub-workflow
             if ((execution as any).parentTaskExecutionId) {
                 const parentExec = await this.prisma.taskExecution.findUnique({
                     where: { id: (execution as any).parentTaskExecutionId }
@@ -875,38 +885,95 @@ export class WorkerService {
             } catch (err) {
                 this.logger.error(`[Orchestration] Failed to filter variables: ${err.message}`);
             }
-        }
 
-        // 4. Update WorkflowExecution with final status and results
-        await this.prisma.workflowExecution.update({
-            where: { id: workflowExecutionId },
-            data: {
-                status: finalStatus,
-                completedAt: isFullyDone ? now : null,
-                duration: duration,
-                // taskExecutions is a JSON column — store the final context snapshot there
-                ...(isFullyDone ? {
+            // 4. Update WorkflowExecution with final status and results
+            await this.prisma.workflowExecution.update({
+                where: { id: workflowExecutionId },
+                data: {
+                    status: finalStatus,
+                    completedAt: now,
+                    duration: duration,
                     taskExecutions: {
                         finalVariables: filteredVars,
                         summary: `Workflow finished with ${Object.keys(filteredVars || {}).length} variables context.`
                     }
-                } : {})
-            }
-        });
+                }
+            });
 
-        // 5. If this was a sub-workflow, resume the parent task
-        const exec = execution as any;
-        if (isFullyDone && exec.parentTaskExecutionId) {
-            this.logger.log(`[Orchestration] Sub-workflow ${workflowExecutionId} finished. Resuming parent task ${exec.parentTaskExecutionId} with ${Object.keys(filteredVars || {}).length} variables.`);
-            
-            await this.completeExecution(exec.parentTaskExecutionId, { 
-                status: finalStatus === 'SUCCESS' ? 200 : 500,
-                data: `Sub-workflow ${execution.workflowName} finished with status ${finalStatus}`,
-                subWorkflowId: workflowExecutionId,
-                childExecutionId: workflowExecutionId, // For UI direct navigation
-                variables: filteredVars, // Propagate only filtered variables to parent task context
-                duration: duration,
-                workflowStatus: finalStatus
+            // 5. If this was a sub-workflow, resume the parent task
+            const exec = execution as any;
+            if (exec.parentTaskExecutionId) {
+                this.logger.log(`[Orchestration] Sub-workflow ${workflowExecutionId} finished. Resuming parent task ${exec.parentTaskExecutionId} with ${Object.keys(filteredVars || {}).length} variables.`);
+                
+                await this.completeExecution(exec.parentTaskExecutionId, { 
+                    status: finalStatus === 'SUCCESS' ? 200 : 500,
+                    data: `Sub-workflow ${execution.workflowName} finished with status ${finalStatus}`,
+                    subWorkflowId: workflowExecutionId,
+                    childExecutionId: workflowExecutionId, // For UI direct navigation
+                    variables: filteredVars, // Propagate only filtered variables to parent task context
+                    duration: duration,
+                    workflowStatus: finalStatus
+                });
+            }
+
+            // 6. Process End-of-Workflow Notifications (Event Triggers)
+            try {
+                const wfForNotifs = await this.prisma.workflow.findUnique({
+                    where: { id: execution.workflowId },
+                    select: { notifications: true }
+                });
+                
+                const notifs = (wfForNotifs?.notifications as any[]) || [];
+                if (notifs.length > 0) {
+                    this.logger.log(`[Analytics] Processing ${notifs.length} event triggers for execution ${workflowExecutionId}`);
+                    
+                    for (const notif of notifs) {
+                        let shouldTrigger = false;
+                        if (notif.event === 'COMPLETED') shouldTrigger = true;
+                        else if (notif.event === 'ON_SUCCESS' && finalStatus === 'SUCCESS') shouldTrigger = true;
+                        else if (notif.event === 'ON_FAILURE' && finalStatus !== 'SUCCESS') shouldTrigger = true;
+                        
+                        if (shouldTrigger && notif.workflowId) {
+                            this.logger.log(`[Analytics] Triggering notification workflow ${notif.workflowId} on event ${notif.event}`);
+                            
+                            // Resolve notification inputs if any were mapped in UI
+                            const resolvedNotifInputs: any = {};
+                            if (notif.inputs && Object.keys(notif.inputs).length > 0) {
+                                try {
+                                    const engine = new VariableEngine({
+                                        global: await this.globalVarsService.findAllResolved(),
+                                        workflow: workflowVars,
+                                        macros
+                                    });
+                                    for (const [k, v] of Object.entries(notif.inputs)) {
+                                        resolvedNotifInputs[k] = typeof v === 'string' ? engine.resolve(v) : v;
+                                    }
+                                } catch (e) {
+                                    this.logger.warn(`[Analytics] Failed to resolve some notification inputs for ${notif.workflowId}: ${e.message}`);
+                                }
+                            }
+
+                            // Pass metadata and resolved initial variables to the triggered workflow
+                            await this.workflowsService.enqueueExecution(notif.workflowId, 'SIGNAL', 'system', {
+                                ...resolvedNotifInputs,
+                                __source_execution_id: workflowExecutionId,
+                                __source_status: finalStatus,
+                                __source_variables: filteredVars
+                            });
+                        }
+                    }
+                }
+            } catch (err) {
+                this.logger.error(`[Analytics] Failed to process notification triggers: ${err.message}`);
+            }
+        } else {
+            // Partial update for in-progress workflows
+            await this.prisma.workflowExecution.update({
+                where: { id: workflowExecutionId },
+                data: {
+                    status: finalStatus,
+                    duration: duration
+                }
             });
         }
     }

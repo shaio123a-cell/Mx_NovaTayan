@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
 import { LoggerService } from '../common/logger/logger.service';
@@ -10,6 +10,7 @@ export class WorkflowsService {
     constructor(
         private prisma: PrismaService,
         private logger: LoggerService,
+        @Inject(forwardRef(() => WorkerService))
         private workerService: WorkerService
     ) {
         this.logger.setContext(WorkflowsService.name);
@@ -212,9 +213,11 @@ export class WorkflowsService {
         });
     }
 
-    async enqueueExecution(workflowId: string, triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', userId?: string) {
+    async enqueueExecution(workflowId: string, triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', userId?: string, initialVariables: Record<string, any> = {}) {
         const workflow = await this.findOne(workflowId);
         this.logger.log(`[Trace] Enqueuing execution for workflow: ${workflow.name} (${workflowId})`);
+        
+        // We store initial variables in taskExecutions JSON field as temporary metadata if needed for traceability
         const execution = await this.prisma.workflowExecution.create({
             data: {
                 workflowId,
@@ -224,7 +227,7 @@ export class WorkflowsService {
                 triggeredBy,
                 triggeredByUser: userId || 'system',
                 startedAt: new Date(),
-                taskExecutions: [], // Historical compatibility or metadata
+                taskExecutions: initialVariables ? { initialVariables } : [], // Historical compatibility or metadata
             },
         });
 
@@ -438,7 +441,16 @@ export class WorkflowsService {
             where: { id },
             include: {
                 workflow: true,
-                parentTaskExecution: true,
+                parentTaskExecution: {
+                    include: {
+                        workflowExecution: {
+                            select: {
+                                id: true,
+                                workflowName: true
+                            }
+                        }
+                    }
+                },
                 taskExecutionRecords: {
                     include: { 
                         task: true,

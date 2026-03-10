@@ -30,6 +30,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
     const [scheduling, setScheduling] = useState<any>(draftMetadata?.scheduling || { enabled: false, cron: '0 * * * *' });
     const [notifications, setNotifications] = useState<any[]>(draftMetadata?.notifications || []);
     const [scope, setScope] = useState<'GLOBAL' | 'PRIVATE'>(draftMetadata?.scope || 'GLOBAL');
+    const [isUsageExpanded, setIsUsageExpanded] = useState(false);
 
     const { data: usageData } = useQuery({
         queryKey: ['workflow-usage', workflowId],
@@ -148,12 +149,44 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                         <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
                             <AlertTriangle size={20} />
                         </div>
-                        <div>
-                            <h4 className="text-sm font-black text-amber-800 uppercase tracking-tighter">Shared Library Warning</h4>
+                        <div className="flex-1">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-sm font-black text-amber-800 uppercase tracking-tighter">Shared Library Warning</h4>
+                                <button 
+                                    onClick={() => setIsUsageExpanded(!isUsageExpanded)}
+                                    className="flex items-center gap-1.5 text-[10px] font-black text-amber-600 bg-amber-100/50 hover:bg-amber-100 px-2 py-1 rounded-lg transition-all"
+                                >
+                                    {isUsageExpanded ? 'HIDE LIST' : 'VIEW LIST'}
+                                    {isUsageExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                </button>
+                            </div>
                             <p className="text-xs text-amber-700 font-medium leading-relaxed mt-1">
                                 This workflow is actively used in <span className="font-bold">{usageData.usageCount} other workflows</span>. 
                                 Significant interface changes (renaming inputs, changing output structure) <span className="underline">will break</span> dependent processes.
                             </p>
+
+                            {isUsageExpanded && usageData.dependents && (
+                                <div className="mt-4 space-y-2 animate-in slide-in-from-top-2 duration-300">
+                                    <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1.5">Parent Workflows:</div>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {usageData.dependents.map((dep: any) => (
+                                            <a 
+                                                key={dep.id}
+                                                href={`/designer?id=${dep.id}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="group flex items-center justify-between p-2.5 bg-white/50 border border-amber-200/50 rounded-xl hover:bg-white hover:border-amber-300 transition-all"
+                                            >
+                                                <div className="flex items-center gap-2.5">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-400 group-hover:scale-125 transition-transform" />
+                                                    <span className="text-xs font-bold text-amber-900 line-clamp-1">{dep.name}</span>
+                                                </div>
+                                                <Play size={10} className="text-amber-400 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
