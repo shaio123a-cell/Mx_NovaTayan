@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DirtyStateProvider, useDirtyState } from './context/DirtyStateContext'
 import { ToastProvider } from './context/ToastContext'
+import { BreadcrumbProvider } from './context/BreadcrumbContext'
 
 // Pages
 import Dashboard from './pages/Dashboard'
@@ -124,11 +125,13 @@ function MainApp() {
     return (
         <QueryClientProvider client={queryClient}>
             <ToastProvider>
-                <DirtyStateProvider>
-                    <BrowserRouter>
-                        <AppContent />
-                    </BrowserRouter>
-                </DirtyStateProvider>
+                <BreadcrumbProvider>
+                    <DirtyStateProvider>
+                        <BrowserRouter>
+                            <AppContent />
+                        </BrowserRouter>
+                    </DirtyStateProvider>
+                </BreadcrumbProvider>
             </ToastProvider>
         </QueryClientProvider>
     )

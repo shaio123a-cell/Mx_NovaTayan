@@ -1,5 +1,6 @@
 import { useLocation, Link } from 'react-router-dom';
 import { Menu, Search, HelpCircle, User, Activity, ChevronRight } from 'lucide-react';
+import { useBreadcrumbs } from '../context/BreadcrumbContext';
 
 interface HeaderProps {
     onToggleSidebar: () => void;
@@ -7,17 +8,36 @@ interface HeaderProps {
 }
 
 export function Header({ onToggleSidebar, isSidebarOpen }: HeaderProps) {
+    const { extraSegments } = useBreadcrumbs();
     const location = useLocation();
 
     // Generate breadcrumbs from path
     const pathSegments = location.pathname.split('/').filter(Boolean);
-    const breadcrumbs = [
-        { label: 'RestMon', path: '/' },
-        ...pathSegments.map((segment, index) => ({
-            label: segment.charAt(0).toUpperCase() + segment.slice(1),
-            path: '/' + pathSegments.slice(0, index + 1).join('/')
-        }))
+    
+    let breadcrumbs: { label: string; path?: string }[] = [
+        { label: 'RestMon', path: '/' }
     ];
+
+    if (extraSegments.length > 0) {
+        // If segments are provided explicitly, use them as the primary trail
+        breadcrumbs = [...breadcrumbs, ...extraSegments];
+    } else {
+        // Fallback to path-based breadcrumbs only if no explicit segments are provided
+        pathSegments.forEach((segment, index) => {
+            // Ignore UUIDs or IDs in path breadcrumbs
+            if (segment.length > 20 && segment.includes('-')) return;
+
+            let label = segment.charAt(0).toUpperCase() + segment.slice(1);
+            if (segment.toLowerCase() === 'history') label = 'History';
+            if (segment.toLowerCase() === 'workflows') label = 'Workflow';
+            if (segment.toLowerCase() === 'admin') label = 'Admin';
+            
+            breadcrumbs.push({
+                label,
+                path: '/' + pathSegments.slice(0, index + 1).join('/')
+            });
+        });
+    }
 
     return (
         <header className="h-12 border-b border-[#202226] bg-[#111217] flex items-center px-2 shrink-0 z-[110]">
@@ -41,15 +61,15 @@ export function Header({ onToggleSidebar, isSidebarOpen }: HeaderProps) {
                 {/* Breadcrumbs */}
                 <nav className="flex items-center text-[13px] font-medium ml-2">
                     {breadcrumbs.map((crumb, index) => (
-                        <div key={crumb.path} className="flex items-center">
+                        <div key={crumb.path || index} className="flex items-center">
                             {index > 0 && <ChevronRight size={14} className="mx-2 text-[#9fa7b0] shrink-0" />}
                             <Link 
-                                to={crumb.path}
+                                to={crumb.path || '#'}
                                 className={`${
-                                    index === breadcrumbs.length - 1 
+                                    index === breadcrumbs.length - 1 || !crumb.path
                                         ? 'text-white pointer-events-none' 
                                         : 'text-[#9fa7b0] hover:text-white'
-                                } transition-colors truncate max-w-[150px]`}
+                                } transition-colors truncate max-w-[200px]`}
                             >
                                 {crumb.label}
                             </Link>

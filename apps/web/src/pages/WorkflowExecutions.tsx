@@ -3,8 +3,19 @@ import { useQuery } from '@tanstack/react-query'
 import { workflowsApi } from '../api/workflows'
 import { Link } from 'react-router-dom'
 import { RefreshCcw, ChevronRight, ChevronDown } from 'lucide-react'
+import { useEffect } from 'react'
+import { useBreadcrumbs } from '../context/BreadcrumbContext'
 
 function WorkflowExecutions() {
+    const { setExtraSegments } = useBreadcrumbs();
+
+    useEffect(() => {
+        setExtraSegments([
+            { label: 'Workflow', path: '/designer' },
+            { label: 'History', path: '/history' }
+        ]);
+        return () => setExtraSegments([]);
+    }, [setExtraSegments]);
 
     const [refreshInterval, setRefreshInterval] = useState<number>(60000);
     const [collapsedWorkflows, setCollapsedWorkflows] = useState<string[]>([]);

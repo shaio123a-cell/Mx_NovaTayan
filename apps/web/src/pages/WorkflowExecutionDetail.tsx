@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
 import { workflowsApi } from '../api/workflows'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useBreadcrumbs } from '../context/BreadcrumbContext'
 import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
 import { TaskEditShelf } from '../components/TaskEditShelf'
 import VariableInspectorDrawer from '../components/VariableInspectorDrawer'
@@ -84,19 +85,54 @@ function WorkflowExecutionDetail() {
         }
     });
 
-    const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
+    const [navigationHistory, setNavigationHistory] = useState<{ id: string, name: string }[]>([]);
+    const { setExtraSegments } = useBreadcrumbs();
 
-    const handleNavigate = (newId: string) => {
-        setNavigationHistory(prev => [...prev, id!]);
+    // Sync breadcrumbs
+    useEffect(() => {
+        if (!execution) return;
+
+        // If we navigate back to an ID that is already in our trail, truncate the trail
+        const existingIndex = navigationHistory.findIndex(item => item.id === id);
+        if (existingIndex !== -1) {
+            setNavigationHistory(prev => prev.slice(0, existingIndex));
+        } else if (!execution.parentTaskExecutionId && navigationHistory.length > 0) {
+            // If we navigate to a root execution (no parent) and it's not in our trail, 
+            // it means we switched to a different workflow entirely (e.g. from list or sidebar).
+            setNavigationHistory([]);
+        }
+
+        const segments = [
+            { label: 'Workflow', path: '/designer' },
+            { label: 'History', path: '/history' },
+            ...navigationHistory.map(item => ({
+                label: item.name,
+                path: `/workflows/history/${item.id}`
+            })),
+            { label: execution.workflowName }
+        ];
+        
+        setExtraSegments(segments);
+
+        return () => setExtraSegments([]);
+    }, [execution, id, navigationHistory, setExtraSegments]);
+
+    const handleDeepDive = (childId: string) => {
+        setNavigationHistory(prev => [...prev, { id: id!, name: execution.workflowName }]);
+        navigate(`/workflows/history/${childId}`);
+    };
+
+    const handleNavigateSibling = (newId: string) => {
+        // Just navigate, don't update navigation history (keep current trail)
         navigate(`/workflows/history/${newId}`);
     };
 
     const handleBack = () => {
         const prev = [...navigationHistory];
-        const lastId = prev.pop();
+        const last = prev.pop();
         setNavigationHistory(prev);
-        if (lastId) {
-            navigate(`/workflows/history/${lastId}`);
+        if (last) {
+            navigate(`/workflows/history/${last.id}`);
         } else {
             navigate('/history');
         }
@@ -128,7 +164,7 @@ function WorkflowExecutionDetail() {
                     <ExecutionHistoryGraph 
                         executions={history || []} 
                         currentId={id!} 
-                        onNavigate={handleNavigate}
+                        onNavigate={handleNavigateSibling}
                     />
 
                     <div className="h-8 w-px bg-slate-800" />
@@ -607,7 +643,7 @@ function WorkflowExecutionDetail() {
                                                 onClick={() => {
                                                     const childId = selectedTask.result?.childExecutionId || selectedTask.subWorkflows?.[0]?.id;
                                                     if (childId) {
-                                                        handleNavigate(childId);
+                                                        handleDeepDive(childId);
                                                         setShowInspector(false);
                                                     } else {
                                                         alert("Sub-workflow execution ID not yet available. It may be initializing.");
