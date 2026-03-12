@@ -1003,11 +1003,21 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                     onChange={(newMerged) => {
                                         const onlyNew = { ...newMerged };
                                         Object.keys(inheritedVars).forEach(k => {
-                                            if (k !== '__order' && k !== '__scopes') delete onlyNew[k];
+                                            if (k !== '__order' && k !== '__scopes') {
+                                                if (JSON.stringify(newMerged[k]) === JSON.stringify(inheritedVars[k])) {
+                                                    delete onlyNew[k];
+                                                }
+                                            }
                                         });
                                         setOutputVars(onlyNew);
                                     }} 
                                     inheritedNames={Object.keys(inheritedVars)}
+                                    overriddenNames={Object.keys(outputVars).filter(k => Object.keys(inheritedVars).includes(k))}
+                                    onResetOverride={(name) => {
+                                        const current = { ...outputVars };
+                                        delete current[name];
+                                        setOutputVars(current);
+                                    }}
                                     usedNames={[]} 
                                     availableUpstreamVars={availableUpstreamVars} 
                                     forceWorkflowScope={isUtility || !!nodeData}

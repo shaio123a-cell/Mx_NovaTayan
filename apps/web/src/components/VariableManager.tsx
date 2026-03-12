@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { VariableTransformerDrawer } from './VariableTransformerDrawer';
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
-import { ArrowUp, ArrowDown, Trash2, Edit2, Zap, MoreVertical, Globe, Library, Eye, Plus, Check, Shield } from 'lucide-react';
+import { ArrowUp, ArrowDown, Trash2, Edit2, Zap, MoreVertical, Globe, Library, Eye, Plus, Check, Shield, RotateCcw } from 'lucide-react';
 
 export interface VariableManagerProps {
   value: Record<string, any>;
@@ -14,9 +14,11 @@ export interface VariableManagerProps {
   showWorkflowInputToggle?: boolean;
   hideAdd?: boolean;
   lockedNames?: string[];
+  overriddenNames?: string[];
+  onResetOverride?: (name: string) => void;
 }
 
-export function VariableManager({ value, onChange, usedNames = [], availableUpstreamVars = [], forceWorkflowScope = false, inheritedNames = [], showWorkflowInputToggle = false, hideAdd = false, lockedNames = [] }: VariableManagerProps) {
+export function VariableManager({ value, onChange, usedNames = [], availableUpstreamVars = [], forceWorkflowScope = false, inheritedNames = [], showWorkflowInputToggle = false, hideAdd = false, lockedNames = [], overriddenNames = [], onResetOverride }: VariableManagerProps) {
   const [newVar, setNewVar] = useState('');
   const [newVal, setNewVal] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -332,6 +334,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                     const isTransformer = typeof val === 'object' && val.valueMode === 'transformer';
                     const scope = scopes[name] || 'LOCAL';
                     const isInherited = inheritedNames.includes(name);
+                    const isOverridden = overriddenNames.includes(name);
                     const isLocked = lockedNames.includes(name);
                     
                     return (
@@ -342,7 +345,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                             onDragOver={(e) => handleDragOver(e, index)}
                             onDragEnd={!isInherited ? handleDragEnd : undefined}
                             className={`border-b last:border-0 transition-colors group ${
-                                isInherited ? 'bg-indigo-50/20' : 'hover:bg-blue-50/30'
+                                isInherited && !isOverridden ? 'bg-indigo-50/20' : 'hover:bg-blue-50/30'
                             } ${draggedIndex === index ? 'opacity-30' : ''}`}
                         >
                             <td className="text-center">
@@ -359,7 +362,8 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                             <td className="px-4 py-3">
                                 <div className={`font-mono font-bold truncate flex items-center gap-2 ${isInherited ? 'text-indigo-600' : 'text-gray-700'}`} title={name}>
                                     {name}
-                                    {isInherited && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded uppercase tracking-tighter">Library</span>}
+                                    {isInherited && !isOverridden && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded uppercase tracking-tighter">Library</span>}
+                                    {isOverridden && <span className="text-[8px] bg-amber-100 text-amber-600 px-1 py-0.5 rounded uppercase tracking-tighter shadow-sm border border-amber-200">Overlay Active</span>}
                                     {isLocked && <span className="text-[8px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded uppercase tracking-tighter font-black flex items-center gap-1"><Shield size={8}/> IN USE</span>}
                                 </div>
                             </td>
@@ -394,11 +398,12 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                                         <Globe size={12} className="text-blue-500" />
                                         }
                                         <span className={`text-[10px] px-2 py-0.5 rounded font-extrabold ${
-                                            isInherited ? 'bg-indigo-100/50 text-indigo-500 italic' :
+                                            isInherited && !isOverridden ? 'bg-indigo-100/50 text-indigo-500 italic' :
+                                            isOverridden ? 'bg-amber-100 text-amber-600 font-bold' :
                                             scope === 'WORKFLOW' ? 'bg-orange-100 text-orange-600' :
                                             'bg-blue-100 text-blue-600'
                                         }`}>
-                                            {isInherited ? 'LIBRARY OVERLAY' : scope}
+                                            {isOverridden ? 'OVERRIDDEN' : (isInherited ? 'LIBRARY DEFAULT' : scope)}
                                         </span>
                                     </div>
                                 </td>
@@ -432,6 +437,15 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                                         >
                                             <Edit2 size={14} />
                                         </button>
+                                        {isInherited && isOverridden && (
+                                            <button 
+                                                onClick={() => onResetOverride && onResetOverride(name)} 
+                                                className={`p-2 rounded-lg transition-all border border-transparent text-gray-400 hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200`} 
+                                                title="Reset to Library Default"
+                                            >
+                                                <RotateCcw size={14} />
+                                            </button>
+                                        )}
                                         {!isInherited && (
                                             <button 
                                                 onClick={() => handleSafeDelete(name)} 
@@ -458,7 +472,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
 
       <VariableTransformerDrawer
         open={!!openTransformerFor}
-        readOnly={openTransformerFor ? inheritedNames.includes(openTransformerFor) : false}
+        readOnly={false}
         name={openTransformerFor || ''}
         initial={openTransformerFor ? (value[openTransformerFor]?.transformer || null) : null}
         variables={(() => {

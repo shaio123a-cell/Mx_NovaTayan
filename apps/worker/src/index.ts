@@ -71,18 +71,26 @@ async function executeTask(data: any) {
         || {};
     const instVars = (inputObj?.variableExtraction?.vars) || {};
 
+    // Identify which lib var names the node is overriding (same key, node wins)
+    const libVarNames = Object.keys(libVars).filter(k => k !== '__scopes' && k !== '__order');
+    const instVarNames = Object.keys(instVars).filter(k => k !== '__scopes' && k !== '__order');
+    // Only truly NEW (not in lib) node vars get appended — overrides stay at lib position
+    const newInstVarNames = instVarNames.filter(n => !libVarNames.includes(n));
+
     const outputProcessingVars = isUtility 
         ? instVars
         : {
+            // lib defaults first, node overlay wins on same-name keys
             ...libVars,
             ...instVars,
             __scopes: {
                 ...(libVars.__scopes || {}),
                 ...(instVars.__scopes || {})
             },
+            // Lib vars keep their original position; only brand-new node vars are appended
             __order: [
-                ...(libVars.__order || Object.keys(libVars).filter(k => k !== '__scopes' && k !== '__order')),
-                ...(instVars.__order || Object.keys(instVars).filter(k => k !== '__scopes' && k !== '__order'))
+                ...(libVars.__order || libVarNames),
+                ...newInstVarNames
             ].filter((v, i, a) => a.indexOf(v) === i)
         };
 
@@ -268,8 +276,9 @@ async function executeTask(data: any) {
                 let specObj: any = outputProcessingSpec;
                 if (typeof outputProcessingSpec === 'string') {
                     try {
+                        const resolvedSpec = engine.resolve(outputProcessingSpec);
                         const { validateSpecYaml } = await import('../../../packages/shared-xform/xform_validation');
-                        const validation = validateSpecYaml(outputProcessingSpec);
+                        const validation = validateSpecYaml(resolvedSpec);
                         if (!validation.ok) {
                             throw new Error((validation as any).errors?.join(', ') || 'Spec validation failed');
                         }
@@ -451,8 +460,9 @@ async function executeTask(data: any) {
                         // Treat transformer.spec as YAML transform spec
                         let specObj: any = t.spec || t.specYaml || null;
                         if (typeof specObj === 'string') {
+                            const resolvedSpec = engine.resolve(specObj);
                             const { validateSpecYaml } = await import('../../../packages/shared-xform/xform_validation');
-                            const validation = validateSpecYaml(specObj);
+                            const validation = validateSpecYaml(resolvedSpec);
                             if (!validation.ok) throw new Error((validation as any).errors?.join?.(', ') || 'Transformer spec invalid');
                             specObj = validation.spec;
                         }
@@ -513,8 +523,9 @@ async function executeTask(data: any) {
                             } else if (t.type === 'advanced') {
                                 let specObj: any = t.spec || t.specYaml || null;
                                 if (typeof specObj === 'string') {
+                                    const resolvedSpec = engine.resolve(specObj);
                                     const { validateSpecYaml } = await import('../../../packages/shared-xform/xform_validation');
-                                    const validation = validateSpecYaml(specObj);
+                                    const validation = validateSpecYaml(resolvedSpec);
                                     if (!validation.ok) throw new Error((validation as any).errors?.join?.(', ') || 'Transformer spec invalid');
                                     specObj = validation.spec;
                                 }
