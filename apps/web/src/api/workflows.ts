@@ -93,4 +93,32 @@ export const workflowsApi = {
         });
         return handleResponse(response);
     },
+    
+    // Scheduling Bindings
+    getBindings: async (id: string): Promise<any[]> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${id}/bindings`);
+        return handleResponse(response);
+    },
+    createBinding: async (workflowId: string, data: any): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/bindings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+    updateBinding: async (workflowId: string, bindingId: string, data: any): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/bindings/${bindingId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+    deleteBinding: async (workflowId: string, bindingId: string): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/bindings/${bindingId}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) throw new Error('Failed to delete binding');
+    },
 };

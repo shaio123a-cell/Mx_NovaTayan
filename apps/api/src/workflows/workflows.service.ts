@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
+import { CreateBindingDto, UpdateBindingDto } from './dto/binding.dto';
 import { LoggerService } from '../common/logger/logger.service';
 import { suggestIcon } from '../tasks/utils/icon-mapper';
 import { WorkerService } from '../worker/worker.service';
@@ -213,7 +214,14 @@ export class WorkflowsService {
         });
     }
 
-    async enqueueExecution(workflowId: string, triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', userId?: string, initialVariables: Record<string, any> = {}, sourceExecutionId?: string) {
+    async enqueueExecution(
+        workflowId: string, 
+        triggeredBy: 'MANUAL' | 'SCHEDULE' | 'SIGNAL' = 'MANUAL', 
+        userId?: string, 
+        initialVariables: Record<string, any> = {}, 
+        sourceExecutionId?: string,
+        bindingId?: string
+    ) {
         const workflow = await this.findOne(workflowId);
         this.logger.log(`[Trace] Enqueuing execution for workflow: ${workflow.name} (${workflowId})`);
         
@@ -229,6 +237,7 @@ export class WorkflowsService {
                 startedAt: new Date(),
                 taskExecutions: initialVariables ? { initialVariables } : [], // Historical compatibility or metadata
                 sourceExecutionId,
+                bindingId,
             },
         });
 
@@ -532,5 +541,63 @@ export class WorkflowsService {
         });
 
         return { success: true };
+    }
+
+    // --- Bindings & Triggers (Scheduling System) ---
+
+    async createBinding(workflowId: string, dto: CreateBindingDto) {
+        await this.findOne(workflowId);
+        return this.prisma.workflowScheduleBinding.create({
+            data: {
+                ...dto,
+                workflowId,
+                state: dto.state || 'ACTIVE'
+            },
+            include: { schedule: true, calendar: true }
+        });
+    }
+
+    async getBindings(workflowId: string) {
+        return this.prisma.workflowScheduleBinding.findMany({
+            where: { workflowId },
+            include: { schedule: true, calendar: true }
+        });
+    }
+
+    async deleteBinding(id: string) {
+        return this.prisma.workflowScheduleBinding.delete({
+            where: { id }
+        });
+    }
+
+    async patchBinding(id: string, dto: UpdateBindingDto) {
+        return this.prisma.workflowScheduleBinding.update({
+            where: { id },
+            data: dto,
+            include: { schedule: true, calendar: true }
+        });
+    }
+
+    async triggerByEvent(workflowId: string, payload: any, idempotencyKey?: string) {
+        // Here we would eventually check HMAC signatures and idempotency
+        // For now, it's a wrapper around enqueueExecution
+        return this.enqueueExecution(workflowId, 'SIGNAL', 'event-trigger', payload);
+    }
+
+    async triggerByToken(token: string, payload: any) {
+        const tokenRecord = await this.prisma.triggerToken.findUnique({
+            where: { token, enabled: true },
+            include: { workflow: true }
+        });
+
+        if (!tokenRecord) {
+            throw new NotFoundException(`Invalid or disabled trigger token: ${token}`);
+        }
+
+        if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) {
+            throw new Error(`Trigger token has expired`);
+        }
+
+        return this.enqueueExecution(tokenRecord.workflowId, 'SIGNAL', 'token-trigger', payload);
     }
 }

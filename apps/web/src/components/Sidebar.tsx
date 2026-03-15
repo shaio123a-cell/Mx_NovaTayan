@@ -12,7 +12,9 @@ import {
     HelpCircle,
     Component,
     ChevronRight,
-    Zap
+    Zap,
+    Calendar,
+    Clock
 } from 'lucide-react';
 
 interface NavItemData {
@@ -56,6 +58,7 @@ export function Sidebar({ isOpen }: SidebarProps) {
         { icon: Component, label: 'Dashboards', path: '/history' },
         { icon: Network, label: 'Designer', path: '/designer' },
         { icon: ListTodo, label: 'Tasks', path: '/tasks' },
+        { icon: Clock, label: 'Scheduling', path: '/scheduling' },
         { 
             icon: ShieldCheck, 
             label: 'Administration', 

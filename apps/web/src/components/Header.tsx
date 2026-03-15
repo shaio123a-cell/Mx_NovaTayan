@@ -1,6 +1,8 @@
 import { useLocation, Link } from 'react-router-dom';
 import { Menu, Search, HelpCircle, User, Activity, ChevronRight } from 'lucide-react';
 import { useBreadcrumbs } from '../context/BreadcrumbContext';
+import { useDirtyState } from '../context/DirtyStateContext';
+import { useNavigate } from 'react-router-dom';
 
 interface HeaderProps {
     onToggleSidebar: () => void;
@@ -10,6 +12,18 @@ interface HeaderProps {
 export function Header({ onToggleSidebar, isSidebarOpen }: HeaderProps) {
     const { extraSegments } = useBreadcrumbs();
     const location = useLocation();
+    const navigate = useNavigate();
+    const { isDirty, setShowDirtyModal, setPendingAction } = useDirtyState();
+
+    const handleLinkClick = (e: React.MouseEvent, path: string) => {
+        e.preventDefault();
+        if (isDirty) {
+            setPendingAction(() => () => navigate(path));
+            setShowDirtyModal(true);
+        } else {
+            navigate(path);
+        }
+    };
 
     // Generate breadcrumbs from path
     const pathSegments = location.pathname.split('/').filter(Boolean);
@@ -51,7 +65,11 @@ export function Header({ onToggleSidebar, isSidebarOpen }: HeaderProps) {
 
                 {/* Logo (only if sidebar is closed) */}
                 {!isSidebarOpen && (
-                    <Link to="/" className="flex items-center gap-2 px-1">
+                    <Link 
+                        to="/" 
+                        onClick={(e) => handleLinkClick(e, '/')}
+                        className="flex items-center gap-2 px-1"
+                    >
                         <div className="w-6 h-6 bg-[#f05a28] rounded-sm flex items-center justify-center">
                             <Activity className="text-white w-4 h-4" />
                         </div>
@@ -65,6 +83,7 @@ export function Header({ onToggleSidebar, isSidebarOpen }: HeaderProps) {
                             {index > 0 && <ChevronRight size={14} className="mx-2 text-[#9fa7b0] shrink-0" />}
                             <Link 
                                 to={crumb.path || '#'}
+                                onClick={(e) => crumb.path && handleLinkClick(e, crumb.path)}
                                 className={`${
                                     index === breadcrumbs.length - 1 || !crumb.path
                                         ? 'text-white pointer-events-none' 

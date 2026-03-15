@@ -6,9 +6,10 @@ import {
     X, Settings2, Clock, Zap, Bell, Shield, Info, 
     ArrowRight, Save, Plus, Trash2, Calendar, 
     Mail, MessageSquare, AlertTriangle, Layers,
-    ChevronDown, ChevronUp, Check, Play, Globe, Lock
+    ChevronDown, ChevronUp, Check, Play, Globe, Lock, Pause
 } from 'lucide-react';
 import { VariableManager } from './VariableManager';
+import { schedulingApi } from '../api/scheduling';
 
 interface WorkflowAdminShelfProps {
     workflowId: string | null;
@@ -36,6 +37,46 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         queryKey: ['workflow-usage', workflowId],
         queryFn: () => workflowsApi.getWorkflowUsage(workflowId!),
         enabled: !!workflowId
+    });
+
+    const { data: bindings, refetch: refetchBindings } = useQuery({
+        queryKey: ['workflow-bindings', workflowId],
+        queryFn: () => workflowsApi.getBindings(workflowId!),
+        enabled: !!workflowId
+    });
+
+    const { data: calendars } = useQuery({
+        queryKey: ['calendars'],
+        queryFn: schedulingApi.getCalendars
+    });
+
+    const { data: schedules } = useQuery({
+        queryKey: ['schedules'],
+        queryFn: schedulingApi.getSchedules
+    });
+
+    const createBindingMutation = useMutation({
+        mutationFn: (data: any) => workflowsApi.createBinding(workflowId!, data),
+        onSuccess: () => {
+            showToast('Schedule binding created', 'success');
+            refetchBindings();
+        }
+    });
+
+    const deleteBindingMutation = useMutation({
+        mutationFn: (bindingId: string) => workflowsApi.deleteBinding(workflowId!, bindingId),
+        onSuccess: () => {
+            showToast('Schedule binding removed', 'info');
+            refetchBindings();
+        }
+    });
+
+    const updateBindingMutation = useMutation({
+        mutationFn: ({ id, data }: { id: string, data: any }) => workflowsApi.updateBinding(workflowId!, id, data),
+        onSuccess: () => {
+            showToast('Binding updated', 'success');
+            refetchBindings();
+        }
     });
 
     const { data: workflow, isLoading } = useQuery({
@@ -297,51 +338,150 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                         </section>
 
                         <section>
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-                                    <Clock size={20} />
-                                </div>
-                                <div>
-                                    <h3 className="text-lg font-bold text-slate-800">Automated Execution</h3>
-                                    <p className="text-sm text-slate-500 font-medium">Set up recurring triggers using Cron syntax.</p>
-                                </div>
-                            </div>
-
-                            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                                <div className="flex items-center gap-4 mb-6">
-                                    <button 
-                                        onClick={() => setScheduling({ ...scheduling, enabled: !scheduling.enabled })}
-                                        className={`px-4 py-2 rounded-lg font-bold text-xs transition-all ${scheduling.enabled ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100' : 'bg-slate-100 text-slate-400'}`}
-                                    >
-                                        {scheduling.enabled ? 'ENABLED' : 'DISABLED'}
-                                    </button>
-                                    <p className="text-xs text-slate-500 font-medium">{scheduling.enabled ? 'Workflow will run automatically on the specified schedule.' : 'Workflow will only run when manually triggered.'}</p>
-                                </div>
-
-                                {scheduling.enabled && (
-                                    <div className="space-y-4 animate-slide-in-top">
-                                        <div>
-                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Cron Expression</label>
-                                            <div className="relative">
-                                                <input 
-                                                    value={scheduling.cron}
-                                                    onChange={(e) => setScheduling({ ...scheduling, cron: e.target.value })}
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-sm focus:outline-none focus:border-[#1976D2] transition-all"
-                                                    placeholder="0 * * * *"
-                                                />
-                                                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-indigo-500">FORMAT: MIN HR DAY MON DOW</div>
-                                            </div>
-                                        </div>
-                                        <div className="bg-amber-50 rounded-xl p-4 border border-amber-100 flex gap-3">
-                                            <Calendar size={18} className="text-amber-500 shrink-0" />
-                                            <div>
-                                                <p className="text-xs text-amber-800 font-bold mb-1">Schedule Preview</p>
-                                                <p className="text-[11px] text-amber-700 font-medium">Execution Engine parses this on the bridge. Ensure correct timezone settings.</p>
-                                            </div>
-                                        </div>
+                            <div className="flex items-center justify-between mb-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                                        <Clock size={20} />
                                     </div>
-                                )}
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-800">Advanced Scheduling</h3>
+                                        <p className="text-sm text-slate-500 font-medium">Attach this workflow to global schedules and calendars.</p>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => createBindingMutation.mutate({ 
+                                        scheduleId: schedules?.[0]?.id, 
+                                        state: 'ACTIVE',
+                                        maxConcurrency: 1,
+                                        skipIfRunning: true
+                                    })}
+                                    disabled={!schedules?.length || !workflowId}
+                                    className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-bold text-xs hover:bg-emerald-100 transition-all disabled:opacity-50"
+                                >
+                                    <Plus size={16} />
+                                    New Binding
+                                </button>
                             </div>
+
+                            {!workflowId ? (
+                                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
+                                    <Info className="w-8 h-8 text-amber-500 mx-auto mb-3" />
+                                    <p className="text-sm font-bold text-amber-900">Save Workflow First</p>
+                                    <p className="text-xs text-amber-700 mt-1">Advanced scheduling bindings can only be created after the workflow is saved.</p>
+                                </div>
+                            ) : bindings?.length === 0 ? (
+                                <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl py-16 text-center">
+                                    <Clock className="w-10 h-10 text-slate-200 mx-auto mb-4" />
+                                    <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest">No Scheduled Triggers</h4>
+                                    <p className="text-[10px] text-slate-300 font-bold mt-1">This workflow will only run manually or via API.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {bindings?.map((binding: any) => (
+                                        <div key={binding.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm transition-all hover:shadow-md">
+                                            <div className="p-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`p-2 rounded-lg ${binding.state === 'ACTIVE' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
+                                                        {binding.state === 'ACTIVE' ? <Play size={16} /> : <Pause size={16} />}
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-xs font-black text-slate-900 tracking-tight">
+                                                            {schedules?.find(s => s.id === binding.scheduleId)?.name || 'Unknown Schedule'}
+                                                        </div>
+                                                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
+                                                            ID: {binding.id.split('-')[0]}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <button 
+                                                        onClick={() => updateBindingMutation.mutate({ id: binding.id, data: { state: binding.state === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' } })}
+                                                        className={`text-[10px] font-black px-2 py-1 rounded transition-colors ${binding.state === 'ACTIVE' ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}
+                                                    >
+                                                        {binding.state === 'ACTIVE' ? 'PAUSE' : 'RESUME'}
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => deleteBindingMutation.mutate(binding.id)}
+                                                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="p-5 grid grid-cols-2 gap-6">
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Trigger Engine</label>
+                                                        <select 
+                                                            value={binding.scheduleId}
+                                                            onChange={(e) => updateBindingMutation.mutate({ id: binding.id, data: { scheduleId: e.target.value } })}
+                                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-emerald-500"
+                                                        >
+                                                            {schedules?.map(s => (
+                                                                <option key={s.id} value={s.id}>{s.name} ({s.mode})</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Gating Calendar (Optional)</label>
+                                                        <select 
+                                                            value={binding.calendarId || ''}
+                                                            onChange={(e) => updateBindingMutation.mutate({ id: binding.id, data: { calendarId: e.target.value || null } })}
+                                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-emerald-500"
+                                                        >
+                                                            <option value="">No Calendar (Always Run)</option>
+                                                            {calendars?.map(c => (
+                                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-4">
+                                                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                                        <div>
+                                                            <p className="text-[10px] font-black text-slate-800">Skip if running</p>
+                                                            <p className="text-[9px] text-slate-400 font-medium">Prevent overlapping runs</p>
+                                                        </div>
+                                                        <button 
+                                                            onClick={() => updateBindingMutation.mutate({ id: binding.id, data: { skipIfRunning: !binding.skipIfRunning } })}
+                                                            className={`w-10 h-5 rounded-full relative transition-all ${binding.skipIfRunning ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                                        >
+                                                            <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${binding.skipIfRunning ? 'right-1' : 'left-1'}`} />
+                                                        </button>
+                                                    </div>
+                                                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                                        <div>
+                                                            <p className="text-[10px] font-black text-slate-800 text-left">Max Concurrency</p>
+                                                            <p className="text-[9px] text-slate-400 font-medium">Limit parallel executions</p>
+                                                        </div>
+                                                        <input 
+                                                            type="number"
+                                                            value={binding.maxConcurrency}
+                                                            onChange={(e) => updateBindingMutation.mutate({ id: binding.id, data: { maxConcurrency: parseInt(e.target.value) } })}
+                                                            className="w-12 bg-white border border-slate-200 rounded px-2 py-1 text-xs font-bold text-center"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {binding.lastFiredAt && (
+                                                    <div className="col-span-2 mt-2 pt-4 border-t border-slate-50 flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <div className="w-1 h-1 rounded-full bg-slate-300" />
+                                                            Last Run: {new Date(binding.lastFiredAt).toLocaleString()}
+                                                        </div>
+                                                        {binding.nextFireAt && (
+                                                            <div className="flex items-center gap-1.5 text-emerald-600">
+                                                                <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                                                                Next Run: {new Date(binding.nextFireAt).toLocaleString()}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </section>
                     </div>
                 )}

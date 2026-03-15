@@ -15,6 +15,9 @@ import WorkflowExecutionDetail from './pages/WorkflowExecutionDetail'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminSettings from './pages/AdminSettings'
 import AdminGlobalVars from './pages/AdminGlobalVars'
+import Scheduling from './pages/Scheduling'
+import CalendarDetail from './pages/CalendarDetail'
+import ScheduleDetail from './pages/ScheduleDetail'
 import { UnsavedChangesModal } from './components/UnsavedChangesModal'
 
 // Components
@@ -37,26 +40,34 @@ function AppContent() {
     const sidebarWidth = isSidebarOpen ? 240 : 52;
 
     const handleSaveAndContinue = () => {
-        window.dispatchEvent(new CustomEvent('DESIGNER_SAVE_REQUESTED'));
-        setTimeout(() => {
-            setShowDirtyModal(false);
-            if (pendingAction) {
-                pendingAction();
-                setPendingAction(null);
+        // Close the modal immediately so UI feels responsive
+        setShowDirtyModal(false);
+        // Store the current pendingAction in a closure captured here
+        const actionToRun = pendingAction;
+        setPendingAction(null);
+        // Tell the editor to save. When it finishes, it fires DESIGNER_SAVE_COMPLETE.
+        const onSaveComplete = () => {
+            window.removeEventListener('DESIGNER_SAVE_COMPLETE', onSaveComplete);
+            if (actionToRun) {
+                actionToRun();
             }
-        }, 800);
+        };
+        window.addEventListener('DESIGNER_SAVE_COMPLETE', onSaveComplete);
+        window.dispatchEvent(new CustomEvent('DESIGNER_SAVE_REQUESTED'));
     };
 
     const handleDiscardAndContinue = () => {
         setIsDirty(false);
         setShowDirtyModal(false);
-        if (pendingAction) {
-            pendingAction();
-            setPendingAction(null);
+        const actionToRun = pendingAction;
+        setPendingAction(null);
+        if (actionToRun) {
+            actionToRun();
         }
     };
 
     const handleCancel = () => {
+        // Just close the modal — stay on the current page, no navigation
         setShowDirtyModal(false);
         setPendingAction(null);
     };
@@ -110,6 +121,9 @@ function AppContent() {
                         <Route path="/output-processing" element={<Suspense fallback={<div>Loading...</div>}>{React.createElement(React.lazy(() => import('./pages/OutputProcessing')))}</Suspense>} />
                         <Route path="/history" element={<WorkflowExecutions />} />
                         <Route path="/workflows/history/:id" element={<WorkflowExecutionDetail />} />
+                        <Route path="/scheduling" element={<Scheduling />} />
+                        <Route path="/scheduling/calendar/:id" element={<CalendarDetail />} />
+                        <Route path="/scheduling/schedule/:id" element={<ScheduleDetail />} />
                         <Route path="/admin" element={<AdminDashboard />} />
                         <Route path="/admin/workers" element={<AdminWorkers />} />
                         <Route path="/admin/settings" element={<AdminSettings />} />

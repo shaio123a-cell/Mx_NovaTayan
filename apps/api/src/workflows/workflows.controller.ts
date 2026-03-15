@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, Query, Patch } from '@nestjs/common';
 import { WorkflowsService } from './workflows.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
+import { CreateBindingDto, UpdateBindingDto } from './dto/binding.dto';
 
 @Controller('workflows')
 export class WorkflowsController {
@@ -72,5 +73,34 @@ export class WorkflowsController {
     @Get(':id/executions')
     getExecutions(@Param('id') id: string) {
         return this.workflowsService.getExecutions(id);
+    }
+
+    // --- Scheduling Bindings ---
+
+    @Post(':id/bindings')
+    createBinding(@Param('id') id: string, @Body() dto: CreateBindingDto) {
+        return this.workflowsService.createBinding(id, dto);
+    }
+
+    @Get(':id/bindings')
+    getBindings(@Param('id') id: string) {
+        return this.workflowsService.getBindings(id);
+    }
+
+    @Delete(':workflowId/bindings/:bindingId')
+    deleteBinding(@Param('bindingId') bindingId: string) {
+        return this.workflowsService.deleteBinding(bindingId);
+    }
+
+    @Patch(':workflowId/bindings/:bindingId')
+    patchBinding(@Param('bindingId') bindingId: string, @Body() dto: UpdateBindingDto) {
+        return this.workflowsService.patchBinding(bindingId, dto);
+    }
+
+    // --- Event Triggers ---
+
+    @Post(':id/trigger')
+    trigger(@Param('id') id: string, @Body() body: any) {
+        return this.workflowsService.triggerByEvent(id, body.payload, body.idempotencyKey);
     }
 }

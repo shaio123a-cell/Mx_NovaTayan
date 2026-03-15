@@ -23,6 +23,7 @@ model User {
   ownedTasks      Task[]
   ownedWorkflows  Workflow[]
   ownedSchedules  Schedule[]
+  ownedCalendars  Calendar[]
   ownedSecrets    Secret[]
 
   @@map("users")
@@ -143,7 +144,11 @@ model Workflow {
   
   scheduleId String?
   schedule   Schedule? @relation(fields: [scheduleId], references: [id])
-  enabled    Boolean   @default(false)
+  
+  // New Scheduling System
+  bindings   WorkflowScheduleBinding[]
+  
+  enabled    Boolean   @default(true)
   
   // Interface & Execution Logic
   inputVariables  Json? // Record<string, any>
@@ -158,30 +163,104 @@ model Workflow {
 
   // Relations
   executions WorkflowExecution[]
+  triggerTokens TriggerToken[]
 
   @@map("workflows")
 }
 
 model Schedule {
   id              String   @id @default(uuid())
-  name            String
+  name            String   @unique
   description     String?
   scope           String   // ScopeType enum
   ownerId         String
   owner           User     @relation(fields: [ownerId], references: [id])
   
-  recurrenceType  String   // RecurrenceType enum
+  // --- Old fields (Preserved for data safety) ---
+  recurrenceType  String?   // RecurrenceType enum
   recurrenceValue Int?
   cronExpression  String?
   
+  // --- New Spec Fields ---
+  mode            String   @default("INTERVAL") // ONCE | INTERVAL | WEEKLY | MONTHLY | CRON
+  payload         Json     @default("{}")       // Logic specific to the mode
+  timezone        String   @default("UTC")      // Added for global customer support
+  launchAt        DateTime?
+  endAt           DateTime?
+  maxRuns         Int?
+  misfirePolicy   String   @default("fire_once") // skip | fire_once | catch_up_all
+  coalesceSecs    Int      @default(60)
+  
   enabled   Boolean  @default(true)
+  state     String   @default("ACTIVE") // ACTIVE | PAUSED (Aligned with spec)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  workflows Workflow[]
+  workflows Workflow[] // Legacy relation
+  bindings  WorkflowScheduleBinding[]
 
   @@map("schedules")
+}
+
+model Calendar {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String?
+  timezone        String   @default("UTC")
+  state           String   @default("ACTIVE") // ACTIVE | PAUSED
+  
+  ownerId         String
+  owner           User     @relation(fields: [ownerId], references: [id])
+  
+  rules           CalendarRule[]
+  bindings        WorkflowScheduleBinding[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("calendars")
+}
+
+model CalendarRule {
+  id           String   @id @default(uuid())
+  calendarId   String
+  calendar     Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  
+  ruleType     String   // ALLOW_WINDOW | EXCLUDE_WINDOW | EXCEPTION_DATE
+  payload      Json     // Specific window/date data
+  
+  createdAt    DateTime @default(now())
+
+  @@map("calendar_rules")
+}
+
+model WorkflowScheduleBinding {
+  id               String   @id @default(uuid())
+  workflowId       String
+  workflow         Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  scheduleId       String
+  schedule         Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  
+  calendarId       String?
+  calendar         Calendar? @relation(fields: [calendarId], references: [id])
+  
+  skipIfRunning    Boolean  @default(true)
+  maxConcurrency   Int      @default(1)
+  retryPolicy      Json?    // { maxAttempts, interval, strategy, jitter }
+  
+  state            String   @default("ACTIVE") // ACTIVE | PAUSED
+  
+  lastFiredAt      DateTime?
+  nextFireAt       DateTime?
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  executions       WorkflowExecution[]
+
+  @@map("workflow_schedule_bindings")
 }
 
 model WorkflowExecution {
@@ -190,6 +269,9 @@ model WorkflowExecution {
   workflow        Workflow @relation(fields: [workflowId], references: [id])
   workflowName    String
   workflowVersion Int
+  
+  bindingId     String?
+  binding       WorkflowScheduleBinding? @relation(fields: [bindingId], references: [id])
   
   status        String   // ExecutionStatus enum
   triggeredBy   String   // SCHEDULE | MANUAL | SIGNAL
@@ -254,6 +336,22 @@ model GlobalVariable {
   updatedAt   DateTime @updatedAt
 
   @@map("global_variables")
+}
+
+model TriggerToken {
+  id          String   @id @default(uuid())
+  token       String   @unique
+  workflowId  String
+  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  description String?
+  enabled     Boolean  @default(true)
+  expiresAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("trigger_tokens")
 }
 
 model GlobalVariableGroup {

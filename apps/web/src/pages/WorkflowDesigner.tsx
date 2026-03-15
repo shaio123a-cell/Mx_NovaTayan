@@ -874,6 +874,12 @@ function WorkflowDesignerContent() {
         enabled: !!workflowId,
     })
 
+    const { data: bindings } = useQuery({
+        queryKey: ['workflow-bindings', workflowId],
+        queryFn: () => workflowsApi.getBindings(workflowId!),
+        enabled: !!workflowId
+    });
+
     useEffect(() => {
         if (existingWorkflow && initializedRef.current !== workflowId) {
             // Only set state when the workflow ID changes or it's the first load
@@ -1109,6 +1115,25 @@ function WorkflowDesignerContent() {
                             style={{ background: '#f9fafb', border: '1px solid #eee', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', color: '#1976D2', outline: 'none', width: '150px', fontWeight: 'bold' }}
                             placeholder="e.g. prod, linux"
                         />
+                    </div>
+                    <div style={{ height: '32px', width: '1px', background: '#eee' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {bindings && bindings.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#10b981', textTransform: 'uppercase', letterSpacing: '1px' }}>Active Schedule</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Clock size={12} className="text-emerald-500" />
+                                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#4b5563' }}>
+                                        {bindings.filter(b => b.state === 'ACTIVE').length} Active Triggers
+                                    </span>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px' }}>No Schedule</span>
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#cbd5e1' }}>Manual Only</span>
+                            </div>
+                        )}
                     </div>
                 </div>
                 

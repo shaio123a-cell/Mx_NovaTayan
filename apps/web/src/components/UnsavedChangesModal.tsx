@@ -71,7 +71,7 @@ export function UnsavedChangesModal({ isOpen, onSave, onDiscard, onCancel }: Uns
                             fontSize: '14px'
                         }}
                     >
-                        <Save size={18} /> Save & Continue
+                        <Save size={18} /> Save &amp; Exit
                     </button>
                     
                     <button 

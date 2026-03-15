@@ -1,0 +1,33 @@
+This is a significant architectural expansion. Implementing the entire Calendars & Scheduling system in one go would be a very "big bite"—it touches the database schema, the backend brain (NestJS/Prisma), the background execution logic, and several new complex UI screens in the frontend.
+
+To ensure we build this reliably from "bottom to top," I suggest breaking it down into these 5 logical steps:
+
+Step 1: Database Schema & Core Entities
+We start by laying the foundation in the database.
+
+Action: Update 
+
+prisma/schema.prisma
+ to include the new Calendar, CalendarRule, Schedule, and WorkflowScheduleBinding models.
+Why: This defines our "source of truth." We should also migrate existing simple scheduling data from the Workflow model into this new relational structure.
+Step 2: Backend API — The CRUD Layer
+Implement the REST endpoints for managing these new objects.
+
+Action: Create NestJS modules for Calendars, Schedules, and Bindings.
+Key Logic: We need the "Preview" logic here—the functions that calculate the next 10 fire times for a schedule or the open slots in a calendar. This is critical for the UI to feel responsive later.
+Step 3: The Scheduler "Brain" (Background Service)
+This is the heart of the feature.
+
+Action: A background service in the API that "ticks" every minute (or 10 seconds).
+Logic: It must find due schedules, verify those schedules aren't "gated" by a closed calendar, check for skipIfRunning constraints, and finally enqueue a new WorkflowExecution.
+Step 4: Frontend UI — Global Library (Calendars & Schedules)
+Build the management interface for reusable patterns.
+
+Action: Add "Calendars" and "Schedules" to the side menu.
+UX: Build the rule builder (Mon-Fri, 9-5) and the preview graphs so users can see exactly what they are creating.
+Step 5: Frontend UI — Workflow Integration
+Connect everything to the Workflow Designer.
+
+Action: Add the "Scheduling" tab to the Workflow Edit view.
+UX: Implement the "Binding" wizard where a user selects a library schedule/calendar and applies it to that specific workflow.
+How do you want to proceed? If you agree with this breakdown, we should start with Step 1 (Database Schema). I can prepare the Prisma schema changes to align with your spec right now.n
