@@ -407,7 +407,18 @@ export default function ScheduleDetail() {
                                 {['ONCE', 'INTERVAL', 'WEEKLY', 'MONTHLY', 'CRON'].map(m => (
                                     <button 
                                         key={m}
-                                        onClick={() => setForm({ ...form, mode: m, payload: m === 'CRON' ? { cron: '* * * * *' } : m === 'INTERVAL' ? { every: '1h' } : {} })}
+                                        onClick={() => {
+                                            let payload = {};
+                                            if (m === 'CRON') payload = { cron: '* * * * *' };
+                                            else if (m === 'INTERVAL') payload = { every: '1h' };
+                                            else if (m === 'MONTHLY') payload = { 
+                                                days: [1], 
+                                                time: '09:00',
+                                                runsPerDay: 1,
+                                                intervalMinutes: 10 
+                                            };
+                                            setForm({ ...form, mode: m, payload });
+                                        }}
                                         className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
                                             form.mode === m 
                                             ? 'bg-white text-blue-600 shadow-sm border border-gray-100' 
@@ -449,7 +460,7 @@ export default function ScheduleDetail() {
                                 </div>
                             )}
 
-                            {form.mode === 'WEEKLY' && (
+                             {form.mode === 'WEEKLY' && (
                                 <div className="space-y-6">
                                     <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-3">On these days</label>
@@ -483,6 +494,73 @@ export default function ScheduleDetail() {
                                             className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-lg font-bold shadow-sm"
                                         />
                                     </div>
+                                </div>
+                            )}
+
+                            {form.mode === 'MONTHLY' && (
+                                <div className="space-y-8">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-4">On these dates of the month</label>
+                                        <div className="grid grid-cols-7 gap-2 max-w-sm">
+                                            {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                                                const isActive = form.payload.days?.includes(day);
+                                                return (
+                                                    <button 
+                                                        key={day}
+                                                        onClick={() => {
+                                                            const days = form.payload.days || [];
+                                                            const newDays = days.includes(day) ? days.filter((d: number) => d !== day) : [...days, day];
+                                                            updatePayload({ days: newDays });
+                                                        }}
+                                                        className={`w-10 h-10 rounded-lg text-xs font-bold border transition-all ${
+                                                            isActive ? 'bg-blue-600 border-blue-600 text-white shadow-inner' : 'bg-white border-gray-200 text-gray-400 hover:border-blue-200'
+                                                        }`}
+                                                    >
+                                                        {day}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-6 pt-4 border-t border-gray-100">
+                                        <div>
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Start Time</label>
+                                            <input 
+                                                type="time"
+                                                value={form.payload.time || '09:00'}
+                                                onChange={(e) => updatePayload({ time: e.target.value })}
+                                                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-lg font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Executions</label>
+                                            <input 
+                                                type="number"
+                                                min="1"
+                                                value={form.payload.runsPerDay || 1}
+                                                onChange={(e) => updatePayload({ runsPerDay: parseInt(e.target.value) || 1 })}
+                                                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-lg font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                                            />
+                                        </div>
+                                        <div className={form.payload.runsPerDay > 1 ? '' : 'opacity-40 grayscale pointer-events-none'}>
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Interval (min)</label>
+                                            <input 
+                                                type="number"
+                                                min="1"
+                                                disabled={form.payload.runsPerDay <= 1}
+                                                value={form.payload.intervalMinutes || 10}
+                                                onChange={(e) => updatePayload({ intervalMinutes: parseInt(e.target.value) || 1 })}
+                                                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-lg font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                                            />
+                                        </div>
+                                    </div>
+                                    {form.payload.runsPerDay > 1 && (
+                                        <p className="text-[10px] text-blue-500 font-bold bg-blue-50 px-3 py-2 rounded-lg border border-blue-100 flex items-center gap-2 animate-in fade-in slide-in-from-left-2">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                                            Schedule will fire {form.payload.runsPerDay} times every month on selected dates, starting at {form.payload.time}.
+                                        </p>
+                                    )}
                                 </div>
                             )}
 

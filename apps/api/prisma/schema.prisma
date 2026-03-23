@@ -348,6 +348,9 @@ model TriggerToken {
   enabled     Boolean  @default(true)
   expiresAt   DateTime?
   
+  // New field for webhook mapping
+  mapping     Json     @default("{}") // SourcePath (body.x) -> WorkflowInputId
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

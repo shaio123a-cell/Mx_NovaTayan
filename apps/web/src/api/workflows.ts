@@ -121,4 +121,32 @@ export const workflowsApi = {
         });
         if (!response.ok) throw new Error('Failed to delete binding');
     },
+
+    // Webhook Trigger Tokens
+    getTokens: async (workflowId: string): Promise<any[]> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens`);
+        return handleResponse(response);
+    },
+    createToken: async (workflowId: string, data: any): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+    updateToken: async (workflowId: string, tokenId: string, data: any): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens/${tokenId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+    deleteToken: async (workflowId: string, tokenId: string): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens/${tokenId}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) throw new Error('Failed to delete token');
+    },
 };

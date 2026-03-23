@@ -14,6 +14,7 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
     const containerRef = useRef<HTMLDivElement>(null);
     const mirrorRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<any>(null);
+    const selectionRef = useRef<number | null>(null);
 
     useImperativeHandle(ref, () => ({
         get selectionStart() { return inputRef.current?.selectionStart; },
@@ -209,6 +210,14 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
 
     const Component = isTextarea ? 'textarea' : 'input';
 
+    // Fix cursor jumping when value changes
+    React.useEffect(() => {
+        if (inputRef.current && selectionRef.current !== null) {
+            inputRef.current.setSelectionRange(selectionRef.current, selectionRef.current);
+            selectionRef.current = null;
+        }
+    });
+
     const baseStyles: React.CSSProperties = {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
         fontSize: '14px',
@@ -248,7 +257,10 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                 {...props as any}
                 ref={inputRef}
                 value={strValue}
-                onChange={(e: any) => onValueChange(e.target.value)}
+                onChange={(e: any) => {
+                    selectionRef.current = e.target.selectionStart;
+                    onValueChange(e.target.value);
+                }}
                 onScroll={handleScroll}
                 placeholder={placeholder}
                 className="outline-none block w-full bg-transparent scrollbar-hide"

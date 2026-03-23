@@ -103,4 +103,26 @@ export class WorkflowsController {
     trigger(@Param('id') id: string, @Body() body: any) {
         return this.workflowsService.triggerByEvent(id, body.payload, body.idempotencyKey);
     }
+
+    // --- Webhook Trigger Tokens ---
+
+    @Get(':id/tokens')
+    getTokens(@Param('id') id: string) {
+        return this.workflowsService.getTriggerTokens(id);
+    }
+
+    @Post(':id/tokens')
+    createToken(@Param('id') id: string, @Body() body: { description?: string, mapping?: any }) {
+        return this.workflowsService.createTriggerToken(id, body.description, body.mapping);
+    }
+
+    @Delete(':workflowId/tokens/:tokenId')
+    deleteToken(@Param('tokenId') tokenId: string) {
+        return this.workflowsService.deleteTriggerToken(tokenId);
+    }
+
+    @Patch(':workflowId/tokens/:tokenId')
+    updateToken(@Param('tokenId') tokenId: string, @Body() body: any) {
+        return this.workflowsService.updateTriggerToken(tokenId, body);
+    }
 }

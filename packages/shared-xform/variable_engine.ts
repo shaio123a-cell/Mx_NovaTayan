@@ -137,8 +137,19 @@ export class VariableEngine {
 
     val = this.resolveGlobal(path, path);
     if (val !== undefined) return val;
+
+    // 5. NEW: Handle arbitrary namespaces from the context (e.g. 'body.xxx', 'request.xxx')
+    const firstPart = path.split('.')[0];
+    if (this.context[firstPart] !== undefined) {
+        if (path === firstPart) {
+            return this.context[firstPart];
+        } else {
+            const result = this.getValue(this.context[firstPart], path.substring(firstPart.length + 1));
+            if (result !== undefined) return result;
+        }
+    }
     
-    // 5. Fallback to macros (this handles Task.X, HTTP.X, and workflow.X if not in vars)
+    // 6. Fallback to macros (this handles Task.X, HTTP.X, and workflow.X if not in vars)
     val = this.getMacro(path);
     if (val !== undefined) return val;
 

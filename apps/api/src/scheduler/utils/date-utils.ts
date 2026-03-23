@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import cronParser from 'cron-parser';
+import { CalendarUtils } from './calendar-utils';
 
 export class DateUtils {
   static calculateNextFire(schedule: any, from: DateTime): DateTime | null {
@@ -44,10 +45,23 @@ export class DateUtils {
       if (mode === 'MONTHLY') {
         const days = payload.days || [1];
         const [hour, minute] = (payload.time || "00:00").split(':').map(Number);
+        const runsPerDay = payload.runsPerDay || 1;
+        const intervalMin = payload.intervalMinutes || 10;
         
-        let next = fromInZone.set({ hour, minute, second: 0, millisecond: 0 });
-        if (next <= fromInZone) next = next.plus({ days: 1 });
+        // Start by checking if we are still within the 'N runs' for the current day
+        if (days.includes(fromInZone.day)) {
+          const dayStart = fromInZone.set({ hour, minute, second: 0, millisecond: 0 });
+          
+          for (let i = 1; i < runsPerDay; i++) {
+            const candidate = dayStart.plus({ minutes: i * intervalMin });
+            if (candidate > fromInZone) return candidate;
+          }
+        }
+
+        // Otherwise, find the next valid day
+        let next = fromInZone.plus({ days: 1 }).set({ hour, minute, second: 0, millisecond: 0 });
         
+        // Loop until we find a matching day in the monthly list
         while (!days.includes(next.day)) {
           next = next.plus({ days: 1 });
         }
@@ -68,15 +82,47 @@ export class DateUtils {
     return null;
   }
 
-  static getNextFireTimes(schedule: any, count: number = 10): Date[] {
+  /**
+   * INTERSECTION LOGIC: Predicts the next N valid firing times.
+   * Logic:
+   * 1. Generate one candidate fire time.
+   * 2. Check ALL bound calendars to ensure they are ALL open at that time.
+   * 3. If any calendar is closed, discard that time and try the next schedule fire.
+   * 4. Repeat until limit is reached or we reach the search limit.
+   */
+  static getPredictedFireTimes(
+    schedule: any, 
+    calendars: any[] = [], 
+    count: number = 10, 
+    startFrom?: DateTime
+  ): Date[] {
     const fireTimes: Date[] = [];
-    let current = DateTime.now();
+    let current = startFrom || DateTime.now();
     
-    for (let i = 0; i < count; i++) {
-        const next = this.calculateNextFire(schedule, current);
-        if (!next) break;
+    // We search up to 1000 potential firings to avoid infinite loops if all are blocked
+    const MAX_SEARCH = 1000;
+    let attempts = 0;
+
+    while (fireTimes.length < count && attempts < MAX_SEARCH) {
+      attempts++;
+      const next = this.calculateNextFire(schedule, current);
+      if (!next) break;
+
+      // Check all bound calendars
+      let isBlocked = false;
+      for (const calendar of calendars) {
+        if (!CalendarUtils.isCalendarOpen(calendar, next)) {
+          isBlocked = true;
+          break;
+        }
+      }
+
+      if (!isBlocked) {
         fireTimes.push(next.toJSDate());
-        current = next.plus({ seconds: 1 }); // Increment slightly to find the next one
+      }
+      
+      // Move current forward slightly past the found firing to get the next one
+      current = next.plus({ seconds: 1 });
     }
     
     return fireTimes;

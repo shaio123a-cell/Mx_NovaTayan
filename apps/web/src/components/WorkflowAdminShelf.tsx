@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { VariableManager } from './VariableManager';
 import { schedulingApi } from '../api/scheduling';
+import { ExecutionPredictor } from './ExecutionPredictor';
+import { WebhookTriggerManager } from './WebhookTriggerManager';
 
 interface WorkflowAdminShelfProps {
     workflowId: string | null;
@@ -20,7 +22,7 @@ interface WorkflowAdminShelfProps {
 }
 
 export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetadata, onClose, onSave }: WorkflowAdminShelfProps) {
-    const [activeTab, setActiveTab] = useState<'scheduling' | 'variables' | 'notifications'>('variables');
+    const [activeTab, setActiveTab] = useState<'scheduling' | 'variables' | 'notifications' | 'triggers'>('variables');
     const { showToast } = useToast();
     const queryClient = useQueryClient();
     const initializedRef = useRef<string | null>(null);
@@ -117,7 +119,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         onError: (err: any) => showToast(`Failed to update: ${err.message}`, 'error')
     });
 
-    const handleSave = () => {
+    const handleSave = async () => {
         const data = {
             ...workflow,
             inputVariables: inputVars,
@@ -133,6 +135,22 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             showToast('Draft settings updated!', 'info');
             onClose();
             return;
+        }
+
+        // Webhook integration: if we have a draft on the window, sync it
+        const webhookDraft = (window as any)._webhookDraft;
+        if (webhookDraft) {
+            try {
+                for (const token of webhookDraft) {
+                    await workflowsApi.updateToken(workflowId, token.id, {
+                        description: token.description,
+                        mapping: token.mapping,
+                        enabled: token.enabled
+                    });
+                }
+            } catch (err: any) {
+                showToast(`Failed to sync webhooks: ${err.message}`, 'error');
+            }
         }
 
         updateMutation.mutate(data);
@@ -174,6 +192,12 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                     onClick={() => setActiveTab('scheduling')} 
                     icon={<Clock size={18} />} 
                     label="Execution & Scope" 
+                />
+                <TabButton 
+                    active={activeTab === 'triggers'} 
+                    onClick={() => setActiveTab('triggers')} 
+                    icon={<Globe size={18} />} 
+                    label="Webhooks" 
                 />
                 <TabButton 
                     active={activeTab === 'notifications'} 
@@ -465,18 +489,33 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
 
                                                 {binding.lastFiredAt && (
                                                     <div className="col-span-2 mt-2 pt-4 border-t border-slate-50 flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                                                        <div className="flex items-center gap-1.5">
+                                                        <div className="flex items-center gap-1.5 text-[10px]">
                                                             <div className="w-1 h-1 rounded-full bg-slate-300" />
                                                             Last Run: {new Date(binding.lastFiredAt).toLocaleString()}
                                                         </div>
                                                         {binding.nextFireAt && (
-                                                            <div className="flex items-center gap-1.5 text-emerald-600">
+                                                            <div className="flex items-center gap-1.5 text-emerald-600 text-[10px]">
                                                                 <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                                                                 Next Run: {new Date(binding.nextFireAt).toLocaleString()}
                                                             </div>
                                                         )}
                                                     </div>
                                                 )}
+
+                                                {/* Prediction Section */}
+                                                <div className="col-span-2">
+                                                    {(() => {
+                                                        const selectedSched = schedules?.find(s => s.id === binding.scheduleId);
+                                                        if (!selectedSched) return null;
+                                                        return (
+                                                            <ExecutionPredictor 
+                                                                schedule={selectedSched}
+                                                                calendarIds={binding.calendarId ? [binding.calendarId] : []}
+                                                                title={`Future Runs Prediction: ${selectedSched.name}`}
+                                                            />
+                                                        );
+                                                    })()}
+                                                </div>
                                             </div>
                                         </div>
                                     ))}
@@ -597,6 +636,15 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                 ))}
                             </div>
                         )}
+                    </div>
+                )}
+
+                {activeTab === 'triggers' && workflowId && (
+                    <div className="animate-in fade-in slide-in-from-top-4 duration-500">
+                        <WebhookTriggerManager 
+                            workflowId={workflowId} 
+                            availableVarNames={Object.keys(inputVars).filter(k => !k.startsWith('__'))} 
+                        />
                     </div>
                 )}
             </div>

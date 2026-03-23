@@ -5,10 +5,10 @@ import { ChevronRight, Globe, Box, Workflow, X, Zap, Folder, Search } from 'luci
 
 type VarSource = { name: string, taskName: string; source?: 'workflow' | 'task' | 'workflow_input' | 'workflow_output' };
 
-export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect: (v: string) => void, onClose: () => void, localVars?: (string | VarSource)[] }) {
+export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars = [] }: { onSelect: (v: string) => void, onClose: () => void, localVars?: (string | VarSource)[], triggerVars?: string[] }) {
     const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
     const [searchQuery, setSearchQuery] = useState('');
-    const [expanded, setExpanded] = useState<Record<string, boolean>>({ 'global': false, 'task': false, 'workflow': false, 'local': true, 'macros': false, 'utils': false });
+    const [expanded, setExpanded] = useState<Record<string, boolean>>({ 'global': false, 'task': false, 'workflow': false, 'local': true, 'macros': false, 'utils': false, 'trigger': true });
 
     const toggle = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
 
@@ -102,6 +102,15 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
             };
         }).filter(v => v.label.toLowerCase().includes(query) || v.taskName.toLowerCase().includes(query));
 
+        // Process Trigger Vars
+        const normalizedTrigger = (triggerVars || []).map(v => ({
+            label: `${v} payload`,
+            value: v, // No double curly braces for trigger mapping usually, or {{body.path}}? 
+                      // Actually for webhook mapping, they often type body.key directly or with {{}}. 
+                      // Let's provide it in a way that works for both.
+            icon: Globe
+        })).filter(v => v.label.toLowerCase().includes(query));
+
         // Process Global Vars
         const filteredGlobals: Record<string, any[]> = {};
         Object.entries(groupedGlobalVars).forEach(([group, vars]) => {
@@ -117,16 +126,18 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
 
         return {
             local: normalizedLocal,
+            trigger: normalizedTrigger,
             globals: filteredGlobals,
             system: filteredSystem
         };
-    }, [searchQuery, localVars, groupedGlobalVars]);
+    }, [searchQuery, localVars, triggerVars, groupedGlobalVars, systemSections]);
 
     // Automatically expand sections with results when searching
     useEffect(() => {
         if (searchQuery.length > 1) {
             setExpanded({
                 local: filteredSections.local.length > 0,
+                trigger: filteredSections.trigger.length > 0,
                 global: Object.keys(filteredSections.globals).length > 0,
                 task: filteredSections.system.some(s => s.id === 'task'),
                 workflow: filteredSections.system.some(s => s.id === 'workflow'),
@@ -160,6 +171,32 @@ export function VariablePicker({ onSelect, onClose, localVars = [] }: { onSelect
              </div>
 
              <div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
+                 
+                 {/* Trigger Payload Section */}
+                 {filteredSections.trigger.length > 0 && (
+                    <div className="mb-2">
+                        <button onClick={() => toggle('trigger')} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded text-left transition-colors group">
+                            <ChevronRight size={14} className={`transition-transform text-gray-400 group-hover:text-gray-600 ${expanded['trigger'] ? 'rotate-90' : ''}`} />
+                            <Zap size={14} className="text-orange-500 fill-orange-50"/>
+                            <span className="text-sm font-semibold text-gray-700">Trigger Payload</span>
+                            <span className="ml-auto text-[10px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{filteredSections.trigger.length}</span>
+                        </button>
+                        {expanded['trigger'] && (
+                            <div className="ml-6 space-y-1 mt-1 border-l border-gray-100 pl-2">
+                                {filteredSections.trigger.map((item: any) => (
+                                    <button 
+                                        key={item.value} 
+                                        onClick={() => onSelect(item.value)} 
+                                        className="w-full text-left text-xs p-2 rounded transition-all group/item flex items-center gap-2 hover:bg-orange-50 text-slate-600"
+                                    >
+                                        <Globe size={11} className="text-orange-400 shrink-0" />
+                                        <div className="font-mono truncate font-bold text-orange-700">{item.value}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                 )}
                  
                  {/* Local / Upstream Section */}
                  {filteredSections.local.length > 0 && (

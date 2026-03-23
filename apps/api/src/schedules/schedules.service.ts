@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
 import { LoggerService } from '../common/logger/logger.service';
 import { DateUtils } from '../scheduler/utils/date-utils';
+import { DateTime } from 'luxon';
 
 @Injectable()
 export class SchedulesService {
@@ -85,15 +86,37 @@ export class SchedulesService {
 
   async getPreview(id: string, options: any) {
     const schedule = await this.findOne(id);
+    const calendars = options.calendarIds 
+      ? await this.prisma.calendar.findMany({ where: { id: { in: options.calendarIds } }, include: { rules: true } })
+      : [];
+    
+    const startFrom = options.startFrom ? DateTime.fromISO(options.startFrom) : undefined;
+    
     return {
       schedule,
-      nextFireTimes: DateUtils.getNextFireTimes(schedule, options.limit || 10)
+      nextFireTimes: DateUtils.getPredictedFireTimes(
+        schedule, 
+        calendars, 
+        options.limit || 10, 
+        startFrom
+      )
     };
   }
 
   async getPreviewGeneric(options: any) {
+    const calendars = options.calendarIds 
+      ? await this.prisma.calendar.findMany({ where: { id: { in: options.calendarIds } }, include: { rules: true } })
+      : [];
+    
+    const startFrom = options.startFrom ? DateTime.fromISO(options.startFrom) : undefined;
+
     return {
-      nextFireTimes: DateUtils.getNextFireTimes(options, options.limit || 10)
+      nextFireTimes: DateUtils.getPredictedFireTimes(
+        options, 
+        calendars, 
+        options.limit || 10, 
+        startFrom
+      )
     };
   }
 

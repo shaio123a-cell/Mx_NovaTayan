@@ -5,6 +5,7 @@ import { CreateBindingDto, UpdateBindingDto } from './dto/binding.dto';
 import { LoggerService } from '../common/logger/logger.service';
 import { suggestIcon } from '../tasks/utils/icon-mapper';
 import { WorkerService } from '../worker/worker.service';
+import { VariableEngine } from '../../../../packages/shared-xform/variable_engine';
 
 @Injectable()
 export class WorkflowsService {
@@ -584,7 +585,7 @@ export class WorkflowsService {
         return this.enqueueExecution(workflowId, 'SIGNAL', 'event-trigger', payload);
     }
 
-    async triggerByToken(token: string, payload: any) {
+    async triggerByToken(token: string, payload: { body: any, query: any, headers: any }) {
         const tokenRecord = await this.prisma.triggerToken.findUnique({
             where: { token, enabled: true },
             include: { workflow: true }
@@ -598,6 +599,89 @@ export class WorkflowsService {
             throw new Error(`Trigger token has expired`);
         }
 
-        return this.enqueueExecution(tokenRecord.workflowId, 'SIGNAL', 'token-trigger', payload);
+        // --- Variable Mapping Logic ---
+        const mapping = (tokenRecord.mapping || {}) as Record<string, string>;
+        const initialVariables: Record<string, any> = {};
+
+        if (Object.keys(mapping).length > 0) {
+            this.logger.debug(`[Webhook] Applying mapping for token ${token.substring(0, 8)}...`);
+            
+            // Build the source context for the VariableEngine
+            // We put everything under 'request' namespace to avoid collisions with workflow/global
+            const engine = new VariableEngine({
+                request: {
+                    body: payload.body || {},
+                    query: payload.query || {},
+                    headers: payload.headers || {}
+                },
+                // Fallback support: handle direct 'body.x' in addition to 'request.body.x'
+                body: payload.body || {},
+                query: payload.query || {},
+                headers: payload.headers || {}
+            });
+
+            for (const [workflowVarId, sourceTemplate] of Object.entries(mapping)) {
+                try {
+                    // Normalize: If it's a string without {{ }}, treat it as a path/expression by wrapping it
+                    let templateToResolve = sourceTemplate;
+                    if (typeof sourceTemplate === 'string' && !sourceTemplate.includes('{{')) {
+                        templateToResolve = `{{ ${sourceTemplate} }}`;
+                    }
+                    
+                    const resolvedValue = engine.resolveValue(templateToResolve);
+                    initialVariables[workflowVarId] = resolvedValue;
+                } catch (err) {
+                    this.logger.error(`[Webhook] Mapping failed for variable ${workflowVarId}: ${err.message}`);
+                }
+            }
+        } else {
+            // Default behavior: if no mapping, just pass the body as the initial context if it's an object
+            if (payload.body && typeof payload.body === 'object') {
+                Object.assign(initialVariables, payload.body);
+            }
+        }
+
+        return this.enqueueExecution(
+            tokenRecord.workflowId, 
+            'SIGNAL', 
+            'token-trigger', 
+            initialVariables
+        );
+    }
+
+    // --- Trigger Token Management ---
+
+    async getTriggerTokens(workflowId: string) {
+        return this.prisma.triggerToken.findMany({
+            where: { workflowId },
+            orderBy: { createdAt: 'desc' }
+        });
+    }
+
+    async createTriggerToken(workflowId: string, description?: string, mapping: any = {}) {
+        const { v4: uuidv4 } = require('uuid');
+        const token = `whk_${uuidv4().replace(/-/g, '')}`;
+        
+        return this.prisma.triggerToken.create({
+            data: {
+                workflowId,
+                token,
+                description,
+                mapping: mapping || {}
+            }
+        });
+    }
+
+    async deleteTriggerToken(id: string) {
+        return this.prisma.triggerToken.delete({
+            where: { id }
+        });
+    }
+
+    async updateTriggerToken(id: string, data: any) {
+        return this.prisma.triggerToken.update({
+            where: { id },
+            data
+        });
     }
 }
