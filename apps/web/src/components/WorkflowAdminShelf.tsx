@@ -35,6 +35,10 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
     const [scope, setScope] = useState<'GLOBAL' | 'PRIVATE'>(draftMetadata?.scope || 'GLOBAL');
     const [isUsageExpanded, setIsUsageExpanded] = useState(false);
 
+    // Track local "dirty" state for the shelf itself
+    const [isShelfDirty, setIsShelfDirty] = useState(false);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+
     const { data: usageData } = useQuery({
         queryKey: ['workflow-usage', workflowId],
         queryFn: () => workflowsApi.getWorkflowUsage(workflowId!),
@@ -62,6 +66,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         onSuccess: () => {
             showToast('Schedule binding created', 'success');
             refetchBindings();
+            setIsShelfDirty(true);
         }
     });
 
@@ -70,6 +75,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         onSuccess: () => {
             showToast('Schedule binding removed', 'info');
             refetchBindings();
+            setIsShelfDirty(true);
         }
     });
 
@@ -78,6 +84,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         onSuccess: () => {
             showToast('Binding updated', 'success');
             refetchBindings();
+            setIsShelfDirty(true);
         }
     });
 
@@ -93,6 +100,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
     });
 
     useEffect(() => {
+        // Only initialize state once per workflowId to avoid breaking local drafts during background refetches
         if (workflow && initializedRef.current !== workflowId) {
             setInputVars(workflow.inputVariables || {});
             setOutputVars(workflow.outputVariables || {});
@@ -100,6 +108,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             setNotifications(workflow.notifications || []);
             setScope(workflow.scope || 'GLOBAL');
             initializedRef.current = workflowId;
+            setIsShelfDirty(false);
         }
     }, [workflow, workflowId]);
 
@@ -111,10 +120,13 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             if (workflowId) {
                 showToast('Workflow settings updated', 'success');
                 queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] });
+                queryClient.invalidateQueries({ queryKey: ['workflow-tokens', workflowId] });
             } else {
                 showToast('Settings applied to draft', 'info');
             }
+            setIsShelfDirty(false);
             if (onSave) onSave(data);
+            onClose();
         },
         onError: (err: any) => showToast(`Failed to update: ${err.message}`, 'error')
     });
@@ -133,37 +145,125 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             // If new workflow, we just send it back to parent via onSave
             if (onSave) onSave(data);
             showToast('Draft settings updated!', 'info');
+            setIsShelfDirty(false);
             onClose();
             return;
         }
 
         // Webhook integration: if we have a draft on the window, sync it
         const webhookDraft = (window as any)._webhookDraft;
-        if (webhookDraft) {
+        const deletedTokens = (window as any)._webhookDeleted || [];
+        
+        if (webhookDraft || deletedTokens.length > 0) {
             try {
-                for (const token of webhookDraft) {
-                    await workflowsApi.updateToken(workflowId, token.id, {
-                        description: token.description,
-                        mapping: token.mapping,
-                        enabled: token.enabled
-                    });
+                // 1. Process deletions
+                for (const tokenId of deletedTokens) {
+                    await workflowsApi.deleteToken(workflowId, tokenId);
                 }
+                
+                // 2. Process updates/creates
+                if (webhookDraft) {
+                    for (const token of webhookDraft) {
+                        if (token.id.startsWith('new-')) {
+                            // Creation happens when saving the config
+                            await workflowsApi.createToken(workflowId, { 
+                                description: token.description,
+                                mapping: token.mapping,
+                                enabled: token.enabled
+                            });
+                        } else {
+                            await workflowsApi.updateToken(workflowId, token.id, {
+                                description: token.description,
+                                mapping: token.mapping,
+                                enabled: token.enabled
+                            });
+                        }
+                    }
+                }
+                
+                // Clear the temporary draft trackers
+                delete (window as any)._webhookDraft;
+                delete (window as any)._webhookDeleted;
+                
             } catch (err: any) {
                 showToast(`Failed to sync webhooks: ${err.message}`, 'error');
+                return; // Stop if webhooks fail
             }
         }
 
         updateMutation.mutate(data);
     };
 
+    const handleCancel = () => {
+        if (isShelfDirty) {
+            setShowConfirmModal(true);
+        } else {
+            // Clean up any lingering draft data
+            delete (window as any)._webhookDraft;
+            delete (window as any)._webhookDeleted;
+            onClose();
+        }
+    };
+
+    const handleConfirmDiscard = () => {
+        // Reset trackers and close
+        delete (window as any)._webhookDraft;
+        delete (window as any)._webhookDeleted;
+        setShowConfirmModal(false);
+        onClose();
+    };
+
     const handleSaveBasicScheduling = (newScheduling: any) => {
         setScheduling(newScheduling);
+        setIsShelfDirty(true);
     };
 
     if (isLoading && workflowId) return null;
 
     return (
         <div className="fixed top-0 right-0 bottom-0 w-[900px] bg-slate-50 shadow-2xl z-[1000] flex flex-col border-l border-slate-200 animate-slide-in-right">
+            {/* Unsaved Changes Form Modal */}
+            {showConfirmModal && (
+                <div className="fixed inset-0 bg-black/50 z-[2000] flex items-center justify-center backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl w-[450px] shadow-2xl overflow-hidden border border-slate-100 flex flex-col animate-in slide-in-from-bottom-4 duration-300">
+                        <div className="p-6 pb-4 border-b border-slate-100 flex items-center gap-4">
+                            <div className="w-12 h-12 bg-amber-50 text-amber-500 rounded-xl flex items-center justify-center shrink-0 border border-amber-100">
+                                <AlertTriangle size={24} />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-black text-slate-800 tracking-tight">Unsaved Changes</h3>
+                                <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
+                                    You have made changes to the administration shelf. What would you like to do?
+                                </p>
+                            </div>
+                        </div>
+                        <div className="p-4 flex flex-col gap-2 bg-slate-50/50">
+                            <button 
+                                onClick={() => {
+                                    setShowConfirmModal(false);
+                                    handleSave();
+                                }}
+                                className="w-full py-3 bg-[#1976D2] hover:bg-[#1565C0] text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                            >
+                                <Save size={16} /> Save Configuration
+                            </button>
+                            <button 
+                                onClick={handleConfirmDiscard}
+                                className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
+                            >
+                                <Trash2 size={16} /> Discard Changes
+                            </button>
+                            <button 
+                                onClick={() => setShowConfirmModal(false)}
+                                className="w-full py-3 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-xl font-bold text-sm transition-all"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="bg-white border-b border-slate-200 p-6 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
@@ -176,7 +276,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                     </div>
                 </div>
                 <button 
-                    onClick={onClose}
+                    onClick={handleCancel}
                     className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-all"
                 >
                     <X size={20} />
@@ -405,7 +505,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                             </div>
 
                                             <ExecutionPredictor 
-                                                schedule={{ mode: 'CRON', config: { cron: scheduling.cron || '0 * * * *' } }} 
+                                                schedule={{ mode: 'CRON', payload: { cron: scheduling.cron || '* * * * *' } }} 
                                                 calendarIds={[]}
                                                 title="Scheduling Time Machine"
                                             />
@@ -698,6 +798,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                         <WebhookTriggerManager 
                             workflowId={workflowId} 
                             availableVarNames={Object.keys(inputVars).filter(k => !k.startsWith('__'))} 
+                            onDirty={() => setIsShelfDirty(true)}
                         />
                     </div>
                 )}
@@ -706,7 +807,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             {/* Footer Actions */}
             <div className="bg-white border-t border-slate-200 p-6 flex items-center justify-end gap-3 shrink-0">
                 <button 
-                    onClick={onClose}
+                    onClick={handleCancel}
                     className="px-6 py-2.5 rounded-xl font-bold text-sm text-slate-600 hover:bg-slate-50 transition-all border border-slate-200"
                 >
                     Cancel

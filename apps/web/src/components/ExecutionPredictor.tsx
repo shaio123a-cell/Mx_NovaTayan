@@ -23,24 +23,30 @@ export function ExecutionPredictor({ schedule, calendarIds, title = "Next Predic
         setError(null);
         try {
             const body: any = {
-                ...schedule,
+                mode: schedule.mode,
+                payload: schedule.payload,
                 calendarIds,
                 limit: 10
             };
             if (simulateFrom) body.startFrom = new Date(simulateFrom).toISOString();
 
+            // Use the standard schedules/preview endpoint
             const res = await fetch('/api/schedules/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
 
-            if (!res.ok) throw new Error('Failed to fetch predictions');
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(text || 'Failed to fetch predictions');
+            }
+            
             const data = await res.json();
             setPredictions(data.nextFireTimes || []);
-        } catch (err) {
-            console.error(err);
-            setError('Could not calculate schedule at this time');
+        } catch (err: any) {
+            console.error('[ExecutionPredictor Error]', err);
+            setError(err.message || 'Could not calculate schedule at this time');
         } finally {
             setIsLoading(false);
         }

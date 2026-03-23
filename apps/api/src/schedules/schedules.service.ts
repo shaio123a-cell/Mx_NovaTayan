@@ -112,7 +112,7 @@ export class SchedulesService {
 
     return {
       nextFireTimes: DateUtils.getPredictedFireTimes(
-        options, 
+        options, // This contains mode and payload at the top level
         calendars, 
         options.limit || 10, 
         startFrom

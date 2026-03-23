@@ -24,7 +24,7 @@ export const workflowsApi = {
         const response = await fetch(`${API_BASE_URL}/workflows/${id}`);
         return handleResponse(response);
     },
-    getWorkflowUsage: async (id: string): Promise<{ usageCount: number, dependents: any[] }> => {
+    getWorkflowUsage: async (id: string): Promise<{ usageCount: number, dependents: any[], activeInputKeys?: string[], activeOutputKeys?: string[] }> => {
         const response = await fetch(`${API_BASE_URL}/workflows/${id}/usage`);
         return handleResponse(response);
     },

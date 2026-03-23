@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { workflowsApi } from '../api/workflows';
 import { useToast } from '../context/ToastContext';
 import { 
     Plus, Trash2, Copy, Check, Zap, Globe, 
-    Lock, Shield, ArrowRight, ExternalLink, RefreshCw, ChevronDown, ChevronUp, Clock
+    Lock, ArrowRight, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { VariableAwareInput } from './VariableAwareInput';
 import { VariablePicker } from './VariablePicker';
@@ -12,17 +12,20 @@ import { VariablePicker } from './VariablePicker';
 interface WebhookTriggerManagerProps {
     workflowId: string;
     availableVarNames?: string[]; // The Workflow Input variable names we want to map TO
+    onDirty?: () => void;
 }
 
-export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: WebhookTriggerManagerProps) {
+export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDirty }: WebhookTriggerManagerProps) {
     const { showToast } = useToast();
-    const queryClient = useQueryClient();
     const [expandedTokenId, setExpandedTokenId] = useState<string | null>(null);
     const [copiedToken, setCopiedToken] = useState<string | null>(null);
     const [showVarPicker, setShowVarPicker] = useState(false);
     const [pickerTarget, setPickerTarget] = useState<{ tokenId: string, varName: string } | null>(null);
     const [expandedInputs, setExpandedInputs] = useState<Record<string, boolean>>({});
-    const [localTokens, setLocalTokens] = useState<any[]>([]);
+    const [localTokens, setLocalTokens] = useState<any[]>(() => {
+        return (window as any)._webhookDraft || [];
+    });
+    const [initialized, setInitialized] = useState(!!(window as any)._webhookDraft);
     const inputRefs = useRef<Record<string, any>>({});
 
     // --- Queries ---
@@ -33,34 +36,36 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
 
     // Handle initialization when tokens load
     useEffect(() => {
-        if (tokens) {
+        if (!initialized && tokens) {
             setLocalTokens(tokens);
+            setInitialized(true);
         }
-    }, [tokens]);
+    }, [tokens, initialized]);
 
     // --- Mutations ---
-    const createTokenMutation = useMutation({
-        mutationFn: (description?: string) => workflowsApi.createToken(workflowId, { description }),
-        onSuccess: () => {
-            showToast('New webhook trigger generated', 'success');
-            queryClient.invalidateQueries({ queryKey: ['workflow-tokens', workflowId] });
-        }
-    });
+    const handleCreateToken = (description = 'New Webhook') => {
+        const id = `new-${Date.now()}`;
+        const newToken = {
+            id,
+            token: 'pending-save-token-generation...',
+            description,
+            mapping: {},
+            enabled: true
+        };
+        setLocalTokens(prev => [...prev, newToken]);
+        onDirty?.();
+        showToast('Draft webhook added. Save configuration to apply.', 'info');
+    };
 
-    const updateTokenMutation = useMutation({
-        mutationFn: ({ id, data }: { id: string, data: any }) => workflowsApi.updateToken(workflowId, id, data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['workflow-tokens', workflowId] });
+    const handleDeleteToken = (id: string) => {
+        setLocalTokens(prev => prev.filter(t => t.id !== id));
+        if (!id.startsWith('new-')) {
+            const deleted = ((window as any)._webhookDeleted) || [];
+            (window as any)._webhookDeleted = [...deleted, id];
         }
-    });
-
-    const deleteTokenMutation = useMutation({
-        mutationFn: (id: string) => workflowsApi.deleteToken(workflowId, id),
-        onSuccess: () => {
-            showToast('Webhook trigger removed', 'info');
-            queryClient.invalidateQueries({ queryKey: ['workflow-tokens', workflowId] });
-        }
-    });
+        onDirty?.();
+        showToast('Webhook removed from draft. Save configuration to commit changes.', 'info');
+    };
 
     const copyToClipboard = (text: string, id: string) => {
         navigator.clipboard.writeText(text);
@@ -77,6 +82,7 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
             if (nextVar) mapping[nextVar] = 'body.value';
             return { ...t, mapping };
         }));
+        onDirty?.();
     };
 
     const handleUpdateMapping = (tokenId: string, varName: string, sourceTemplate: string) => {
@@ -86,14 +92,17 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
             mapping[varName] = sourceTemplate;
             return { ...t, mapping };
         }));
+        onDirty?.();
     };
 
     const handleUpdateDescription = (tokenId: string, description: string) => {
         setLocalTokens(prev => prev.map(t => t.id === tokenId ? { ...t, description } : t));
+        onDirty?.();
     };
 
     const handleToggleEnabled = (tokenId: string) => {
         setLocalTokens(prev => prev.map(t => t.id === tokenId ? { ...t, enabled: !t.enabled } : t));
+        onDirty?.();
     };
 
     const handleRemoveMapping = (tokenId: string, varName: string) => {
@@ -103,6 +112,7 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
             delete mapping[varName];
             return { ...t, mapping };
         }));
+        onDirty?.();
     };
 
     const handleUpdateVarName = (tokenId: string, oldName: string, newName: string) => {
@@ -114,34 +124,18 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
             mapping[newName] = val;
             return { ...t, mapping };
         }));
+        onDirty?.();
     };
 
-    // Public API for the Parent (Shelf) to trigger save
-    // We'll expose this via a simple window event or find a way to let parent know
-    // But for now, let's add a local "Save Webhooks" button to be safe, 
-    // OR just use a mutation that trigger on every change but we already saw that's bad.
-    // Let's add a "Sync All" button at the top.
-    const syncAllMutation = useMutation({
-        mutationFn: async () => {
-            for (const token of localTokens) {
-                await workflowsApi.updateToken(workflowId, token.id, {
-                    description: token.description,
-                    mapping: token.mapping,
-                    enabled: token.enabled
-                });
-            }
-        },
-        onSuccess: () => {
-            showToast('All webhooks saved', 'success');
-            queryClient.invalidateQueries({ queryKey: ['workflow-tokens', workflowId] });
-        }
-    });
+
 
     // CRITICAL: Push local changes to a place where WorkflowAdminShelf can see them
+    // Do NOT delete on unmount — the shelf needs the draft to survive tab switches
     useEffect(() => {
-        (window as any)._webhookDraft = localTokens;
-        return () => { delete (window as any)._webhookDraft; };
-    }, [localTokens]);
+        if (initialized) {
+            (window as any)._webhookDraft = localTokens;
+        }
+    }, [localTokens, initialized]);
 
     if (isLoading) return <div className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading Webhooks...</div>;
 
@@ -155,18 +149,8 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
                     <p className="text-xs text-slate-500 font-medium">External systems can trigger this workflow using unique tokens.</p>
                 </div>
                 <div className="flex items-center gap-3">
-                    {JSON.stringify(tokens) !== JSON.stringify(localTokens) && (
-                        <button 
-                            onClick={() => syncAllMutation.mutate()}
-                            disabled={syncAllMutation.isPending}
-                            className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-xl text-xs font-bold transition-all hover:bg-emerald-100 animate-in fade-in zoom-in-95"
-                        >
-                            <RefreshCw size={14} className={syncAllMutation.isPending ? 'animate-spin' : ''} />
-                            Apply Changes
-                        </button>
-                    )}
                     <button 
-                        onClick={() => createTokenMutation.mutate('New Webhook')}
+                        onClick={() => handleCreateToken('New Webhook')}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-100 transition-all active:scale-95"
                     >
                         <Plus size={16} />
@@ -229,7 +213,7 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [] }: We
                                     {expandedTokenId === token.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                                 </button>
                                 <button 
-                                    onClick={() => deleteTokenMutation.mutate(token.id)}
+                                    onClick={() => handleDeleteToken(token.id)}
                                     className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
                                 >
                                     <Trash2 size={18} />

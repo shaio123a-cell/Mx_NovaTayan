@@ -10,4 +10,8 @@
 - WFI - is Workflow Inspect Shelf 
 - VMA - Variables Manipulation Activity - is a task that is used to manipulate variables in a workflow
 
+# Scheuling 
+- ADS - Advanced Scheduling from in a WFA in te deisgner of WF
+- CAL - Calendar 
+
 

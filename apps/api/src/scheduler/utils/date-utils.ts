@@ -30,20 +30,22 @@ export class DateUtils {
       }
 
       if (mode === 'WEEKLY') {
-        const days = payload.days || [1,2,3,4,5];
+        const days = Array.isArray(payload.days) && payload.days.length > 0 ? payload.days : [1, 2, 3, 4, 5];
         const [hour, minute] = (payload.time || "00:00").split(':').map(Number);
         
         let next = fromInZone.set({ hour, minute, second: 0, millisecond: 0 });
         if (next <= fromInZone) next = next.plus({ days: 1 });
         
-        while (!days.includes(next.weekday)) {
+        let safety = 0;
+        while (!days.includes(next.weekday) && safety < 400) {
           next = next.plus({ days: 1 });
+          safety++;
         }
-        return next;
+        return safety < 400 ? next : null;
       }
 
       if (mode === 'MONTHLY') {
-        const days = payload.days || [1];
+        const days = Array.isArray(payload.days) && payload.days.length > 0 ? payload.days : [1];
         const [hour, minute] = (payload.time || "00:00").split(':').map(Number);
         const runsPerDay = payload.runsPerDay || 1;
         const intervalMin = payload.intervalMinutes || 10;
@@ -52,9 +54,14 @@ export class DateUtils {
         if (days.includes(fromInZone.day)) {
           const dayStart = fromInZone.set({ hour, minute, second: 0, millisecond: 0 });
           
-          for (let i = 1; i < runsPerDay; i++) {
+          for (let i = 0; i < runsPerDay; i++) {
             const candidate = dayStart.plus({ minutes: i * intervalMin });
-            if (candidate > fromInZone) return candidate;
+            if (candidate > fromInZone) {
+                // Check if this candidate still falls on the same day. 
+                // If it pushes into the next day, we should move to the "next valid day" logic.
+                if (candidate.day === fromInZone.day) return candidate;
+                break;
+            }
           }
         }
 
@@ -62,24 +69,33 @@ export class DateUtils {
         let next = fromInZone.plus({ days: 1 }).set({ hour, minute, second: 0, millisecond: 0 });
         
         // Loop until we find a matching day in the monthly list
-        while (!days.includes(next.day)) {
+        let safety = 0;
+        while (!days.includes(next.day) && safety < 400) {
           next = next.plus({ days: 1 });
+          safety++;
         }
-        return next;
+        return safety < 400 ? next : null;
       }
 
       if (mode === 'CRON') {
-        const interval = (cronParser as any).parseExpression(payload.cron || '* * * * *', {
-          currentDate: fromInZone.toJSDate(),
-          tz: timezone
-        });
-        return DateTime.fromJSDate(interval.next().toDate()).setZone(timezone);
+        const cronStr = (payload.cron || '').trim();
+        if (!cronStr) return null;
+        try {
+          // In this TypeScript configuration, 'cronParser' is imported directly
+          // as the CronExpressionParser class, so we call .parse() directly on it.
+          const interval = (cronParser as any).parse(cronStr, {
+            currentDate: fromInZone.toJSDate(),
+            tz: timezone
+          });
+          return DateTime.fromJSDate(interval.next().toDate()).setZone(timezone);
+        } catch (e) {
+          return null; // Silent skip for invalid expressions
+        }
       }
     } catch (e) {
       console.error(`Failed to calculate next fire: ${e.message}`);
+      return null;
     }
-
-    return null;
   }
 
   /**
@@ -121,7 +137,7 @@ export class DateUtils {
         fireTimes.push(next.toJSDate());
       }
       
-      // Move current forward slightly past the found firing to get the next one
+      // Ensure we advance at least 1 second to find the next occurrence
       current = next.plus({ seconds: 1 });
     }
     
