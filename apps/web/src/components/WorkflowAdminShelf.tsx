@@ -280,7 +280,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                         onChange={setInputVars}
                                         forceWorkflowScope
                                         showWorkflowInputToggle={true}
-                                        lockedNames={usageData && usageData.usageCount > 0 ? Object.keys(workflow?.inputVariables || {}) : []}
+                                        lockedNames={usageData?.activeInputKeys || (usageData && usageData.usageCount > 0 ? Object.keys(inputVars).filter(k => workflow?.inputVariables && k in workflow.inputVariables) : [])}
                                     />
                                 </div>
                                 <div className="bg-slate-50/50 p-4 flex items-start gap-3">
@@ -314,7 +314,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                     onChange={setOutputVars}
                                     forceWorkflowScope
                                     availableUpstreamVars={availableVars}
-                                    lockedNames={usageData && usageData.usageCount > 0 ? Object.keys(workflow?.outputVariables || {}) : []}
+                                    lockedNames={usageData && usageData.usageCount > 0 ? Object.keys(outputVars).filter(k => workflow?.outputVariables && k in workflow.outputVariables) : []}
                                 />
                                 <div className="mt-6 flex items-start gap-3 bg-purple-50/50 p-4 rounded-xl border border-purple-100/50">
                                     <Info size={16} className="text-purple-500 mt-0.5 shrink-0" />
@@ -406,6 +406,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
 
                                             <ExecutionPredictor 
                                                 schedule={{ mode: 'CRON', config: { cron: scheduling.cron || '0 * * * *' } }} 
+                                                calendarIds={[]}
                                                 title="Scheduling Time Machine"
                                             />
                                         </div>

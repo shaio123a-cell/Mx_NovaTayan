@@ -3,7 +3,7 @@
 - CWF - Child Workflow is aka Nested Workflow (NFW) - is a workflow that is being exeucted by another Workflow 
 - PWF - Parent Workflow is a workflow that executes a CWF 
 - CCWF - Is a CWF of a CWF of a PWF 
-- CCCWF - is a CWF of a
+- CCCWF - is a CWF of a CWF of a CWF of a PWF 
 - WFA - The Workflow Admin shelf of the Workflow that is can be opened from the workflow designer. 
 - EWF - Event Workflow - a Workflow triggered as an Event Trigger that is defined in the WFA 
 - WFM - Is the Workflow Meta shelf opened from the WF Inspect 

@@ -236,13 +236,14 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
       {(!hideAdd || editingName) && (
         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-3">
           <div className="flex gap-3 items-end">
-            <div className={`flex-1 ${editingName && inheritedNames.includes(editingName) ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div className={`flex-1 ${ (editingName && inheritedNames.includes(editingName)) || (editingName && lockedNames.includes(editingName)) ? 'opacity-50 pointer-events-none' : ''}`}>
                 <label className="text-[10px] font-bold text-gray-400 mb-1 block">NAME</label>
                 <input
                     placeholder="e.g. user_id"
                     value={newVar}
                     onChange={e => setNewVar(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all font-mono"
+                    readOnly={editingName && lockedNames.includes(editingName)}
                 />
             </div>
             <div className={`flex-1 transition-all duration-300 ${useParentInput ? 'opacity-30 pointer-events-none' : ''}`}>
@@ -431,9 +432,8 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                                         </button>
                                         <button 
                                             onClick={() => handleEdit(name)} 
-                                            disabled={isLocked}
-                                            className={`p-2 rounded-lg transition-all border border-transparent ${isLocked ? 'text-gray-200 cursor-not-allowed' : 'text-amber-500 hover:bg-amber-50 hover:border-amber-200'}`} 
-                                            title={isLocked ? "Variable used by dependents - renaming blocked" : "Edit Value"}
+                                            className={`p-2 rounded-lg transition-all border border-transparent text-amber-500 hover:bg-amber-50 hover:border-amber-200`} 
+                                            title={isLocked ? "Variable interface locked - renaming blocked, but value can be updated" : "Edit Value"}
                                         >
                                             <Edit2 size={14} />
                                         </button>

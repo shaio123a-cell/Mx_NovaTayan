@@ -162,14 +162,42 @@ export class WorkflowsService {
             select: { id: true, name: true, nodes: true }
         });
 
+        const activeInputKeys = new Set<string>();
+        const activeOutputKeys = new Set<string>();
+
         const dependents = workflows.filter(wf => {
             const nodes = wf.nodes as any[];
-            return nodes?.some(n => n.taskType === 'WORKFLOW' && n.taskId === id);
+            const matchingNodes = nodes?.filter(n => n.taskType === 'WORKFLOW' && n.taskId === id);
+            
+            if (matchingNodes?.length > 0) {
+                matchingNodes.forEach(node => {
+                    // Check inputs (parameters passed TO the child)
+                    if (node.inputMapping) {
+                        Object.keys(node.inputMapping).forEach(key => activeInputKeys.add(key));
+                    }
+                    // Check outputs (results taken FROM the child)
+                    // In our engine, this usually happens in the NEXT node's inputMapping 
+                    // or via the variableExtraction of THIS node if it maps result->var
+                    if (node.variableExtraction?.vars) {
+                        Object.values(node.variableExtraction.vars).forEach((v: any) => {
+                            if (v.source === 'task' && v.taskName === node.name) {
+                                // This is a bit complex as we map to a NEW var name, 
+                                // but we need to know WHICH output key of the child was used.
+                                // If the engine uses direct keys, we can find them.
+                            }
+                        });
+                    }
+                });
+                return true;
+            }
+            return false;
         }).map(wf => ({ id: wf.id, name: wf.name }));
 
         return {
             usageCount: dependents.length,
-            dependents
+            dependents,
+            activeInputKeys: Array.from(activeInputKeys),
+            activeOutputKeys: Array.from(activeOutputKeys) // Placeholder for now
         };
     }
 
