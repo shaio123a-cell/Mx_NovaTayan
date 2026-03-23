@@ -156,6 +156,10 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         updateMutation.mutate(data);
     };
 
+    const handleSaveBasicScheduling = (newScheduling: any) => {
+        setScheduling(newScheduling);
+    };
+
     if (isLoading && workflowId) return null;
 
     return (
@@ -357,6 +361,55 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                     </div>
                                     <h4 className="font-bold text-slate-800 mb-1">Restricted Mode</h4>
                                     <p className="text-[11px] text-slate-500 font-medium">Hidden from the main library. Only accessible via direct link or internal calls.</p>
+                                </div>
+                            </div>
+
+                            {/* Basic Scheduling Section */}
+                            <div className="mt-8 pt-8 border-t border-slate-100">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                                        <Calendar size={20} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-800">Primary Schedule</h4>
+                                        <p className="text-xs text-slate-500">Enable automated recurrence for this workflow.</p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 mb-6">
+                                        <div>
+                                            <p className="text-sm font-black text-slate-800">Enable Recurring Trigger</p>
+                                            <p className="text-xs text-slate-500 font-medium">Run this workflow automatically on a schedule</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => handleSaveBasicScheduling({ ...scheduling, enabled: !scheduling.enabled })}
+                                            className={`w-12 h-6 rounded-full relative transition-all ${scheduling.enabled ? 'bg-blue-600' : 'bg-slate-200'}`}
+                                        >
+                                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${scheduling.enabled ? 'right-1' : 'left-1 shadow-sm'}`} />
+                                        </button>
+                                    </div>
+
+                                    {scheduling.enabled && (
+                                        <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Cron Expression</label>
+                                                <input 
+                                                    type="text"
+                                                    value={scheduling.cron}
+                                                    onChange={(e) => handleSaveBasicScheduling({ ...scheduling, cron: e.target.value })}
+                                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono text-blue-600 focus:outline-none focus:border-blue-500"
+                                                    placeholder="0 * * * *"
+                                                />
+                                                <p className="mt-1.5 text-[10px] text-slate-400 font-medium tracking-tight">Format: min hour day-of-month month day-of-week</p>
+                                            </div>
+
+                                            <ExecutionPredictor 
+                                                schedule={{ mode: 'CRON', config: { cron: scheduling.cron || '0 * * * *' } }} 
+                                                title="Scheduling Time Machine"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </section>
