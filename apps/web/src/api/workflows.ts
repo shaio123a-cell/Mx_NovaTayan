@@ -149,4 +149,22 @@ export const workflowsApi = {
         });
         if (!response.ok) throw new Error('Failed to delete token');
     },
+
+    // Webhook Listen Mode
+    startListening: async (workflowId: string, tokenId: string): Promise<{ listening: boolean, expiresAt: string }> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens/${tokenId}/listen`, {
+            method: 'POST',
+        });
+        return handleResponse(response);
+    },
+    getSample: async (workflowId: string, tokenId: string): Promise<{ ready: boolean, body?: any, headers?: any, query?: any, expired?: boolean }> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens/${tokenId}/sample`);
+        return handleResponse(response);
+    },
+    stopListening: async (workflowId: string, tokenId: string): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${workflowId}/tokens/${tokenId}/listen`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) throw new Error('Failed to stop listening');
+    },
 };

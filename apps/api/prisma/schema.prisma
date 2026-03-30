@@ -378,3 +378,15 @@ model AuditLog {
 
   @@map("audit_logs")
 }
+
+model WebhookSample {
+  id        String   @id @default(uuid())
+  tokenId   String   @unique  // one active sample per token at a time
+  body      Json
+  headers   Json?
+  query     Json?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("webhook_samples")
+}

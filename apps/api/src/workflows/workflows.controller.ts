@@ -125,4 +125,21 @@ export class WorkflowsController {
     updateToken(@Param('tokenId') tokenId: string, @Body() body: any) {
         return this.workflowsService.updateTriggerToken(tokenId, body);
     }
+
+    // --- Webhook Listen Mode ---
+
+    @Post(':workflowId/tokens/:tokenId/listen')
+    startListening(@Param('tokenId') tokenId: string) {
+        return this.workflowsService.startListening(tokenId);
+    }
+
+    @Get(':workflowId/tokens/:tokenId/sample')
+    getSample(@Param('tokenId') tokenId: string) {
+        return this.workflowsService.getSample(tokenId);
+    }
+
+    @Delete(':workflowId/tokens/:tokenId/listen')
+    stopListening(@Param('tokenId') tokenId: string) {
+        return this.workflowsService.stopListening(tokenId);
+    }
 }

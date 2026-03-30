@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { workflowsApi } from '../api/workflows';
 import { useToast } from '../context/ToastContext';
 import { 
     Plus, Trash2, Copy, Check, Zap, Globe, 
-    Lock, ArrowRight, ChevronDown, ChevronUp
+    Lock, ArrowRight, ChevronDown, ChevronUp, Radio, X, ChevronRight
 } from 'lucide-react';
 import { VariableAwareInput } from './VariableAwareInput';
 import { VariablePicker } from './VariablePicker';
@@ -28,6 +28,13 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDi
     const [initialized, setInitialized] = useState(!!(window as any)._webhookDraft);
     const inputRefs = useRef<Record<string, any>>({});
 
+    // --- Listen Mode State ---
+    const [listeningTokenId, setListeningTokenId] = useState<string | null>(null);
+    const [listenSecondsLeft, setListenSecondsLeft] = useState(0);
+    const [capturedSample, setCapturedSample] = useState<any | null>(null);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
     // --- Queries ---
     const { data: tokens, isLoading } = useQuery<any[]>({
         queryKey: ['workflow-tokens', workflowId],
@@ -41,6 +48,64 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDi
             setInitialized(true);
         }
     }, [tokens, initialized]);
+
+    // Cleanup listen mode on unmount
+    useEffect(() => {
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (countdownRef.current) clearInterval(countdownRef.current);
+        };
+    }, []);
+
+    const stopListenMode = useCallback(() => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        setListeningTokenId(null);
+        setListenSecondsLeft(0);
+    }, []);
+
+    const startListenMode = async (tokenId: string) => {
+        // Can't listen on un-saved (draft) tokens
+        if (tokenId.startsWith('new-')) {
+            showToast('Save the configuration first to get a real token URL for listening.', 'warning');
+            return;
+        }
+        setCapturedSample(null);
+        setListeningTokenId(tokenId);
+        setListenSecondsLeft(300); // 5 min
+        try {
+            await workflowsApi.startListening(workflowId, tokenId);
+        } catch (e: any) {
+            showToast(`Failed to start listening: ${e.message}`, 'error');
+            stopListenMode();
+            return;
+        }
+
+        // Countdown
+        countdownRef.current = setInterval(() => {
+            setListenSecondsLeft(prev => {
+                if (prev <= 1) { stopListenMode(); return 0; }
+                return prev - 1;
+            });
+        }, 1000);
+
+        // Poll every 2.5s
+        pollRef.current = setInterval(async () => {
+            try {
+                const result = await workflowsApi.getSample(workflowId, tokenId);
+                if (result.ready) {
+                    setCapturedSample(result);
+                    stopListenMode();
+                    showToast('Webhook payload captured!', 'success');
+                } else if (result.expired) {
+                    stopListenMode();
+                    showToast('Listen mode expired. No webhook received.', 'info');
+                }
+            } catch (e) {
+                // Ignore polling errors silently
+            }
+        }, 2500);
+    };
 
     // --- Mutations ---
     const handleCreateToken = (description = 'New Webhook') => {
@@ -329,9 +394,92 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDi
                                     </div>
                                 </div>
 
-                                {/* Quick Example (cURL) */}
+                                {/* Quick Example (cURL) + Listen Mode */}
                                 <div className="pt-6 border-t border-slate-100">
-                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Test Request (cURL)</label>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Test Request (cURL)</label>
+                                        <button
+                                            onClick={() => listeningTokenId === token.id ? stopListenMode() : startListenMode(token.id)}
+                                            disabled={!!listeningTokenId && listeningTokenId !== token.id}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                                                listeningTokenId === token.id
+                                                    ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
+                                                    : 'bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100 active:scale-95'
+                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                        >
+                                            {listeningTokenId === token.id ? (
+                                                <><X size={11} /> Stop Listening</>  
+                                            ) : (
+                                                <><Radio size={11} className="animate-pulse" /> Listen for Payload</>
+                                            )}
+                                        </button>
+                                    </div>
+
+                                    {/* Listen mode active banner */}
+                                    {listeningTokenId === token.id && !capturedSample && (
+                                        <div className="mb-4 bg-violet-50 border border-violet-200 rounded-xl p-4 flex items-center gap-3 animate-pulse">
+                                            <div className="w-3 h-3 rounded-full bg-violet-500 shrink-0 animate-ping" />
+                                            <div className="flex-1">
+                                                <p className="text-xs font-bold text-violet-800">Listening for incoming webhook...</p>
+                                                <p className="text-[10px] text-violet-500 mt-0.5">Send a real request using the cURL below. Expires in <span className="font-black tabular-nums">{Math.floor(listenSecondsLeft/60)}:{String(listenSecondsLeft%60).padStart(2,'0')}</span></p>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Captured sample payload tree */}
+                                    {capturedSample && (
+                                        <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-xl overflow-hidden shadow-lg shadow-emerald-100/50 scale-100 transition-all">
+                                            <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-100/60 border-b border-emerald-200">
+                                                <div className="flex items-center gap-2">
+                                                    <Check size={14} className="text-emerald-600 font-bold" />
+                                                    <span className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Payload Captured</span>
+                                                </div>
+                                                <button onClick={() => setCapturedSample(null)} className="text-emerald-400 hover:text-emerald-600 p-1 rounded-lg hover:bg-emerald-200/50 transition-colors">
+                                                    <X size={14}/>
+                                                </button>
+                                            </div>
+
+                                            {/* Data Sections Tabs */}
+                                            <div className="flex bg-emerald-50/50 border-b border-emerald-100 p-1 gap-1">
+                                                {['body', 'query', 'headers', 'full'].map((type) => (
+                                                    <button
+                                                        key={type}
+                                                        onClick={() => setCapturedSample(prev => ({ ...prev, _activeTab: type }))}
+                                                        className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${
+                                                            (capturedSample._activeTab || 'body') === type 
+                                                                ? 'bg-white text-emerald-700 shadow-sm border border-emerald-200' 
+                                                                : 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-100/50'
+                                                        }`}
+                                                    >
+                                                        {type}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            <div className="p-4 max-h-64 overflow-y-auto bg-white/40">
+                                                <JsonTree 
+                                                    data={
+                                                        capturedSample._activeTab === 'full' 
+                                                            ? { body: capturedSample.body, query: capturedSample.query, headers: capturedSample.headers }
+                                                            : capturedSample[capturedSample._activeTab || 'body']
+                                                    } 
+                                                    prefix={
+                                                        capturedSample._activeTab === 'full'
+                                                            ? 'request'
+                                                            : `request.${capturedSample._activeTab || 'body'}`
+                                                    } 
+                                                    onPathClick={(path) => {
+                                                        showToast(`Path copied: ${path}`, 'info');
+                                                        navigator.clipboard.writeText(path);
+                                                    }}
+                                                />
+                                            </div>
+                                            <div className="px-4 py-2 bg-emerald-50 text-[9px] text-emerald-600/70 font-medium italic border-t border-emerald-100">
+                                                Tip: Click any value to copy its source path for mapping.
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="bg-slate-900 rounded-xl p-4 font-mono text-[10px] text-emerald-400 relative group overflow-x-auto shadow-2xl">
                                         <pre className="whitespace-pre-wrap leading-relaxed">
                                             {`curl -X POST "${webhookBaseUrl}/${token.token}" \\
@@ -381,5 +529,88 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDi
                 </div>
             )}
         </div>
+    );
+}
+
+// --- Helper Components ---
+
+interface JsonTreeProps {
+    data: any;
+    prefix?: string;
+    onPathClick: (path: string) => void;
+    level?: number;
+}
+
+function JsonTree({ data, prefix = '', onPathClick, level = 0 }: JsonTreeProps) {
+    if (data === null) return <span className="text-slate-400 italic text-[10px]">null</span>;
+    
+    if (Array.isArray(data)) {
+        return (
+            <div className="space-y-1">
+                <span className="text-slate-400 text-[10px]">[</span>
+                <div className="pl-4 border-l border-slate-200 space-y-1">
+                    {data.map((item, i) => (
+                        <div key={i}>
+                            <JsonTree 
+                                data={item} 
+                                prefix={`${prefix}[${i}]`} 
+                                onPathClick={onPathClick} 
+                                level={level + 1} 
+                            />
+                        </div>
+                    ))}
+                </div>
+                <span className="text-slate-400 text-[10px]">]</span>
+            </div>
+        );
+    }
+
+    if (typeof data === 'object') {
+        return (
+            <div className="space-y-1">
+                {level === 0 && <span className="text-slate-400 text-[10px] font-mono">{"{"}</span>}
+                <div className={`${level === 0 ? 'pl-4 border-l border-slate-200' : ''} space-y-1`}>
+                    {Object.entries(data).map(([key, value]) => {
+                        const currentPath = prefix ? `${prefix}.${key}` : key;
+                        const isExpandable = value !== null && typeof value === 'object';
+
+                        return (
+                            <div key={key} className="group">
+                                <div className="flex items-start gap-1.5 py-0.5">
+                                    <button 
+                                        onClick={() => !isExpandable && onPathClick(currentPath)}
+                                        className={`flex items-center gap-1 px-1 rounded transition-all ${!isExpandable ? 'hover:bg-blue-50 hover:text-blue-600' : 'cursor-default'}`}
+                                    >
+                                        <span className="text-purple-600 font-bold text-[10px] font-mono">{key}:</span>
+                                        {!isExpandable && (
+                                            <span className="text-slate-600 text-[10px] font-mono">
+                                                {typeof value === 'string' ? `"${value}"` : String(value)}
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+                                {isExpandable && (
+                                    <div className="pl-4 border-l border-slate-200">
+                                        <JsonTree 
+                                            data={value} 
+                                            prefix={currentPath} 
+                                            onPathClick={onPathClick} 
+                                            level={level + 1} 
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+                {level === 0 && <span className="text-slate-400 text-[10px] font-mono">{"}"}</span>}
+            </div>
+        );
+    }
+
+    return (
+        <span className="text-slate-600 text-[10px] font-mono">
+            {typeof data === 'string' ? `"${data}"` : String(data)}
+        </span>
     );
 }

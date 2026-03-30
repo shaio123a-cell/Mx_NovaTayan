@@ -627,6 +627,24 @@ export class WorkflowsService {
             throw new Error(`Trigger token has expired`);
         }
 
+        // --- Listen Mode: capture sample if someone is watching ---
+        const activeSample = await this.prisma.webhookSample.findUnique({
+            where: { tokenId: tokenRecord.id }
+        });
+        if (activeSample && activeSample.expiresAt > new Date()) {
+            // Refresh/update the sample with the real incoming payload
+            await this.prisma.webhookSample.update({
+                where: { tokenId: tokenRecord.id },
+                data: {
+                    body: payload.body || {},
+                    headers: payload.headers || {},
+                    query: payload.query || {},
+                    expiresAt: new Date(Date.now() + 5 * 60 * 1000) // reset TTL to 5 min
+                }
+            });
+            this.logger.log(`[Listen Mode] Captured sample payload for token ${token.substring(0, 8)}...`);
+        }
+
         // --- Variable Mapping Logic ---
         const mapping = (tokenRecord.mapping || {}) as Record<string, string>;
         const initialVariables: Record<string, any> = {};
@@ -711,5 +729,49 @@ export class WorkflowsService {
             where: { id },
             data
         });
+    }
+
+    // --- Webhook Listen Mode ---
+
+    async startListening(tokenId: string) {
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes TTL
+        await this.prisma.webhookSample.upsert({
+            where: { tokenId },
+            create: { tokenId, body: {}, expiresAt },
+            update: { body: {}, expiresAt } // reset any old sample and TTL
+        });
+        this.logger.log(`[Listen Mode] Started listening for token ${tokenId}`);
+        return { listening: true, expiresAt };
+    }
+
+    async getSample(tokenId: string) {
+        const sample = await this.prisma.webhookSample.findUnique({
+            where: { tokenId }
+        });
+
+        if (!sample) return { ready: false };
+        if (sample.expiresAt < new Date()) {
+            // Expired — clean it up
+            await this.prisma.webhookSample.delete({ where: { tokenId } }).catch(() => {});
+            return { ready: false, expired: true };
+        }
+
+        // Has a real payload been received? Check if body is non-empty
+        const hasPayload = sample.body && Object.keys(sample.body as object).length > 0;
+        if (!hasPayload) return { ready: false };
+
+        // Return it and immediately delete (read-once)
+        await this.prisma.webhookSample.delete({ where: { tokenId } }).catch(() => {});
+        return {
+            ready: true,
+            body: sample.body,
+            headers: sample.headers,
+            query: sample.query
+        };
+    }
+
+    async stopListening(tokenId: string) {
+        await this.prisma.webhookSample.deleteMany({ where: { tokenId } }).catch(() => {});
+        return { listening: false };
     }
 }
