@@ -39,14 +39,15 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
             label: 'Workflow System', 
             icon: Workflow, 
             items: [
-                { label: 'executionId', value: '{{workflow.executionId}}' },
-                { label: 'Workflow Name', value: '{{workflow.name}}' },
-                { label: 'Last execution epoch', value: '{{workflow.lastExecutionEpoch}}' },
-                { label: 'Last successful epoch', value: '{{workflow.lastSuccessEpoch}}' },
-                { label: 'Last failed epoch', value: '{{workflow.lastFailedEpoch}}' },
-                { label: 'Last cancelled epoch', value: '{{workflow.lastCancelledEpoch}}' },
-                { label: 'Last success duration (ms)', value: '{{workflow.lastSuccessDuration}}' }
-            ] 
+                 { label: 'Execution ID', value: '{{workflow.executionId}}' },
+                 { label: 'Workflow Name', value: '{{workflow.name}}' },
+                 { label: 'Current Execution Status', value: '{{workflow.executionStatus}}' },
+                 { label: 'Current Execution Duration (ms)', value: '{{workflow.executionDuration}}' },
+                 { label: 'Last success duration (ms)', value: '{{workflow.lastSuccessDuration}}' },
+                 { label: 'Last execution epoch', value: '{{workflow.lastExecutionEpoch}}' },
+                 { label: 'Last successful epoch', value: '{{workflow.lastSuccessEpoch}}' },
+                 { label: 'Last failed epoch', value: '{{workflow.lastFailedEpoch}}' }
+             ] 
         },
         {
             id: 'macros',

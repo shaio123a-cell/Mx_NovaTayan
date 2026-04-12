@@ -937,18 +937,28 @@ export class WorkerService {
                             
                             // Resolve notification inputs if any were mapped in UI
                             const resolvedNotifInputs: any = {};
-                            if (notif.inputs && Object.keys(notif.inputs).length > 0) {
+                            if (notif.inputs && typeof notif.inputs === 'object') {
                                 try {
                                     const engine = new VariableEngine({
                                         global: await this.globalVarsService.findAllResolved(),
                                         workflow: workflowVars,
-                                        macros
+                                        macros: {
+                                            ...macros,
+                                            // Superior naming convention for event triggers
+                                            'workflow.executionStatus': finalStatus,
+                                            'workflow.executionDuration': duration,
+                                            'workflow.status': finalStatus, 
+                                            'workflow.lastStatus': finalStatus, // Alias for compatibility
+                                            'workflow.duration': duration,
+                                            'workflow.lastSuccessDuration': finalStatus === 'SUCCESS' ? duration : (macros['workflow.lastSuccessDuration'] || 0)
+                                        }
                                     });
+                                    
                                     for (const [k, v] of Object.entries(notif.inputs)) {
                                         resolvedNotifInputs[k] = engine.resolveValue(v, k);
                                     }
                                 } catch (e) {
-                                    this.logger.warn(`[Analytics] Failed to resolve some notification inputs for ${notif.workflowId}: ${e.message}`);
+                                    this.logger.warn(`[Analytics] Failed to resolve notification inputs for ${notif.workflowId}: ${e.message}`);
                                 }
                             }
 
