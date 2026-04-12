@@ -117,6 +117,9 @@ export class WorkflowsService {
             await this.validateCircularDependencies(id, updateData.nodes);
         }
 
+        // Automatically increment version whenever the workflow is updated
+        updateData.version = { increment: 1 };
+
         return this.prisma.workflow.update({
             where: { id },
             data: updateData,

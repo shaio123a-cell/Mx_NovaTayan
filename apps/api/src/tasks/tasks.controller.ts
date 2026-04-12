@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
 import { TasksService } from './tasks.service';
-import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskDto, CreateFolderDto, UpdateFolderDto } from './dto/task.dto';
 
 @Controller('tasks')
 export class TasksController {
@@ -49,18 +49,23 @@ export class TasksController {
         return this.tasksService.getImpact(id);
     }
 
-    @Get('groups/all')
-    findAllGroups() {
-        return this.tasksService.findAllGroups();
+    @Get('folders/all')
+    getFolderTree() {
+        return this.tasksService.getFolderTree();
     }
 
-    @Post('groups')
-    createGroup(@Body() data: { name: string; description?: string }) {
-        return this.tasksService.createGroup(data.name, data.description);
+    @Post('folders')
+    createFolder(@Body() dto: CreateFolderDto) {
+        return this.tasksService.createFolder(dto);
     }
 
-    @Delete('groups/:id')
-    deleteGroup(@Param('id') id: string) {
-        return this.tasksService.deleteGroup(id);
+    @Put('folders/:id')
+    updateFolder(@Param('id') id: string, @Body() dto: UpdateFolderDto) {
+        return this.tasksService.updateFolder(id, dto);
+    }
+
+    @Delete('folders/:id')
+    deleteFolder(@Param('id') id: string) {
+        return this.tasksService.deleteFolder(id);
     }
 }

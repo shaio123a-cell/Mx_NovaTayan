@@ -11,6 +11,7 @@ import { useToast } from '../context/ToastContext';
 
 interface Props {
     taskId?: string | null;
+    folderId?: string;
     nodeData?: any;
     availableUpstreamVars?: (string | { name: string, taskName: string, value?: any, source?: 'workflow' | 'task' | 'workflow_input' | 'workflow_output' })[];
     onClose: () => void;
@@ -179,7 +180,7 @@ function getEffectiveIcon(nameStr: string) {
     return null;
 }
 
-export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose, onSaveNode }: Props) {
+export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVars, onClose, onSaveNode }: Props) {
     const queryClient = useQueryClient()
     const { showToast } = useToast();
     const [activeTab, setActiveTab] = useState<'details' | 'config' | 'auth' | 'output'>('details')
@@ -226,7 +227,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
     const [tags, setTags] = useState<string[]>([])
     const [statusMappings, setStatusMappings] = useState<any[]>([])
     const [sanityChecks, setSanityChecks] = useState<any[]>([])
-    const [groupIds, setGroupIds] = useState<string[]>([])
+    const [targetFolderId, setTargetFolderId] = useState<string | undefined>(folderId)
     
     // Authorization State
     const [authType, setAuthType] = useState<'none' | 'basic' | 'bearer' | 'jwt'>('none')
@@ -266,9 +267,9 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
         enabled: !!taskId && isNestedWorkflow
     })
 
-    const { data: groups } = useQuery({
-        queryKey: ['task-groups'],
-        queryFn: tasksApi.getGroups
+    const { data: folders } = useQuery({
+        queryKey: ['task-folders'],
+        queryFn: tasksApi.getFolderTree
     })
 
     const { data: impact } = useQuery({
@@ -293,6 +294,10 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
 
         if (!targetData && !isUtility) {
             initializedRef.current = null;
+            // Set folder if creating new
+            if (!taskId && !nodeData && folderId) {
+                setTargetFolderId(folderId);
+            }
             return;
         }
 
@@ -374,7 +379,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 setSanityChecks(libChecks);
             }
 
-            setGroupIds(((task as any).groups || []).map((g: any) => g.id))
+            setTargetFolderId((task as any).folderId);
             
             const auth = cmd.authorization || { type: 'none' };
             setLibAuth(auth);
@@ -416,7 +421,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 setOutputVars(libVars);
             }
         }
-    }, [task, childWorkflow, nodeData, isEditing, isUtility, isWorkflowNode, isNestedWorkflow, isTaskFetching, isChildWfFetching, taskId])
+    }, [task, childWorkflow, nodeData, isEditing, isUtility, isWorkflowNode, isNestedWorkflow, isTaskFetching, isChildWfFetching, taskId, folderId])
 
     const handleSave = () => {
         try {
@@ -469,7 +474,7 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                 name, description, method, url, 
                 headers: finalHeaders, 
                 body, timeout, tags, statusMappings, sanityChecks,
-                groupIds, authorization,
+                folderId: targetFolderId, authorization,
                 variableExtraction: { vars: outputVars }
             }
             if (taskId) {
@@ -583,7 +588,53 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                     />
                 </div>
 
-                <div style={{ flex: 1, overflowY: 'auto', padding: '32px', display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                <div className="flex-1 overflow-y-auto p-8 overflow-x-hidden no-scrollbar" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                    {impact && impact.count > 0 && !isWorkflowNode && (
+                        <div className="mb-0 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                            <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
+                                <AlertTriangle size={20} />
+                            </div>
+                            <div className="flex-1">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-black text-amber-800 uppercase tracking-tighter">Shared Library Warning</h4>
+                                    <button 
+                                        onClick={() => setShowImpactList(!showImpactList)}
+                                        className="flex items-center gap-1.5 text-[10px] font-black text-amber-600 bg-amber-100/50 hover:bg-amber-100 px-2 py-1 rounded-lg transition-all"
+                                    >
+                                        {showImpactList ? 'HIDE LIST' : 'VIEW LIST'}
+                                        {showImpactList ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                    </button>
+                                </div>
+                                <p className="text-xs text-amber-700 font-medium leading-relaxed mt-1">
+                                    This task is actively used in <span className="font-bold">{impact.count} workflows</span>. 
+                                    Significant interface changes (renaming variables, changing extraction logic) <span className="underline">will impact or even break</span> dependent processes.
+                                </p>
+
+                                {showImpactList && impact.workflows && (
+                                    <div className="mt-4 space-y-2 animate-in slide-in-from-top-2 duration-300">
+                                        <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1.5">Parent Workflows:</div>
+                                        <div className="grid grid-cols-1 gap-2">
+                                            {impact.workflows.map((wf: any) => (
+                                                <a 
+                                                    key={wf.id}
+                                                    href={`/designer?id=${wf.id}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="group flex items-center justify-between p-2.5 bg-white/50 border border-amber-200/50 rounded-xl hover:bg-white hover:border-amber-300 transition-all"
+                                                >
+                                                    <div className="flex items-center gap-2.5">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 group-hover:scale-125 transition-transform" />
+                                                        <span className="text-xs font-bold text-amber-900 line-clamp-1">{wf.name}</span>
+                                                    </div>
+                                                    <ExternalLink size={10} className="text-amber-400 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
+                                                </a>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                             {activeTab === 'details' && !isUtility && (
                                 <>
                                     {isNestedWorkflow && childWorkflow && (
@@ -872,67 +923,38 @@ export function TaskEditShelf({ taskId, nodeData, availableUpstreamVars, onClose
                                                     />
                                                 </div>
 
-                                                <div className="space-y-2">
+                                                <div className="space-y-4">
                                                     {!isWorkflowNode && (
                                                         <div className="relative">
                                                             <div className="flex items-center justify-between mb-4">
-                                                                <label className="material-label">Library Categorization</label>
-                                                                <div className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-widest">Digital Org</div>
+                                                                <label className="material-label">Task Folder Destination</label>
+                                                                <div className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-widest">Library Hierarchy</div>
                                                             </div>
-                                                            <div className="grid grid-cols-2 gap-3 mt-2 relative">
-                                                                {/* Optional: Decorative grid lines */}
-                                                                <div className="absolute inset-0 grid grid-cols-4 grid-rows-4 pointer-events-none opacity-[0.03]">
-                                                                    {Array.from({ length: 16 }).map((_, i) => <div key={i} className="border border-primary-500" />)}
+                                                            <div className="space-y-2 mt-2">
+                                                                <select 
+                                                                    value={targetFolderId || ''} 
+                                                                    onChange={(e) => setTargetFolderId(e.target.value || undefined)}
+                                                                    className="material-box font-bold"
+                                                                >
+                                                                    <option value="">Root / Unsorted</option>
+                                                                    {(() => {
+                                                                        const renderOptions = (folders: any[], depth = 0) => {
+                                                                            return folders.map(f => (
+                                                                                <React.Fragment key={f.id}>
+                                                                                    <option value={f.id}>
+                                                                                        {'\u00A0'.repeat(depth * 4)}{depth > 0 ? '↳ ' : ''}{f.name}
+                                                                                    </option>
+                                                                                    {f.children && renderOptions(f.children, depth + 1)}
+                                                                                </React.Fragment>
+                                                                            ));
+                                                                        };
+                                                                        return folders ? renderOptions(folders) : null;
+                                                                    })()}
+                                                                </select>
+                                                                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-100 mt-2">
+                                                                    <Info size={12} className="text-slate-400" />
+                                                                    <span className="text-[10px] text-slate-500 font-medium">Tasks can be moved between folders at any time.</span>
                                                                 </div>
-
-                                                                {groups?.map((g: any, idx: number) => {
-                                                                    const isActive = groupIds.includes(g.id);
-                                                                    const hexId = g.id.substring(0, 4).toUpperCase();
-                                                                    return (
-                                                                        <div 
-                                                                            key={g.id} 
-                                                                            onClick={() => {
-                                                                                if (isActive) setGroupIds(groupIds.filter(id => id !== g.id));
-                                                                                else setGroupIds([...groupIds, g.id]);
-                                                                            }}
-                                                                            className={`relative overflow-hidden group cursor-pointer border-2 transition-all p-3 rounded-2xl flex flex-col gap-2 ${
-                                                                                isActive 
-                                                                                    ? 'bg-[#f0f4ff] border-primary-500 shadow-[0_0_20px_rgba(25,118,210,0.12)]' 
-                                                                                    : 'bg-white border-slate-100 hover:border-slate-300 hover:bg-slate-50/50'
-                                                                            }`}
-                                                                        >
-                                                                            <div className="flex items-center justify-between">
-                                                                                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md font-mono text-[9px] font-black tracking-tighter transition-colors ${isActive ? 'bg-primary-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                                                                    <div className={`w-1 h-1 rounded-full ${isActive ? 'bg-white animate-pulse' : 'bg-slate-300'}`} />
-                                                                                    REG-{hexId}
-                                                                                </div>
-                                                                                {isActive && (
-                                                                                    <div className="flex gap-0.5">
-                                                                                        {[1, 2, 3].map(i => (
-                                                                                            <div key={i} className="w-1 h-2 bg-primary-500/20 rounded-full" />
-                                                                                        ))}
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                            <div className="flex items-center gap-2">
-                                                                                <Folder size={12} className={isActive ? 'text-primary-600' : 'text-slate-300'} fill={isActive ? "currentColor" : "none"} />
-                                                                                <span className={`text-[12px] font-bold truncate ${isActive ? 'text-primary-800' : 'text-slate-600'}`}>
-                                                                                    {g.name}
-                                                                                </span>
-                                                                            </div>
-                                                                            {isActive && (
-                                                                                <div className="absolute -bottom-1 -right-1 opacity-10">
-                                                                                    <Grid size={32} className="text-primary-500" />
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                                {(!groups || groups.length === 0) && (
-                                                                    <div className="col-span-2 text-[10px] text-slate-400 italic py-4 text-center border-2 border-dashed border-slate-100 rounded-2xl uppercase tracking-widest font-black">
-                                                                        No library clusters found
-                                                                    </div>
-                                                                )}
                                                             </div>
                                                         </div>
                                                     )}

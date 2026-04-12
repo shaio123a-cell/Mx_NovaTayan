@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskDto, CreateFolderDto, UpdateFolderDto } from './dto/task.dto';
 import { LoggerService } from '../common/logger/logger.service';
 import { suggestIcon } from './utils/icon-mapper';
 
@@ -14,43 +14,28 @@ export class TasksService implements OnModuleInit {
     }
 
     async onModuleInit() {
-        // Automatically create 'Global' group if it doesn't exist
-        const globalGroup = await this.prisma.taskGroup.findUnique({
-            where: { name: 'Global' }
+        // Automatically create 'Root' folders if they don't exist
+        const globalGroup = await this.prisma.taskGroup.findFirst({
+            where: { name: 'General', parentId: null }
         });
 
         if (!globalGroup) {
-            this.logger.log('Creating default Global task group...');
+            this.logger.log('Creating default General task folder...');
             await this.prisma.taskGroup.create({
-                data: { name: 'Global', description: 'Default global group' }
+                data: { name: 'General', description: 'Default task folder' }
             });
-        }
-
-        // Cleanup: Remove legacy System Variables Utility Task if it exists
-        const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
-        try {
-            // Using deleteMany prevents P2025 error if record is already gone
-            const { count } = await this.prisma.task.deleteMany({ where: { id: SYSTEM_VAR_ID } });
-            if (count > 0) {
-                this.logger.log('Removed legacy System Variables Utility Task.');
-            }
-        } catch (e) {
-            this.logger.debug(`[Startup] Failed to cleanup legacy task: ${e.message}`);
         }
     }
 
     async create(createTaskDto: CreateTaskDto, ownerId: string) {
-        const { method, url, headers, body, timeout, scope, tags, groupIds, authorization, icon, ...rest } = createTaskDto;
-        const cleanRest = { ...rest };
-        if ('workerGroup' in cleanRest) delete (cleanRest as any).workerGroup;
-
-        // Auto-suggest icon if not provided
-        const finalIcon = icon || suggestIcon(createTaskDto.name);
-
-        // Determine group connections
-        const connections = groupIds && groupIds.length > 0
-            ? groupIds.map(id => ({ id }))
-            : [{ name: 'Global' }]; // Default to Global if none selected
+        const { method, url, headers, body, timeout, scope, tags, folderId, authorization, icon, ...rest } = createTaskDto;
+        
+        // Ensure folder exists or use first top-level folder
+        let finalFolderId = folderId;
+        if (!finalFolderId) {
+            const defaultFolder = await this.prisma.taskGroup.findFirst({ where: { parentId: null } });
+            finalFolderId = defaultFolder?.id;
+        }
 
         const command = {
             method,
@@ -63,17 +48,15 @@ export class TasksService implements OnModuleInit {
 
         return this.prisma.task.create({
             data: {
-                ...cleanRest,
+                ...rest,
                 scope: scope || 'GLOBAL',
                 ownerId,
                 command,
-                icon: finalIcon,
+                icon: icon || suggestIcon(createTaskDto.name),
                 tags: tags || [],
-                groups: {
-                    connect: connections.map(c => c.id ? { id: c.id } : { name: 'Global' })
-                }
+                folderId: finalFolderId
             },
-            include: { groups: true }
+            include: { folder: true }
         });
     }
 
@@ -81,27 +64,63 @@ export class TasksService implements OnModuleInit {
         return this.prisma.task.findMany({
             where: ownerId ? { ownerId } : undefined,
             orderBy: { createdAt: 'desc' },
-            include: { groups: true }
+            include: { folder: true }
         });
     }
 
-    async findAllGroups() {
-        return (this.prisma as any).taskGroup.findMany({
-            orderBy: { name: 'asc' },
-            include: { _count: { select: { tasks: true } } }
+    async getFolderTree() {
+        // Fetch all folders to build tree in memory (simple for typical scale)
+        const allFolders = await this.prisma.taskGroup.findMany({
+            include: { 
+                _count: { select: { tasks: true } }
+            },
+            orderBy: { name: 'asc' }
         });
+
+        const buildTree = (parentId: string | null = null): any[] => {
+            return allFolders
+                .filter(f => f.parentId === parentId)
+                .map(f => ({
+                    ...f,
+                    children: buildTree(f.id)
+                }));
+        };
+
+        return buildTree(null);
     }
 
-    async createGroup(name: string, description?: string) {
-        return (this.prisma as any).taskGroup.create({
-            data: { name, description }
+    async createFolder(dto: CreateFolderDto) {
+        try {
+            return await this.prisma.taskGroup.create({
+                data: {
+                    name: dto.name,
+                    description: dto.description,
+                    parentId: dto.parentId || null
+                }
+            });
+        } catch (e) {
+            if (e.code === 'P2002') {
+                throw new ConflictException(`A folder with name "${dto.name}" already exists in this location.`);
+            }
+            throw e;
+        }
+    }
+
+    async updateFolder(id: string, dto: UpdateFolderDto) {
+        return this.prisma.taskGroup.update({
+            where: { id },
+            data: {
+                name: dto.name,
+                description: dto.description,
+                parentId: dto.parentId
+            }
         });
     }
 
     async findOne(id: string) {
         const task = await this.prisma.task.findUnique({
             where: { id },
-            include: { groups: true }
+            include: { folder: true }
         });
 
         if (!task) {
@@ -113,8 +132,8 @@ export class TasksService implements OnModuleInit {
 
     async update(id: string, updateTaskDto: UpdateTaskDto) {
         const existing = await this.findOne(id);
-
-        const { method, url, headers, body, timeout, groupIds, authorization, ...rest } = updateTaskDto;
+        const { method, url, headers, body, timeout, folderId, authorization, ...rest } = updateTaskDto;
+        
         const commandUpdate: any = {};
         if (method) commandUpdate.method = method;
         if (url) commandUpdate.url = url;
@@ -124,8 +143,6 @@ export class TasksService implements OnModuleInit {
         if (authorization !== undefined) commandUpdate.authorization = authorization;
 
         const updateData: any = { ...rest };
-        if ('workerGroup' in updateData) delete updateData.workerGroup;
-
         if (Object.keys(commandUpdate).length > 0) {
             updateData.command = {
                 ...(existing.command as any),
@@ -133,26 +150,21 @@ export class TasksService implements OnModuleInit {
             };
         }
 
-        if (groupIds !== undefined) {
-            updateData.groups = {
-                set: groupIds.map(gid => ({ id: gid }))
-            };
+        if (folderId !== undefined) {
+            updateData.folderId = folderId;
         }
 
-        // Auto-suggest icon on rename if not provided
         if (updateTaskDto.name && !updateTaskDto.icon) {
             updateData.icon = suggestIcon(updateTaskDto.name);
-        } else if (updateTaskDto.icon) {
-            updateData.icon = updateTaskDto.icon;
         }
 
         const updatedTask = await this.prisma.task.update({
             where: { id },
             data: updateData,
-            include: { groups: true }
+            include: { folder: true }
         });
 
-        // Propagation logic: Update labels in all workflows if name changed
+        // Propagation logic: Update nodes in all workflows if name changed
         if (rest.name && rest.name !== existing.name) {
             this.logger.log(`Propagating name change for task ${id}: ${existing.name} -> ${rest.name}`);
             const allWorkflows = await this.prisma.workflow.findMany();
@@ -182,18 +194,73 @@ export class TasksService implements OnModuleInit {
     }
 
     async remove(id: string) {
-        await this.findOne(id);
-        return this.prisma.task.delete({
-            where: { id },
-        });
+        const impact = await this.getImpact(id);
+        if (impact.count > 0) {
+            throw new BadRequestException(`Cannot delete task "${id}" because it is used by ${impact.count} workflow(s).`);
+        }
+        return this.prisma.task.delete({ where: { id } });
     }
 
-    async deleteGroup(id: string) {
-        const group = await (this.prisma as any).taskGroup.findUnique({ where: { id } });
-        if (!group) throw new NotFoundException('Group not found');
-        if (group.name === 'Global') throw new Error('Cannot delete Global group');
+    async deleteFolder(id: string) {
+        const folder = await this.prisma.taskGroup.findUnique({ 
+            where: { id },
+            include: { children: true, tasks: true }
+        });
+        if (!folder) throw new NotFoundException('Folder not found');
 
-        return (this.prisma as any).taskGroup.delete({ where: { id } });
+        // 1. Gather all tasks in this folder and its subfolders recursively
+        const allTaskIds: string[] = [];
+        const foldersToProcess = [id];
+        
+        while (foldersToProcess.length > 0) {
+            const currentId = foldersToProcess.pop();
+            const f = await this.prisma.taskGroup.findUnique({
+                where: { id: currentId },
+                include: { children: true, tasks: true }
+            });
+            if (f) {
+                allTaskIds.push(...f.tasks.map(t => t.id));
+                foldersToProcess.push(...f.children.map(c => c.id));
+            }
+        }
+
+        // 2. Check impact for all these tasks
+        const allWorkflows = await this.prisma.workflow.findMany();
+        const blockers: string[] = [];
+        
+        for (const wf of allWorkflows) {
+            let nodes = wf.nodes as any[];
+            if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+            if (Array.isArray(nodes) && nodes.some(n => allTaskIds.includes(n.taskId))) {
+                blockers.push(wf.name);
+            }
+        }
+
+        if (blockers.length > 0) {
+            throw new BadRequestException({
+                message: `Cannot delete folder "${folder.name}" because some the tasks inside are used by workflows.`,
+                blockers: blockers.slice(0, 10), // Return first 10 for display
+                totalBlockers: blockers.length
+            });
+        }
+
+        // 3. No blockers? Delete all tasks and folders in the branch
+        // We delete sub-folders first (Prisma one-by-one or depth-first)
+        // Actually, deleting the tasks first is easier.
+        await this.prisma.task.deleteMany({ where: { folderId: { in: [id] } } }); // Wait, need recursive deletion
+        
+        // Recursive deletion helper
+        const recursiveDelete = async (fid: string) => {
+            const subFolders = await this.prisma.taskGroup.findMany({ where: { parentId: fid } });
+            for (const sub of subFolders) {
+                await recursiveDelete(sub.id);
+            }
+            await this.prisma.task.deleteMany({ where: { folderId: fid } });
+            await this.prisma.taskGroup.delete({ where: { id: fid } });
+        };
+
+        await recursiveDelete(id);
+        return { success: true };
     }
 
     async enqueueExecution(taskId: string) {
@@ -227,7 +294,8 @@ export class TasksService implements OnModuleInit {
             workflows: impactedWorkflows.map(wf => ({
                 id: wf.id,
                 name: wf.name
-            })).slice(0, 50) // Increased limit for better visibility
+            }))
         };
     }
 }
+

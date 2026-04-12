@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { tasksApi } from '../api/tasks';
 import { useDirtyState } from '../context/DirtyStateContext';
 import { 
     LayoutDashboard, 
@@ -13,15 +15,15 @@ import {
     Component,
     ChevronRight,
     Zap,
-    Calendar,
-    Clock
+    Clock,
+    Folder
 } from 'lucide-react';
 
 interface NavItemData {
     icon: any;
     label: string;
     path: string;
-    children?: { label: string; path: string; icon: any }[];
+    children?: NavItemData[];
 }
 
 interface SidebarProps {
@@ -32,32 +34,62 @@ export function Sidebar({ isOpen }: SidebarProps) {
     const location = useLocation();
     const navigate = useNavigate();
     const { isDirty, setShowDirtyModal, setPendingAction } = useDirtyState();
-    const [expandedParents, setExpandedParents] = useState<string[]>(['Administration']);
+    const [expandedPaths, setExpandedPaths] = useState<string[]>(() => {
+        try {
+            const saved = localStorage.getItem('sidebar_expanded_paths');
+            return saved ? JSON.parse(saved) : ['Administration', 'Tasks'];
+        } catch {
+            return ['Administration', 'Tasks'];
+        }
+    });
     
-    // Auto-expand/collapse toggle is handled by the Header, 
-    // but the Sidebar should also support a "slim" vs "full" state.
-    // However, the user wants "side by side" and "expand/collapse".
-    // I will interpret "isSidebarOpen" from App.tsx as the "Expanded" vs "Slim" state.
-    // If NOT isOpen, we show SLIM (icons only).
-    // If isOpen, we show FULL (labels).
+    // Fetch Task Folders
+    const { data: folderTree } = useQuery({
+        queryKey: ['task-folders'],
+        queryFn: tasksApi.getFolderTree
+    });
 
-    const toggleParent = (label: string) => {
-        setExpandedParents(prev => 
-            prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
-        );
+    const toggleExpanded = (path: string) => {
+        setExpandedPaths(prev => {
+            const next = prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path];
+            localStorage.setItem('sidebar_expanded_paths', JSON.stringify(next));
+            return next;
+        });
     };
 
     const isActive = (path: string) => {
         if (path === '/' && location.pathname === '/') return true;
+        
+        // Exact match for tasks with folderId
+        if (path.includes('folderId=')) {
+            return location.search.includes(path.split('?')[1]);
+        }
+
         if (path !== '/' && location.pathname.startsWith(path)) return true;
         return false;
     };
 
-    const allItems: NavItemData[] = [
+    // Transform API folder tree to NavItemData recursively
+    const taskChildren = useMemo(() => {
+        const mapFolder = (folder: any): NavItemData => ({
+            label: folder.name,
+            path: `/tasks?folderId=${folder.id}`,
+            icon: Folder,
+            children: folder.children?.map(mapFolder)
+        });
+        return folderTree?.map(mapFolder) || [];
+    }, [folderTree]);
+
+    const allItems = useMemo(() => [
         { icon: LayoutDashboard, label: 'Home', path: '/' },
         { icon: Component, label: 'Dashboards', path: '/history' },
         { icon: Network, label: 'Designer', path: '/designer' },
-        { icon: ListTodo, label: 'Tasks', path: '/tasks' },
+        { 
+            icon: ListTodo, 
+            label: 'Tasks', 
+            path: '/tasks',
+            children: taskChildren
+        },
         { icon: Clock, label: 'Scheduling', path: '/scheduling' },
         { 
             icon: ShieldCheck, 
@@ -70,11 +102,10 @@ export function Sidebar({ isOpen }: SidebarProps) {
                 { label: 'Global Variables', path: '/admin/variables', icon: Zap },
             ]
         },
-    ];
+    ], [taskChildren]);
 
     const helpItem = { icon: HelpCircle, label: 'Help', path: '/help' };
 
-    // Strict Widths
     const widthClass = isOpen ? 'w-[240px]' : 'w-[52px]';
 
     return (
@@ -98,19 +129,19 @@ export function Sidebar({ isOpen }: SidebarProps) {
                 <nav className={`flex-1 transition-all duration-300 ${isOpen ? 'px-2' : 'px-1'}`}>
                     {allItems.map((item) => (
                         <SidebarItem 
-                            key={item.label}
+                            key={item.label + item.path}
                             item={item}
                             active={isActive(item.path)}
-                            isParentOpen={expandedParents.includes(item.label)}
-                            onToggleParent={() => toggleParent(item.label)}
-                            isAnyChildActive={item.children?.some(c => isActive(c.path)) || false}
+                            isExpanded={expandedPaths.includes(item.label) || expandedPaths.includes(item.path)}
+                            onToggleExpanded={() => toggleExpanded(item.label || item.path)}
                             checkActive={isActive}
                             isSidebarExpanded={isOpen}
-                            // Pass down global dirty state to avoid multiple useDirtyState calls if needed
                             isDirty={isDirty}
                             setShowDirtyModal={setShowDirtyModal}
                             setPendingAction={setPendingAction}
                             navigate={navigate}
+                            expandedPaths={expandedPaths}
+                            toggleExpanded={toggleExpanded}
                         />
                     ))}
                 </nav>
@@ -119,15 +150,16 @@ export function Sidebar({ isOpen }: SidebarProps) {
                     <SidebarItem 
                         item={helpItem}
                         active={isActive(helpItem.path)}
-                        isParentOpen={false}
-                        onToggleParent={() => {}}
-                        isAnyChildActive={false}
+                        isExpanded={false}
+                        onToggleExpanded={() => {}}
                         checkActive={isActive}
                         isSidebarExpanded={isOpen}
                         isDirty={isDirty}
                         setShowDirtyModal={setShowDirtyModal}
                         setPendingAction={setPendingAction}
                         navigate={navigate}
+                        expandedPaths={expandedPaths}
+                        toggleExpanded={toggleExpanded}
                     />
                 </nav>
             </div>
@@ -138,27 +170,38 @@ export function Sidebar({ isOpen }: SidebarProps) {
 function SidebarItem({ 
     item, 
     active, 
-    isParentOpen,
-    onToggleParent,
-    isAnyChildActive,
+    isExpanded,
+    onToggleExpanded,
     checkActive,
     isSidebarExpanded,
     isDirty,
     setShowDirtyModal,
     setPendingAction,
-    navigate
+    navigate,
+    expandedPaths,
+    toggleExpanded,
+    depth = 0
 }: any) {
     const Icon = item.icon;
     const hasChildren = item.children && item.children.length > 0;
+    
+    // An item is "Active" if it's the current path or any of its children are active
+    const isAnyChildActive = useMemo(() => {
+        const checkChildren = (children: NavItemData[]): boolean => {
+            return children.some(c => checkActive(c.path) || (c.children && checkChildren(c.children)));
+        };
+        return hasChildren ? checkChildren(item.children) : false;
+    }, [item.children, checkActive, hasChildren]);
+
     const displayActive = active || isAnyChildActive;
 
     const handleClick = (e: React.MouseEvent) => {
-        if (hasChildren) {
-            onToggleParent();
-            return;
-        }
-
         e.preventDefault();
+        e.stopPropagation();
+
+        if (hasChildren) {
+            onToggleExpanded();
+        }
         
         if (isDirty) {
             setPendingAction(() => () => navigate(item.path));
@@ -175,9 +218,10 @@ function SidebarItem({
                 className={`flex items-center gap-3 py-2 cursor-pointer transition-all duration-200 group relative ${
                     displayActive ? 'text-[#f2f5f5]' : 'text-[#9fa2a8] hover:text-[#f2f5f5] hover:bg-[#202226]'
                 } ${isSidebarExpanded ? 'px-3 rounded-md' : 'px-0 justify-center'}`}
+                style={{ paddingLeft: isSidebarExpanded ? `${12 + depth * 12}px` : undefined }}
             >
                 {/* Active Indicator Line */}
-                {displayActive && (
+                {active && (
                     <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#f05a28] rounded-r-full shadow-[0_0_8px_rgba(240,90,40,0.4)]" />
                 )}
 
@@ -185,10 +229,10 @@ function SidebarItem({
                 
                 {isSidebarExpanded && (
                     <div className="flex-1 flex items-center justify-between min-w-0">
-                        <span className="text-xs font-semibold truncate leading-none pt-0.5">{item.label}</span>
+                        <span className="text-[11px] font-semibold truncate leading-none pt-0.5">{item.label}</span>
                         {hasChildren && (
                             <ChevronRight 
-                                className={`w-3 h-3 transition-transform duration-200 ${isParentOpen ? 'rotate-90' : ''}`}
+                                className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
                             />
                         )}
                     </div>
@@ -202,29 +246,25 @@ function SidebarItem({
                 )}
             </div>
 
-            {hasChildren && isParentOpen && isSidebarExpanded && (
-                <div className="mt-1 space-y-0.5 ml-8 border-l border-[#202226] pl-2 animate-in slide-in-from-top-2 duration-200">
+            {hasChildren && isExpanded && isSidebarExpanded && (
+                <div className="mt-0.5 border-l border-[#202226]/50 ml-5 animate-in slide-in-from-top-2 duration-200">
                     {item.children.map((child: any) => (
-                        <div
-                            key={child.path}
-                            onClick={(e) => {
-                                e.preventDefault();
-                                if (isDirty) {
-                                  setPendingAction(() => () => navigate(child.path));
-                                  setShowDirtyModal(true);
-                                } else {
-                                  navigate(child.path);
-                                }
-                            }}
-                            className={`flex items-center gap-2.5 py-1.5 px-3 rounded-md cursor-pointer text-[11px] font-medium transition-colors ${
-                                checkActive(child.path) 
-                                ? 'text-[#f05a28] bg-[#f05a28]/5' 
-                                : 'text-[#8e8e8e] hover:text-[#f2f5f5] hover:bg-[#202226]'
-                            }`}
-                        >
-                            <child.icon className="w-3.5 h-3.5" />
-                            {child.label}
-                        </div>
+                        <SidebarItem 
+                            key={child.path + child.label}
+                            item={child}
+                            active={checkActive(child.path)}
+                            isExpanded={expandedPaths?.includes(child.path) || expandedPaths?.includes(child.label)}
+                            onToggleExpanded={() => toggleExpanded(child.path || child.label)}
+                            checkActive={checkActive}
+                            isSidebarExpanded={isSidebarExpanded}
+                            isDirty={isDirty}
+                            setShowDirtyModal={setShowDirtyModal}
+                            setPendingAction={setPendingAction}
+                            navigate={navigate}
+                            expandedPaths={expandedPaths}
+                            toggleExpanded={toggleExpanded}
+                            depth={depth + 1}
+                        />
                     ))}
                 </div>
             )}

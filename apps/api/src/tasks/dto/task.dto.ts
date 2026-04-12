@@ -50,9 +50,9 @@ export class CreateTaskDto {
     @IsOptional()
     tags?: string[];
 
-    @IsArray()
+    @IsString()
     @IsOptional()
-    groupIds?: string[];
+    folderId?: string;
 
     @IsObject()
     @IsOptional()
@@ -95,9 +95,9 @@ export class UpdateTaskDto {
     @IsOptional()
     timeout?: number;
 
-    @IsArray()
+    @IsString()
     @IsOptional()
-    groupIds?: string[];
+    folderId?: string;
 
     @IsObject()
     @IsOptional()
@@ -106,4 +106,32 @@ export class UpdateTaskDto {
     @IsString()
     @IsOptional()
     icon?: string;
+}
+
+export class CreateFolderDto {
+    @IsString()
+    @IsNotEmpty()
+    name: string;
+
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    parentId?: string;
+}
+
+export class UpdateFolderDto {
+    @IsString()
+    @IsOptional()
+    name?: string;
+
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    parentId?: string;
 }

@@ -86,22 +86,35 @@ export const tasksApi = {
         return handleResponse(response);
     },
 
-    // Task Groups (Folders)
-    getGroups: async (): Promise<any[]> => {
-        const response = await fetch(`${API_BASE_URL}/tasks/groups/all`);
+    // Task Folders
+    getFolderTree: async (): Promise<any[]> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/folders/all`);
         return handleResponse(response);
     },
 
-    createGroup: async (name: string, description?: string): Promise<any> => {
-        const response = await fetch(`${API_BASE_URL}/tasks/groups`, {
+    createFolder: async (data: { name: string; description?: string; parentId?: string }): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/folders`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, description }),
+            body: JSON.stringify(data),
         });
         return handleResponse(response);
     },
 
-    deleteGroup: async (id: string): Promise<void> => {
-        await fetch(`${API_BASE_URL}/tasks/groups/${id}`, { method: 'DELETE' });
+    updateFolder: async (id: string, data: { name?: string; description?: string; parentId?: string }): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/folders/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    deleteFolder: async (id: string): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/folders/${id}`, { method: 'DELETE' });
+        if (!response.ok) {
+            const error = await response.json();
+            throw error; // Let the caller handle BadRequestException (blockers)
+        }
     }
 };

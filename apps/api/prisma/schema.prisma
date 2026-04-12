@@ -64,21 +64,32 @@ model Task {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Folder Relation
+  folderId   String?
+  folder     TaskGroup? @relation(fields: [folderId], references: [id])
+
   // Relations
   executions TaskExecution[]
-  groups     TaskGroup[]     @relation("TaskToGroup")
 
   @@map("tasks")
 }
 
 model TaskGroup {
   id          String   @id @default(uuid())
-  name        String   @unique
+  name        String
   description String?
-  tasks       Task[]   @relation("TaskToGroup")
+  
+  // Recursive Hierarchy
+  parentId    String?
+  parent      TaskGroup? @relation("TaskGroupToTaskGroup", fields: [parentId], references: [id])
+  children    TaskGroup[] @relation("TaskGroupToTaskGroup")
+
+  tasks       Task[]   
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  @@unique([name, parentId])
   @@map("task_groups")
 }
 
