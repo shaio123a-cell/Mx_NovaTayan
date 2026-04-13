@@ -168,37 +168,50 @@ export class WorkflowsService {
 
     async getUsageStatus(id: string) {
         const workflows = await this.prisma.workflow.findMany({
-            select: { id: true, name: true, nodes: true }
+            select: { id: true, name: true, nodes: true, notifications: true }
         });
 
         const activeInputKeys = new Set<string>();
         const activeOutputKeys = new Set<string>();
 
         const dependents = workflows.filter(wf => {
-            const nodes = wf.nodes as any[];
-            const matchingNodes = nodes?.filter(n => n.taskType === 'WORKFLOW' && n.taskId === id);
+            // Robust parsing for nodes
+            let nodes: any[] = [];
+            try {
+                nodes = (typeof wf.nodes === 'string' ? JSON.parse(wf.nodes) : wf.nodes) || [];
+            } catch (e) {}
+
+            // 1. Check if used as a Child Workflow (CWF) node
+            const matchingNodes = nodes.filter(n => n.taskType === 'WORKFLOW' && n.taskId === id);
             
             if (matchingNodes?.length > 0) {
                 matchingNodes.forEach(node => {
                     // Check inputs (parameters passed TO the child)
                     if (node.inputMapping) {
-                        Object.keys(node.inputMapping).forEach(key => activeInputKeys.add(key));
-                    }
-                    // Check outputs (results taken FROM the child)
-                    // In our engine, this usually happens in the NEXT node's inputMapping 
-                    // or via the variableExtraction of THIS node if it maps result->var
-                    if (node.variableExtraction?.vars) {
-                        Object.values(node.variableExtraction.vars).forEach((v: any) => {
-                            if (v.source === 'task' && v.taskName === node.name) {
-                                // This is a bit complex as we map to a NEW var name, 
-                                // but we need to know WHICH output key of the child was used.
-                                // If the engine uses direct keys, we can find them.
-                            }
-                        });
+                        try {
+                            const mapping = typeof node.inputMapping === 'string' ? JSON.parse(node.inputMapping) : node.inputMapping;
+                            Object.keys(mapping).forEach(key => activeInputKeys.add(key));
+                        } catch (e) {}
                     }
                 });
                 return true;
             }
+
+            // Robust parsing for notifications
+            let notifications: any[] = [];
+            try {
+                notifications = (typeof wf.notifications === 'string' ? JSON.parse(wf.notifications) : wf.notifications) || [];
+            } catch (e) {}
+
+            // 2. Check if used as an Event Trigger (notification)
+            const matchingTrigger = notifications.find(n => n.workflowId === id);
+            if (matchingTrigger) {
+                if (matchingTrigger.inputs) {
+                    Object.keys(matchingTrigger.inputs).forEach(key => activeInputKeys.add(key));
+                }
+                return true;
+            }
+
             return false;
         }).map(wf => ({ id: wf.id, name: wf.name }));
 
@@ -212,6 +225,13 @@ export class WorkflowsService {
 
     async remove(id: string) {
         await this.findOne(id);
+
+        const usage = await this.getUsageStatus(id);
+        if (usage.usageCount > 0) {
+            const names = usage.dependents.map(d => d.name).slice(0, 3).join(', ');
+            const suffix = usage.usageCount > 3 ? ` and ${usage.usageCount - 3} more` : '';
+            throw new Error(`Cannot delete workflow: It is used as a Child Workflow or Event Trigger by: ${names}${suffix}`);
+        }
 
         // Manual cascading delete (safer if DB constraints aren't perfect)
         // 1. Find all executions

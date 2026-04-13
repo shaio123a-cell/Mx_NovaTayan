@@ -14,6 +14,7 @@ import { SchedulesModule } from './schedules/schedules.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { loadConfig } from './common/config/configuration';
 import { BackgroundService } from './common/background/background.service';
+import { AiModule } from './ai/ai.module';
 
 @Module({
     imports: [
@@ -31,6 +32,7 @@ import { BackgroundService } from './common/background/background.service';
         CalendarsModule,
         SchedulesModule,
         SchedulerModule,
+        AiModule,
     ],
     controllers: [AppController],
     providers: [AppService, BackgroundService],

@@ -10,6 +10,7 @@ export class SettingsService implements OnModuleInit {
         const defaults = [
             { key: 'SUCCESS_CODES_DEFAULT', value: '200-299', description: 'HTTP success status code ranges (e.g. 200, 201 or 200-299)' },
             { key: 'FAILURE_CODES_DEFAULT', value: '400-599', description: 'HTTP failure status code ranges (e.g. 400-599)' },
+            { key: 'AI_LLM_PROVIDERS', value: '[]', description: 'JSON array of LLM provider connections defining the Copilot fallback chain (priority ordered).' },
         ];
 
         for (const d of defaults) {

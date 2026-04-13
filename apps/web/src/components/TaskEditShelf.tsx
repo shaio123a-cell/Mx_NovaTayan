@@ -4,7 +4,7 @@ import { workflowsApi } from '../api/workflows'
 import React, { useState, useEffect, useRef } from 'react'
 // Output processing is now per-variable; top-level preview removed.
 import { VariableManager } from './VariableManager';
-import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive, Box, Activity } from 'lucide-react'
+import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive, Box, Activity, Sparkles, Loader2 } from 'lucide-react'
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
 import { useToast } from '../context/ToastContext';
@@ -244,6 +244,100 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
     // Variable Picker State
     const [pickerOpen, setPickerOpen] = useState(false);
     const [pickerCallback, setPickerCallback] = useState<((val: string) => void) | null>(null);
+
+    // AI Copilot State
+    const [aiMode, setAiMode] = useState(false);
+    const [chatHistory, setChatHistory] = useState<{role: 'user'|'assistant', content: string}[]>([]);
+    const chatScrollRef = useRef<HTMLDivElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [aiDocs, setAiDocs] = useState('');
+    const [isGenerating, setIsGenerating] = useState(false);
+
+    useEffect(() => {
+        if (chatScrollRef.current) {
+            chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        }
+    }, [chatHistory, isGenerating]);
+
+    useEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+            textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 400) + 'px';
+        }
+    }, [aiDocs, aiMode]);
+
+    const handleAiGenerate = async () => {
+        if (!aiDocs.trim()) {
+            showToast('Please paste some documentation first.', 'error');
+            return;
+        }
+        const userMessage = aiDocs;
+        setChatHistory(prev => [...prev, { role: 'user', content: userMessage }]);
+        setAiDocs('');
+        setIsGenerating(true);
+        try {
+            let safeHeaders = {};
+            try { safeHeaders = JSON.parse(headers); } catch {}
+            
+            const response = await fetch('/api/ai/generate-task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    documentation: userMessage,
+                    currentState: { name, description, command: { method, url, headers: safeHeaders, body } },
+                    chatHistory: chatHistory 
+                })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.message || 'Generation failed');
+            }
+
+            const responseData = await response.json();
+            const data = responseData.task || responseData; // Fallback in case raw object is returned
+
+            if (data.name) setName(data.name);
+            if (data.description) setDescription(data.description);
+            if (data.command?.method) setMethod(data.command.method);
+            if (data.command?.url) setUrl(data.command.url);
+            if (data.command?.body) setBody(data.command.body);
+            if (data.command?.headers) {
+                 const rawH = data.command.headers;
+                 setKvHeaders(Object.entries(rawH).map(([k,v]) => ({ key: k, value: String(v) })));
+                 setHeadersOverride(true);
+                 setHeaders(JSON.stringify(rawH, null, 2));
+            }
+            if (data.variableExtraction) {
+                 const newVars: Record<string, any> = { ...outputVars };
+                 data.variableExtraction.forEach((ve: any) => {
+                     newVars[ve.variableName] = { 
+                         valueMode: 'transformer',
+                         transformer: {
+                             type: 'jmespath',
+                             spec: ve.path,
+                             inputSource: 'task_output',
+                             inputVariable: ''
+                         }
+                     };
+                 });
+                 setOutputVars(newVars);
+                 setActiveTab('output');
+            } else {
+                 setActiveTab('details');
+            }
+
+            if (responseData.explanation) {
+                 setChatHistory(prev => [...prev, { role: 'assistant', content: responseData.explanation }]);
+            }
+            
+            showToast('Task draft successfully generated/updated!', 'success');
+        } catch (error: any) {
+            showToast(error.message || 'AI Generation Failed', 'error');
+        } finally {
+            setIsGenerating(false);
+        }
+    };
 
     const openVarPicker = (cb: (v: string) => void) => {
         setPickerCallback(() => cb);
@@ -572,10 +666,77 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                             </div>
                         </div>
                     </div>
-                    <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '8px', borderRadius: '50%', display: 'flex', marginLeft: '16px' }}>
-                        <X size={24} color="#999" />
-                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: '16px' }}>
+                        {!isUtility && !isNestedWorkflow && (
+                            <button 
+                                onClick={() => setAiMode(!aiMode)}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${aiMode ? 'bg-purple-100 text-purple-700' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'} border border-purple-200 shadow-sm`}
+                            >
+                                <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
+                                {aiMode ? 'Close Copilot' : 'AI Generate'}
+                            </button>
+                        )}
+                        <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '8px', borderRadius: '50%', display: 'flex' }}>
+                            <X size={24} color="#999" />
+                        </button>
+                    </div>
                 </div>
+
+                {aiMode && (
+                    <div className="mx-8 mt-4 p-4 bg-gradient-to-r from-purple-50 to-white border border-purple-200 rounded-2xl shadow-inner animate-in fade-in slide-in-from-top-4 duration-300 flex flex-col h-[400px]">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-sm font-black text-purple-900 flex items-center gap-2">
+                                <Sparkles size={16} className="text-purple-500" />
+                                Interactive Copilot
+                            </h3>
+                            <button onClick={() => setAiMode(false)} className="text-purple-400 hover:text-purple-600 transition-colors"><X size={16}/></button>
+                        </div>
+                        
+                        <div ref={chatScrollRef} className="flex-1 overflow-y-auto mb-3 space-y-3 p-3 bg-purple-50/50 rounded-xl border border-purple-100/50 shadow-inner">
+                             {chatHistory.length === 0 && (
+                                <div className="flex flex-col items-center justify-center h-full text-center p-4">
+                                    <Sparkles size={24} className="text-purple-300 mb-2" />
+                                    <div className="text-xs text-purple-700 font-bold mb-1">How can I help you build this task?</div>
+                                    <div className="text-[10px] text-purple-500 max-w-xs leading-relaxed">Paste API documentation, curl commands, or just ask me to set up an endpoint using plain English!</div>
+                                </div>
+                             )}
+                             {chatHistory.map((msg, i) => (
+                                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                     <div className={`max-w-[85%] p-3 rounded-2xl text-xs font-medium shadow-sm leading-relaxed ${msg.role === 'user' ? 'bg-purple-600 text-white rounded-tr-sm border border-purple-700' : 'bg-white text-purple-900 border border-purple-200 rounded-tl-sm'}`}>
+                                         {msg.content}
+                                     </div>
+                                 </div>
+                             ))}
+                             {isGenerating && (
+                                 <div className="flex justify-start animate-in fade-in zoom-in duration-300">
+                                     <div className="bg-white text-purple-500 p-3 rounded-2xl border border-purple-200 rounded-tl-sm text-xs font-bold flex items-center gap-2 shadow-sm">
+                                         <Loader2 size={14} className="animate-spin"/> Crafting changes...
+                                     </div>
+                                 </div>
+                             )}
+                        </div>
+                        <div className="flex gap-2 items-end">
+                            <textarea 
+                                ref={textareaRef}
+                                value={aiDocs}
+                                onChange={(e) => setAiDocs(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiGenerate(); }
+                                }}
+                                placeholder="Message Copilot... (Press Enter to send)"
+                                className="flex-1 min-h-[44px] py-[10px] px-4 bg-white border border-purple-200 rounded-xl text-sm outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 resize-none shadow-sm transition-all overflow-y-auto"
+                                disabled={isGenerating}
+                            />
+                            <button 
+                                onClick={handleAiGenerate}
+                                disabled={isGenerating || !aiDocs.trim()}
+                                className="flex items-center justify-center shrink-0 w-11 h-11 bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <ArrowRight size={18} />
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 <div style={{ display: 'flex', padding: '0 32px', borderBottom: '1px solid #eee', marginTop: '16px' }}>
                     {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
