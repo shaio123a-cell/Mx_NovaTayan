@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { workflowsApi } from '../api/workflows'
-import { Play, Edit2, Trash2, Plus, Search, FolderPlus, Folder, AlertTriangle, Network, X, MoreVertical, ArrowUp, ArrowDown } from 'lucide-react'
+import { Play, Edit2, Trash2, Plus, Search, FolderPlus, Folder, AlertTriangle, Network, X, MoreVertical, ArrowUp, ArrowDown, RefreshCcw } from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { useBreadcrumbs } from '../context/BreadcrumbContext'
 
@@ -13,18 +13,32 @@ export function Workflows() {
     const [searchQuery, setSearchQuery] = useState('')
     const { showToast } = useToast();
     const { setExtraSegments } = useBreadcrumbs()
+    const [refreshInterval, setRefreshInterval] = useState<number>(30000);
     
     const queryClient = useQueryClient()
 
-    const { data: workflows, isLoading } = useQuery({
+    const { data: workflows, isLoading, isFetching: isFetchingWorkflows } = useQuery({
         queryKey: ['workflows', currentFolderId],
         queryFn: () => workflowsApi.getWorkflows(currentFolderId || undefined),
+        refetchInterval: refreshInterval
     })
 
     const { data: folderTree } = useQuery({
         queryKey: ['workflow-folders'],
         queryFn: workflowsApi.getFolderTree,
     })
+
+    const { data: stats, isFetching: isFetchingStats } = useQuery<any>({
+        queryKey: ['system-stats', currentFolderId],
+        queryFn: () => workflowsApi.getSystemStats(currentFolderId || undefined),
+        refetchInterval: refreshInterval
+    })
+
+    const handleRefresh = () => {
+        queryClient.invalidateQueries({ queryKey: ['workflows'] });
+        queryClient.invalidateQueries({ queryKey: ['workflow-folders'] });
+        queryClient.invalidateQueries({ queryKey: ['system-stats'] });
+    };
 
     const currentFolder = useMemo(() => {
         if (!folderTree || !currentFolderId) return null;
@@ -251,22 +265,59 @@ export function Workflows() {
                             </p>
                         </div>
                     </div>
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => setIsCreatingFolder(true)}
-                        className="bg-white border border-gray-200 text-gray-600 px-6 py-3 rounded-lg font-bold shadow-sm hover:border-[#1976D2] hover:text-[#1976D2] transition-all flex items-center gap-2"
-                    >
-                        <FolderPlus size={20} /> {currentFolderId ? 'New Sub-folder' : 'New Folder'}
-                    </button>
-                    <Link
-                        to="/designer"
-                        className="bg-[#1976D2] hover:bg-[#1565C0] text-white px-6 py-3 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform hover:-translate-y-0.5"
-                    >
-                        <Plus size={20} /> New Workflow
-                    </Link>
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-gray-200 shadow-sm mr-2">
+                            <select
+                                value={refreshInterval}
+                                onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                                className="bg-transparent text-gray-600 text-[10px] font-bold outline-none cursor-pointer px-2"
+                            >
+                                <option value={0}>Refresh: Off</option>
+                                <option value={10000}>10s</option>
+                                <option value={30000}>30s</option>
+                                <option value={60000}>1m</option>
+                            </select>
+                            <button
+                                onClick={handleRefresh}
+                                className="p-2 text-gray-400 hover:text-[#1976D2] transition-colors"
+                                title="Refresh"
+                            >
+                                <RefreshCcw size={14} className={(isFetchingWorkflows || isFetchingStats) ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => setIsCreatingFolder(true)}
+                                className="bg-white border border-gray-200 text-gray-600 px-6 py-3 rounded-lg font-bold shadow-sm hover:border-[#1976D2] hover:text-[#1976D2] transition-all flex items-center gap-2"
+                            >
+                                <FolderPlus size={20} /> {currentFolderId ? 'New Sub-folder' : 'New Folder'}
+                            </button>
+                            <Link
+                                to="/designer"
+                                className="bg-[#1976D2] hover:bg-[#1565C0] text-white px-6 py-3 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform hover:-translate-y-0.5"
+                            >
+                                <Plus size={20} /> New Workflow
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Dashboard Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+                    <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.1em] mb-2">Total Workflows</h3>
+                        <p className="text-4xl font-black text-[#1976D2] tracking-tighter">{stats?.totalWorkflows || 0}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.1em] mb-2">Active Tasks</h3>
+                        <p className="text-4xl font-black text-green-600 tracking-tighter">{stats?.totalTasks || 0}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.1em] mb-2">Failures (24h)</h3>
+                        <p className="text-4xl font-black text-red-500 tracking-tighter">{stats?.failures24h || 0}</p>
+                    </div>
                 </div>
             </div>
-        </div>
 
             {/* Search */}
             <div className="mb-8">
@@ -345,12 +396,12 @@ function WorkflowCard({ workflow, index, isDragged, onDragStart, onDragOver, onD
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDragEnd={onDragEnd}
-            className={`group bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-all flex items-center justify-between ${isDragged ? 'opacity-30' : ''}`}
+            className={`group bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-all flex items-center justify-between cursor-grab active:cursor-grabbing ${isDragged ? 'opacity-30' : ''}`}
         >
             <div className="flex items-center gap-6 flex-1 min-w-0">
                 {/* Reorder Controls (Variable Manager Style) */}
                 <div className="flex items-center gap-1 shrink-0">
-                    <div className="cursor-move text-gray-300 group-hover:text-gray-400 p-1">
+                    <div className="cursor-move text-gray-300 group-hover:text-gray-400 p-1 pointer-events-none">
                         <MoreVertical size={18} />
                     </div>
                     <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
@@ -364,10 +415,14 @@ function WorkflowCard({ workflow, index, isDragged, onDragStart, onDragOver, onD
                 </div>
 
                 <div className="flex-1 min-w-0">
-                    <Link to={`/workflows/history/${workflow.executions?.[0]?.id || ''}`} className="block group/title">
+                    <Link 
+                        to={`/workflows/history/${workflow.executions?.[0]?.id || ''}`} 
+                        className="block group/title"
+                        draggable="false"
+                    >
                         <h4 className="font-bold text-xl text-gray-800 mb-1 group-hover/title:text-[#1976D2] transition-colors truncate">{workflow.name}</h4>
                     </Link>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 pointer-events-none">
                         <span className="text-xs font-medium text-gray-400">
                             {workflow.nodes?.length || 0} nodes • v{workflow.version}
                         </span>

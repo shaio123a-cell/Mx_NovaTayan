@@ -534,17 +534,51 @@ export class WorkflowsService {
         });
     }
 
-    async getSystemStats() {
+    async getSystemStats(folderId?: string) {
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
 
+        let workflowIds: string[] | undefined;
+        let folderIds: string[] | undefined;
+
+        if (folderId) {
+            // Find all descendant folders recursively
+            const allFolders = await this.prisma.workflowGroup.findMany();
+            folderIds = this.getAllDescendantFolderIds(folderId, allFolders);
+            folderIds.push(folderId);
+
+            // Get all workflows in these folders
+            const workflows = await this.prisma.workflow.findMany({
+                where: { folderId: { in: folderIds } },
+                select: { id: true }
+            });
+            workflowIds = workflows.map(w => w.id);
+        }
+
         const [workflowsCount, tasksCount, failures24h] = await Promise.all([
-            this.prisma.workflow.count(),
-            this.prisma.task.count(),
+            // Total Workflows in this folder branch
+            folderId 
+              ? this.prisma.workflow.count({ where: { folderId: { in: folderIds } } })
+              : this.prisma.workflow.count(),
+            
+            // Total Tasks 
+            // If scoped: Count RUNNING task executions belonging to these workflows
+            // If global: Count total task templates
+            folderId
+              ? this.prisma.taskExecution.count({ 
+                  where: { 
+                    workflowExecution: { workflowId: { in: workflowIds } },
+                    status: 'RUNNING'
+                  } 
+                })
+              : this.prisma.task.count(),
+
+            // Failures in last 24h
             this.prisma.workflowExecution.count({
                 where: {
                     status: 'FAILED',
-                    startedAt: { gte: yesterday }
+                    startedAt: { gte: yesterday },
+                    ...(workflowIds ? { workflowId: { in: workflowIds } } : {})
                 }
             })
         ]);
@@ -554,6 +588,15 @@ export class WorkflowsService {
             totalTasks: tasksCount,
             failures24h
         };
+    }
+
+    private getAllDescendantFolderIds(parentId: string, allFolders: any[]): string[] {
+        const children = allFolders.filter(f => f.parentId === parentId);
+        let result: string[] = children.map(f => f.id);
+        for (const child of children) {
+            result = result.concat(this.getAllDescendantFolderIds(child.id, allFolders));
+        }
+        return result;
     }
     async terminateExecution(id: string) {
         const execution = await this.prisma.workflowExecution.findUnique({

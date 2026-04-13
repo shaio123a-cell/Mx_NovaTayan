@@ -8,8 +8,8 @@ export class WorkflowsController {
     constructor(private readonly workflowsService: WorkflowsService) { }
 
     @Get('stats')
-    getStats() {
-        return this.workflowsService.getSystemStats();
+    getStats(@Query('folderId') folderId?: string) {
+        return this.workflowsService.getSystemStats(folderId);
     }
 
     @Post()

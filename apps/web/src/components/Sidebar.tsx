@@ -6,7 +6,6 @@ import { workflowsApi } from '../api/workflows';
 import { useDirtyState } from '../context/DirtyStateContext';
 import { useToast } from '../context/ToastContext';
 import { 
-    LayoutDashboard, 
     ListTodo, 
     Network, 
     ShieldCheck, 
@@ -156,7 +155,6 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
     }, [workflowFolderTree]);
 
     const allItems = useMemo(() => [
-        { icon: LayoutDashboard, label: 'Home', path: '/' },
         { 
             icon: Network, 
             label: 'Workflows', 
@@ -332,7 +330,7 @@ function SidebarItem({
         
         // Extract folderId from path (e.g., /tasks?folderId=uuid)
         const url = new URL(item.path, window.location.origin);
-        const folderId = url.searchParams.get('folderId') || undefined;
+        const folderId = url.searchParams.get('folderId') || null;
 
         if (taskId && item.path.startsWith('/tasks') && onDropTask) {
             onDropTask(taskId, folderId);

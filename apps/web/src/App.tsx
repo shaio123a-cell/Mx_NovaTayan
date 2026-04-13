@@ -145,7 +145,7 @@ function AppContent() {
                     background: '#F5F5F5'
                 }}>
                     <Routes>
-                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/" element={<Workflows />} />
                         <Route path="/workflows" element={<Workflows />} />
                         <Route path="/tasks" element={<Tasks />} />
                         <Route path="/designer" element={<WorkflowDesigner />} />

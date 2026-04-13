@@ -22,7 +22,7 @@ function Dashboard() {
 
     const { data: stats, isFetching: isFetchingStats } = useQuery<any>({
         queryKey: ['system-stats'],
-        queryFn: workflowsApi.getSystemStats,
+        queryFn: () => workflowsApi.getSystemStats(),
         refetchInterval: refreshInterval
     })
 

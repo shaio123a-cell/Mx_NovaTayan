@@ -24,8 +24,9 @@ export const workflowsApi = {
         });
         await handleResponse(response);
     },
-    getSystemStats: async (): Promise<any> => {
-        const response = await fetch(`${API_BASE_URL}/workflows/stats`);
+    getSystemStats: async (folderId?: string): Promise<any> => {
+        const url = folderId ? `${API_BASE_URL}/workflows/stats?folderId=${folderId}` : `${API_BASE_URL}/workflows/stats`;
+        const response = await fetch(url);
         return handleResponse(response);
     },
 

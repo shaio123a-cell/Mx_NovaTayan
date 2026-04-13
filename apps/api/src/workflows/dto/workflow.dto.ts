@@ -45,6 +45,10 @@ export class CreateWorkflowDto {
     @IsString()
     @IsOptional()
     icon?: string;
+
+    @IsString()
+    @IsOptional()
+    folderId?: string;
 }
 
 export class UpdateWorkflowDto {
@@ -91,6 +95,10 @@ export class UpdateWorkflowDto {
     @IsString()
     @IsOptional()
     icon?: string;
+
+    @IsString()
+    @IsOptional()
+    folderId?: string;
 }
 
 export class CreateFolderDto {
