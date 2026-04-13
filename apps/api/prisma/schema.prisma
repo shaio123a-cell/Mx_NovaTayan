@@ -61,6 +61,7 @@ model Task {
   
   icon      String?
   tags      String[]
+  order     Float    @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -169,14 +170,38 @@ model Workflow {
   
   icon      String?
   tags      String[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  order     Float     @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Folder Relation
+  folderId   String?
+  folder     WorkflowGroup? @relation(fields: [folderId], references: [id])
 
   // Relations
   executions WorkflowExecution[]
   triggerTokens TriggerToken[]
 
   @@map("workflows")
+}
+
+model WorkflowGroup {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  
+  // Recursive Hierarchy
+  parentId    String?
+  parent      WorkflowGroup? @relation("WorkflowGroupToWorkflowGroup", fields: [parentId], references: [id])
+  children    WorkflowGroup[] @relation("WorkflowGroupToWorkflowGroup")
+
+  workflows   Workflow[]   
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, parentId])
+  @@map("workflow_groups")
 }
 
 model Schedule {

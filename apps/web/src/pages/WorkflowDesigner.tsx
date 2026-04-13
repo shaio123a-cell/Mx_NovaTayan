@@ -858,14 +858,14 @@ function WorkflowDesignerContent() {
     const initializedRef = useRef<string | null>(null)
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
 
-    const { data: tasks, isLoading: isLoadingTasks } = useQuery({
+    const { data: tasks, isLoading: isLoadingTasks } = useQuery<any[]>({
         queryKey: ['tasks'],
-        queryFn: tasksApi.getTasks,
+        queryFn: () => tasksApi.getTasks(),
     })
  
-    const { data: allWorkflows, isLoading: isLoadingWorkflows } = useQuery({
-        queryKey: ['workflows'],
-        queryFn: workflowsApi.getWorkflows,
+    const { data: allWorkflows, isLoading: isLoadingWorkflows } = useQuery<any[]>({
+        queryKey: ['workflows-all'],
+        queryFn: () => workflowsApi.getWorkflows(),
     })
 
     const { data: existingWorkflow, isLoading: isWfLoading } = useQuery({
@@ -1437,13 +1437,13 @@ function WorkflowDesignerContent() {
                 const upstreamVarNames = nodes
                     .filter(n => upstreamNodes.includes(n.id))
                     .flatMap(n => {
-                        const isNodeWorkflow = n.data.taskType === 'WORKFLOW' || !!allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                        const isNodeWorkflow = n.data.taskType === 'WORKFLOW' || !!(allWorkflows as any[])?.find((w: any) => w.id === n.data.taskId);
                         let libVars = {};
                         if (isNodeWorkflow) {
-                            const wfDef = allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                            const wfDef = (allWorkflows as any[])?.find((w: any) => w.id === n.data.taskId);
                             libVars = wfDef?.outputVariables || {};
                         } else {
-                            const taskDef = tasks?.find((t: any) => t.id === n.data.taskId);
+                            const taskDef = (tasks as any[])?.find((t: any) => t.id === n.data.taskId);
                             libVars = (taskDef as any)?.variableExtraction?.vars || (taskDef as any)?.command?.outputProcessing?.vars || {};
                         }
                         
@@ -1483,13 +1483,13 @@ function WorkflowDesignerContent() {
             {isAdminPanelOpen && (() => {
                 // For global workflow context (Notifications / Output Vars), show ALL task outputs + workflow inputs
                 const allTaskVars = nodes.flatMap(n => {
-                    const isNodeWorkflow = n.data.taskType === 'WORKFLOW' || !!allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                    const isNodeWorkflow = n.data.taskType === 'WORKFLOW' || !!(allWorkflows as any[])?.find((w: any) => w.id === n.data.taskId);
                     let libVars: any = {};
                     if (isNodeWorkflow) {
-                        const wfDef = allWorkflows?.find((w: any) => w.id === n.data.taskId);
+                        const wfDef = (allWorkflows as any[])?.find((w: any) => w.id === n.data.taskId);
                         libVars = wfDef?.outputVariables || {};
                     } else {
-                        const taskDef = tasks?.find((t: any) => t.id === n.data.taskId);
+                        const taskDef = (tasks as any[])?.find((t: any) => t.id === n.data.taskId);
                         libVars = (taskDef as any)?.variableExtraction?.vars || (taskDef as any)?.command?.outputProcessing?.vars || {};
                     }
                     const nodeVars = n.data.variableExtraction?.vars || {};

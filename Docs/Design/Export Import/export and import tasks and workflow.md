@@ -1,163 +1,122 @@
 # Design: Export & Import System
 
-Status: **Draft** | Priority: **High** | Version: **1.0**
+Status: **Draft** | Priority: **High** | Version: **1.1**
 
 ## 1. Overview
-This feature enables users to export one or more Tasks or Workflows into a portable format (`.restmon.json`) and import them into other environments or share them with other users.
+This feature enables users to export one or more Tasks or Workflows into a portable format (`.restmon.json`) and import them into other environments. With the introduction of **Hierarchical Folder Management**, the system now supports exporting entire folder trees while preserving the structural context of the automations.
 
 ### Core Objectives
 - **Portability**: Move automations between Dev, Sandbox, and Prod environments.
-- **Collaboration**: Share common task templates or workflow patterns.
+- **Structural Integrity**: Export folder hierarchies along with their contents.
+- **Recursive Resolution**: Automatically include all Tasks required by an exported Workflow.
 - **Safety**: Ensure sensitive data (secrets) are never leaked during export.
-- **Integrity**: Workflows must be exported with their dependent tasks to remain functional.
 
 ---
 
 ## 2. Technical Specification
 
 ### 2.1 The "RestMon Bundle" Format
-The export file is a versioned JSON object that can contain tasks, workflows, and folders.
+The bundle is a JSON object containing a flattened list of entities. Relationships (like folder parents) are preserved via unique local IDs within the bundle.
 
 ```json
 {
   "$schema": "https://restmon.io/schemas/export-v1.json",
   "metadata": {
-    "version": "1.0",
+    "version": "1.1",
     "exportedAt": "2024-04-13T12:00:00Z",
-    "source": "RestMon-Instance-A",
-    "itemCount": 5
+    "source": "RestMon-Internal",
+    "type": "HIERARCHICAL_BUNDLE"
   },
   "data": {
-    "folders": [],
-    "tasks": [
+    "folders": [
       {
-        "name": "Login API",
-        "command": { "url": "https://api.example.com/login", "method": "POST" },
-        "sanitized": true
+        "localId": "f-1",
+        "name": "Production API",
+        "type": "TASK",
+        "parentId": null
+      },
+      {
+        "localId": "f-2",
+        "name": "Authentication",
+        "type": "TASK",
+        "parentId": "f-1"
       }
     ],
-    "workflows": [
+    "tasks": [
       {
-        "name": "Auth Flow",
-        "nodes": [...],
-        "edges": [...]
+        "localId": "t-1",
+        "folderId": "f-2",
+        "name": "Login v1",
+        "command": { "url": "{{BASE_URL}}/login", "method": "POST" }
       }
-    ]
+    ],
+    "workflows": []
   }
 }
 ```
 
 ### 2.2 Security & Sanitization
-> [!WARNING]
-> Security is paramount. Exported files must never contain actual secret values.
+> [!IMPORTANT]
+> Exports are sanitized at the engine level before being sent to the client.
 
-1.  **Secrets**: Any reference to a `secretId` in a Task should be preserved, but the system must ensure the actual value is NOT included. 
-2.  **Placeholders**: On import, if a task references a secret name that doesn't exist in the target system, the user should be prompted to select/create a local secret.
-3.  **Owner Metadata**: All `ownerId` and `id` (primary keys) fields are stripped or flagged for regeneration on import.
+1.  **Primary Keys**: All database IDs (UUIDs) are stripped.
+2.  **Secrets**: `secretId` fields are replaced with `secretName`. The actual secret value is **NEVER** included.
+3.  **Global Variables**: Preserved as references (e.g., `{{URL}}`).
 
 ---
 
 ## 3. Functional Design
 
-### 3.1 Export Workflow
-```mermaid
-graph TD
-    A[Selection] --> B{Dependency Scan}
-    B -- Workflow selected? --> C[Add all referenced Tasks to bundle]
-    B -- Single Task? --> D[Add Task to bundle]
-    C --> E[Sanitize IDs & Secrets]
-    D --> E
-    E --> F[Generate JSON & Trigger Download]
-```
+### 3.1 Recursive Collection Logic
+When an item is selected for export, the system performs a recursive scan:
+
+1.  **Individual Task**: Add task to bundle.
+2.  **Workflow**: Add workflow + scan all nodes -> Add every referenced Task or Child Workflow to bundle.
+3.  **Folder**: Add folder record -> Recursively add all sub-folders -> Add all Tasks/Workflows contained within those folders.
 
 ### 3.2 Import & Conflict Resolution
-When a file is uploaded, the system performs a "Pre-flight Check".
 
 | Scenario | System Action | User Option |
 | :--- | :--- | :--- |
-| **New Entity** | Mark as `Ready` | None |
-| **Name Collision** | Detect existing item with same name | `Overwrite` / `Create Copy` / `Skip` |
-| **Missing Secret** | Detect reference to unknown Secret | `Map to Existing` / `Create Placeholder` |
-| **Circular Dep** | Prevent import and show error | Fix file manually |
+| **New Folder Path** | Recreate the hierarchy from root | `Always Recreate` / `Map to Root` |
+| **Folder Collision** | Existing folder at same path/level | `Merge Content` / `Create Copy` |
+| **Task Collision** | Name matches in same folder | `Overwrite` / `New Version` / `Skip` |
+| **Missing Secret** | Task references unknown secret name | `Map to Existing` / `Create Placeholder` |
 
 ---
 
 ## 4. UX / UI Design
 
-### 4.1 Selection Mode (Tasks & Workflows)
-- **Checkboxes**: Visible on hover for each list item.
-- **Floating Action Bar**: A sleek, bottom-aligned bar appearing when > 0 items are selected.
-  - Actions: `Export`, `Delete Selected`, `Move to Folder`.
-  - Display: "3 items selected".
+### 4.1 Hierarchical Selection
+- **Sidebar Integration**: Folders in the sidebar gain an "Export" action in their context menu.
+- **Bulk Selection**: When multiple items are selected via checkboxes, the "Export Bundle" action appears in the footer.
+- **Dependency Drawer**: Before download, a summary shows how many *implicit* tasks are being added to the bundle because they are used by selected workflows.
 
-### 4.2 Import UI (The "Wizard")
-A modal-based multi-step process:
-1.  **Upload**: Drag & drop zone.
-2.  **Review**: List of items found in the file with status badges (New, Conflict, Warning).
-3.  **Mapping**: Interface to map missing secrets or select conflict resolutions.
-4.  **Confirm**: Final "Import All" button with progress bar.
+### 4.2 The Import Wizard
+1.  **Staging**: Upload JSON. Items are parsed and shown in a tree view.
+2.  **Validation**: System highlights conflicts and missing dependencies.
+3.  **Mapping**: User chooses how to resolve conflicts and map secrets.
+4.  **Execution**: Entities are created in the correct order (Folders -> Tasks -> Workflows).
 
 ---
 
-## 6. Environment Promotion (Dev -> Prod)
-The system is designed to facilitate "Promoting" automations from a development instance to a production instance.
+## 5. Implementation Tasks
 
-### 6.1 Promotion Strategy
-- **Parametrization**: Users should be encouraged to use **Global Variables** for environment-specific strings (e.g., `{{BASE_URL}}`). The exporter preserves the variable reference, while the local environment provides the value.
-- **Secret Re-binding**: On import to Prod, the system will highlight missing secrets. The user can "Re-bind" a dev-secret reference to an existing production-secret.
-- **Version Incrementing**: If an imported item matches an existing one by name, the system will offer to **"Create New Version"**, which updates the definition while incrementing the version number, preserving history in the target environment.
+### Phase 1: Recursive Engine (Backend)
+- [ ] **Dependency Collector**: Service to build a flat list of IDs for a given selection (including nested child workflows).
+- [ ] **Folder Structure Flattener**: Utility to convert a tree selection into a list of folder records with bundle-local IDs.
+- [ ] **Sanitization Pipeline**: Standard transformer that removes sensitive and environment-specific keys.
 
----
+### Phase 2: Selection Enhancements (Frontend)
+- [ ] **Sidebar Actions**: Add "Export" icon/menu item to recursive folder items.
+- [ ] **Multi-select State**: Implement global selection store to track items across different folders.
+- [ ] **Bundle Preview**: Simple dialog showing "You are about to export 3 Workflows and 12 dependent Tasks".
 
-## 9. Implementation Tasks
+### Phase 3: Import Intelligence
+- [ ] **Pre-flight API**: Endpoint that returns a list of "Intentions" (Create/Update/Warn) for a given JSON.
+- [ ] **Structural Importer**: Logic to create folders top-down before attaching tasks/workflows.
 
-> [!NOTE]
-> This feature assumes **Workflow Folder Management** has already been implemented or is treated as a separate infrastructure layer.
-
-### Phase 1: Core Logic (Backend)
-- [ ] **Recursive Collector**: Utility to scan a workflow and gather all its dependent tasks (including nested Child Workflows).
-- [ ] **Sanitizer**: Logic to strip IDs, owner info, and ensure secrets are only referenced by name.
-- [ ] **Export Endpoint**: `POST /api/export` receiving a list of entity IDs and returning the JSON.
-- [ ] **Import Validator & Dry-Runner**: Schema validation and "pre-flight" check logic.
-
-### Phase 2: Selection UI (Frontend - Tasks)
-- [ ] **Checkbox Component**: Add selection state to `Tasks.tsx` and `TaskCard`.
-- [ ] **Bulk Action Bar**: Design and implement the floating bar with an "Export" trigger.
-- [ ] **Folder Export**: Add export icon to folder headers.
-
-### Phase 3: Selection UI (Frontend - Workflows)
-- [ ] **Checkboxes in Dashboard**: Update `Dashboard.tsx` to support multi-select.
-- [ ] **Row Export Action**: Individual export button in each workflow row.
-
-### Phase 4: Import System (Frontend)
-- [ ] **Import Modal**: Basic file upload component.
-- [ ] **Preview List**: Component to display items from the JSON before they are saved.
-- [ ] **Diff Viewer**: Side-by-side comparison for conflict resolution.
-- [ ] **Secret Mapper**: UI for re-binding unknown secrets to existing local ones.
-- [ ] **Finalizing Import**: Loop through validated items and hit creation endpoints.
-
-### Phase 5: Polish & Safety
-- [ ] **Sanity Checker**: Implement warnings for localhost URLs.
-- [ ] **Auto-Tagging**: Implement logic to apply origin tags on import.
-- [ ] Toast notifications and progress bars for large bundles.
-
-### Phase 2: Selection UI (Frontend - Tasks)
-- [ ] **Checkbox Component**: Add selection state to `Tasks.tsx` and `TaskCard`.
-- [ ] **Bulk Action Bar**: Design and implement the floating bar with an "Export" trigger.
-- [ ] **Folder Export**: Add export icon to folder headers.
-
-### Phase 3: Selection UI (Frontend - Workflows)
-- [ ] **Checkboxes in Dashboard**: Update `Dashboard.tsx` to support multi-select.
-- [ ] **Row Export Action**: Individual export button in each workflow row.
-
-### Phase 4: Import System (Frontend)
-- [ ] **Import Modal**: Basic file upload component.
-- [ ] **Preview List**: Component to display items from the JSON before they are saved.
-- [ ] **Diff Viewer**: Side-by-side comparison for conflict resolution.
-- [ ] **Secret Mapper**: UI for re-binding unknown secrets to existing local ones.
-- [ ] **Finalizing Import**: Loop through validated items and hit creation endpoints.
-
-### Phase 5: Polish & Safety
-- [ ] **Sanity Checker**: Implement warnings for localhost URLs.
-- [ ] **Auto-Tagging**: Implement logic to apply origin tags on import.
-- [ ] Toast notifications and progress bars for large bundles.
+### Phase 4: Polish
+- [ ] **Progress Indicators**: Support for larger bundles (100+ items).
+- [ ] **Auto-Versioning**: Optional logic to create a copy with (v2) suffix if collision occurs.
+- [ ] **Sanity Checker**: Identify and warn on broken Task references within imported Workflows.

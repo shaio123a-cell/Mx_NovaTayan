@@ -67,7 +67,7 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDi
     const startListenMode = async (tokenId: string) => {
         // Can't listen on un-saved (draft) tokens
         if (tokenId.startsWith('new-')) {
-            showToast('Save the configuration first to get a real token URL for listening.', 'warning');
+            showToast('Save the configuration first to get a real token URL for listening.', 'info');
             return;
         }
         setCapturedSample(null);

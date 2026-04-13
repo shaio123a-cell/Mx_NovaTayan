@@ -132,6 +132,8 @@ export interface Task {
     icon?: string;
     createdAt: Date;
     updatedAt: Date;
+    folderId?: string;
+    order: number;
 }
 
 // ============================================================================
@@ -201,6 +203,8 @@ export interface Workflow {
     icon?: string;
     createdAt: Date;
     updatedAt: Date;
+    folderId?: string;
+    order: number;
 }
 
 // ============================================================================

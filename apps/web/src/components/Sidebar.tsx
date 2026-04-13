@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tasksApi } from '../api/tasks';
+import { workflowsApi } from '../api/workflows';
 import { useDirtyState } from '../context/DirtyStateContext';
+import { useToast } from '../context/ToastContext';
 import { 
     LayoutDashboard, 
     ListTodo, 
@@ -35,6 +37,30 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
     const location = useLocation();
     const navigate = useNavigate();
     const { isDirty, setShowDirtyModal, setPendingAction } = useDirtyState();
+    const { showToast } = useToast();
+    const queryClient = useQueryClient();
+
+    const moveTaskMutation = useMutation({
+        mutationFn: ({ id, folderId }: { id: string, folderId: string | undefined }) => 
+            tasksApi.updateTask(id, { folderId }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['tasks'] });
+            queryClient.invalidateQueries({ queryKey: ['task-folders'] });
+            showToast('Task moved successfully', 'success');
+        },
+        onError: (err: any) => showToast(err.message || 'Failed to move task', 'error')
+    });
+
+    const moveWorkflowMutation = useMutation({
+        mutationFn: ({ id, folderId }: { id: string, folderId: string | undefined }) => 
+            workflowsApi.updateWorkflow(id, { folderId }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['workflows'] });
+            queryClient.invalidateQueries({ queryKey: ['workflow-folders'] });
+            showToast('Workflow moved successfully', 'success');
+        },
+        onError: (err: any) => showToast(err.message || 'Failed to move workflow', 'error')
+    });
     const [expandedPaths, setExpandedPaths] = useState<string[]>(() => {
         try {
             const saved = localStorage.getItem('sidebar_expanded_paths');
@@ -45,21 +71,29 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
     });
     
     // Fetch Task Folders
-    const { data: folderTree } = useQuery({
+    const { data: taskFolderTree } = useQuery({
         queryKey: ['task-folders'],
         queryFn: tasksApi.getFolderTree
+    });
+
+    // Fetch Workflow Folders
+    const { data: workflowFolderTree } = useQuery({
+        queryKey: ['workflow-folders'],
+        queryFn: workflowsApi.getFolderTree
     });
 
     // Auto-expand tree to show current folder
     React.useEffect(() => {
         const params = new URLSearchParams(location.search);
         const folderId = params.get('folderId');
-        if (!folderId || !folderTree) return;
+        const tree = location.pathname.startsWith('/tasks') ? taskFolderTree : workflowFolderTree;
+        if (!folderId || !tree) return;
 
         const path: string[] = [];
         const findPath = (nodes: any[], targetId: string): boolean => {
+            const basePath = location.pathname.startsWith('/tasks') ? '/tasks' : '/workflows';
             for (const node of nodes) {
-                const nodePath = `/tasks?folderId=${node.id}`;
+                const nodePath = `${basePath}?folderId=${node.id}`;
                 if (node.id === targetId) return true;
                 if (node.children && findPath(node.children, targetId)) {
                     path.push(nodePath); 
@@ -69,7 +103,7 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
             return false;
         };
 
-        if (findPath(folderTree, folderId)) {
+        if (findPath(tree, folderId)) {
             setExpandedPaths(prev => {
                 const missing = path.filter(p => !prev.includes(p));
                 if (missing.length === 0) return prev;
@@ -78,7 +112,7 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
                 return next;
             });
         }
-    }, [location.search, folderTree]);
+    }, [location.pathname, location.search, taskFolderTree, workflowFolderTree]);
 
     const toggleExpanded = (path: string) => {
         setExpandedPaths(prev => {
@@ -108,13 +142,29 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
             icon: Folder,
             children: folder.children?.map(mapFolder)
         });
-        return folderTree?.map(mapFolder) || [];
-    }, [folderTree]);
+        return taskFolderTree?.map(mapFolder) || [];
+    }, [taskFolderTree]);
+
+    const workflowChildren = useMemo(() => {
+        const mapFolder = (folder: any): NavItemData => ({
+            label: folder.name,
+            path: `/workflows?folderId=${folder.id}`,
+            icon: Folder,
+            children: folder.children?.map(mapFolder)
+        });
+        return workflowFolderTree?.map(mapFolder) || [];
+    }, [workflowFolderTree]);
 
     const allItems = useMemo(() => [
         { icon: LayoutDashboard, label: 'Home', path: '/' },
+        { 
+            icon: Network, 
+            label: 'Workflows', 
+            path: '/workflows',
+            children: workflowChildren
+        },
         { icon: Component, label: 'Dashboards', path: '/history' },
-        { icon: Network, label: 'Designer', path: '/designer' },
+        { icon: Zap, label: 'Designer', path: '/designer' },
         { 
             icon: ListTodo, 
             label: 'Tasks', 
@@ -133,7 +183,7 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
                 { label: 'Global Variables', path: '/admin/variables', icon: Zap },
             ]
         },
-    ], [taskChildren]);
+    ], [taskChildren, workflowChildren]);
 
     const helpItem = { icon: HelpCircle, label: 'Help', path: '/help' };
 
@@ -173,6 +223,8 @@ export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
                             navigate={navigate}
                             expandedPaths={expandedPaths}
                             toggleExpanded={toggleExpanded}
+                            onDropTask={(id, folderId) => moveTaskMutation.mutate({ id, folderId })}
+                            onDropWorkflow={(id, folderId) => moveWorkflowMutation.mutate({ id, folderId })}
                         />
                     ))}
                 </nav>
@@ -220,8 +272,11 @@ function SidebarItem({
     navigate,
     expandedPaths,
     toggleExpanded,
+    onDropTask,
+    onDropWorkflow,
     depth = 0
 }: any) {
+    const [isDragOver, setIsDragOver] = useState(false);
     const Icon = item.icon;
     const hasChildren = item.children && item.children.length > 0;
     
@@ -253,13 +308,49 @@ function SidebarItem({
         }
     };
 
+    const handleDragOver = (e: React.DragEvent) => {
+        const isTask = e.dataTransfer.types.includes('application/restmon-task');
+        const isWorkflow = e.dataTransfer.types.includes('application/restmon-workflow');
+        
+        // Only allow dropping if it's the right kind of folder
+        if ((isTask && item.path.startsWith('/tasks')) || (isWorkflow && item.path.startsWith('/workflows'))) {
+            e.preventDefault();
+            setIsDragOver(true);
+        }
+    };
+
+    const handleDragLeave = () => {
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        
+        const taskId = e.dataTransfer.getData('application/restmon-task');
+        const workflowId = e.dataTransfer.getData('application/restmon-workflow');
+        
+        // Extract folderId from path (e.g., /tasks?folderId=uuid)
+        const url = new URL(item.path, window.location.origin);
+        const folderId = url.searchParams.get('folderId') || undefined;
+
+        if (taskId && item.path.startsWith('/tasks') && onDropTask) {
+            onDropTask(taskId, folderId);
+        } else if (workflowId && item.path.startsWith('/workflows') && onDropWorkflow) {
+            onDropWorkflow(workflowId, folderId);
+        }
+    };
+
     return (
         <div className="mb-0.5">
             <div 
                 onClick={handleNavigate}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
                 className={`flex items-center gap-3 py-2 cursor-pointer transition-all duration-200 group relative ${
                     displayActive ? 'text-[#f2f5f5]' : 'text-[#9fa2a8] hover:text-[#f2f5f5] hover:bg-[#202226]'
-                } ${isSidebarExpanded ? 'px-3 rounded-md' : 'px-0 justify-center'}`}
+                } ${isSidebarExpanded ? 'px-3 rounded-md' : 'px-0 justify-center'} ${isDragOver ? 'bg-[#f05a28]/20 ring-1 ring-[#f05a28] scale-[1.02]' : ''}`}
                 style={{ paddingLeft: isSidebarExpanded ? `${12 + depth * 12}px` : undefined }}
             >
                 {/* Active Indicator Line */}
@@ -312,6 +403,8 @@ function SidebarItem({
                             navigate={navigate}
                             expandedPaths={expandedPaths}
                             toggleExpanded={toggleExpanded}
+                            onDropTask={onDropTask}
+                            onDropWorkflow={onDropWorkflow}
                             depth={depth + 1}
                         />
                     ))}

@@ -11,9 +11,18 @@ async function handleResponse(response: Response) {
 }
 
 export const workflowsApi = {
-    getWorkflows: async (): Promise<Workflow[]> => {
-        const response = await fetch(`${API_BASE_URL}/workflows`);
+    getWorkflows: async (folderId?: string): Promise<Workflow[]> => {
+        const url = folderId ? `${API_BASE_URL}/workflows?folderId=${folderId}` : `${API_BASE_URL}/workflows`;
+        const response = await fetch(url);
         return handleResponse(response);
+    },
+    reorderWorkflow: async (id: string, order: number): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/${id}/reorder`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order }),
+        });
+        await handleResponse(response);
     },
     getSystemStats: async (): Promise<any> => {
         const response = await fetch(`${API_BASE_URL}/workflows/stats`);
@@ -167,4 +176,35 @@ export const workflowsApi = {
         });
         if (!response.ok) throw new Error('Failed to stop listening');
     },
+    // Workflow Folders
+    getFolderTree: async (): Promise<any[]> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/folders/all`);
+        return handleResponse(response);
+    },
+
+    createFolder: async (data: { name: string; description?: string; parentId?: string }): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/folders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    updateFolder: async (id: string, data: { name?: string; description?: string; parentId?: string }): Promise<any> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/folders/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    deleteFolder: async (id: string): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/workflows/folders/${id}`, { method: 'DELETE' });
+        if (!response.ok) {
+            const error = await response.json();
+            throw error;
+        }
+    }
 };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowsApi } from '../api/workflows';
 import { useToast } from '../context/ToastContext';
@@ -12,6 +12,7 @@ import { VariableManager } from './VariableManager';
 import { schedulingApi } from '../api/scheduling';
 import { ExecutionPredictor } from './ExecutionPredictor';
 import { WebhookTriggerManager } from './WebhookTriggerManager';
+import { TreeFolderPicker } from './TreeFolderPicker';
 
 interface WorkflowAdminShelfProps {
     workflowId: string | null;
@@ -33,6 +34,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
     const [scheduling, setScheduling] = useState<any>(draftMetadata?.scheduling || { enabled: false, cron: '0 * * * *' });
     const [notifications, setNotifications] = useState<any[]>(draftMetadata?.notifications || []);
     const [scope, setScope] = useState<'GLOBAL' | 'PRIVATE'>(draftMetadata?.scope || 'GLOBAL');
+    const [folderId, setFolderId] = useState<string | null>(draftMetadata?.folderId || null);
     const [isUsageExpanded, setIsUsageExpanded] = useState(false);
 
     // Track local "dirty" state for the shelf itself
@@ -99,6 +101,12 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
         queryFn: () => workflowsApi.getWorkflows()
     });
 
+    const { data: folderTree } = useQuery({
+        queryKey: ['workflow-folders'],
+        queryFn: workflowsApi.getFolderTree
+    });
+
+
     useEffect(() => {
         // Only initialize state once per workflowId to avoid breaking local drafts during background refetches
         if (workflow && initializedRef.current !== workflowId) {
@@ -107,6 +115,7 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             setScheduling(workflow.scheduling || { enabled: false, cron: '0 * * * *' });
             setNotifications(workflow.notifications || []);
             setScope(workflow.scope || 'GLOBAL');
+            setFolderId(workflow.folderId || null);
             initializedRef.current = workflowId;
             setIsShelfDirty(false);
         }
@@ -138,7 +147,8 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
             outputVariables: outputVars,
             scheduling: scheduling,
             notifications: notifications,
-            scope: scope
+            scope: scope,
+            folderId: folderId
         };
         
         if (!workflowId) {
@@ -462,6 +472,20 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                     <h4 className="font-bold text-slate-800 mb-1">Restricted Mode</h4>
                                     <p className="text-[11px] text-slate-500 font-medium">Hidden from the main library. Only accessible via direct link or internal calls.</p>
                                 </div>
+                            </div>
+
+                            <div className="mt-8">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Organization Folder</label>
+                                <TreeFolderPicker 
+                                    value={folderId || undefined} 
+                                    onChange={(val) => {
+                                        setFolderId(val || null);
+                                        setIsShelfDirty(true);
+                                    }}
+                                    folderTree={folderTree || []}
+                                    type="workflow"
+                                />
+                                <p className="mt-1.5 text-[10px] text-slate-400 font-medium tracking-tight">Select where this workflow appears in the sidebar and management view.</p>
                             </div>
 
                             {/* Basic Scheduling Section */}

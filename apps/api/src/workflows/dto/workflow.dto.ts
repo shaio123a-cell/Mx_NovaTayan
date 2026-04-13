@@ -92,3 +92,30 @@ export class UpdateWorkflowDto {
     @IsOptional()
     icon?: string;
 }
+
+export class CreateFolderDto {
+    @IsString()
+    name: string;
+
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    parentId?: string;
+}
+
+export class UpdateFolderDto {
+    @IsString()
+    @IsOptional()
+    name?: string;
+
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    parentId?: string;
+}

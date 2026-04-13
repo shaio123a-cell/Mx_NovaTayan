@@ -13,10 +13,20 @@ async function handleResponse(response: Response) {
 
 export const tasksApi = {
     // Get all tasks
-    getTasks: async (): Promise<Task[]> => {
-        console.log('Fetching tasks from:', `${API_BASE_URL}/tasks`);
-        const response = await fetch(`${API_BASE_URL}/tasks`);
+    getTasks: async (folderId?: string): Promise<Task[]> => {
+        const url = folderId ? `${API_BASE_URL}/tasks?folderId=${folderId}` : `${API_BASE_URL}/tasks`;
+        console.log('Fetching tasks from:', url);
+        const response = await fetch(url);
         return handleResponse(response);
+    },
+
+    reorderTask: async (id: string, order: number): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/tasks/${id}/reorder`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order }),
+        });
+        await handleResponse(response);
     },
 
     // Get single task

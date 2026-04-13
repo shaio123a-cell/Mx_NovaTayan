@@ -8,6 +8,7 @@ import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
 import { useToast } from '../context/ToastContext';
+import { TreeFolderPicker } from './TreeFolderPicker';
 
 interface Props {
     taskId?: string | null;
@@ -255,7 +256,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
     };
 
     // Fetch Task or Child Workflow
-    const { data: task, isLoading: isTaskLoading, isFetching: isTaskFetching } = useQuery({
+    const { data: task, isLoading: isTaskLoading, isFetching: isTaskFetching } = useQuery<any>({
         queryKey: ['task', taskId],
         queryFn: () => tasksApi.getTask(taskId!),
         enabled: !!taskId && !isNestedWorkflow && !isUtility
@@ -267,9 +268,9 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
         enabled: !!taskId && isNestedWorkflow
     })
 
-    const { data: folders } = useQuery({
+    const { data: folders } = useQuery<any[]>({
         queryKey: ['task-folders'],
-        queryFn: tasksApi.getFolderTree
+        queryFn: () => tasksApi.getFolderTree()
     })
 
     const { data: impact } = useQuery({
@@ -931,26 +932,12 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                                                 <div className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-widest">Library Hierarchy</div>
                                                             </div>
                                                             <div className="space-y-2 mt-2">
-                                                                <select 
-                                                                    value={targetFolderId || ''} 
-                                                                    onChange={(e) => setTargetFolderId(e.target.value || undefined)}
-                                                                    className="material-box font-bold"
-                                                                >
-                                                                    <option value="">Root / Unsorted</option>
-                                                                    {(() => {
-                                                                        const renderOptions = (folders: any[], depth = 0) => {
-                                                                            return folders.map(f => (
-                                                                                <React.Fragment key={f.id}>
-                                                                                    <option value={f.id}>
-                                                                                        {'\u00A0'.repeat(depth * 4)}{depth > 0 ? '↳ ' : ''}{f.name}
-                                                                                    </option>
-                                                                                    {f.children && renderOptions(f.children, depth + 1)}
-                                                                                </React.Fragment>
-                                                                            ));
-                                                                        };
-                                                                        return folders ? renderOptions(folders) : null;
-                                                                    })()}
-                                                                </select>
+                                                                <TreeFolderPicker 
+                                                                    value={targetFolderId} 
+                                                                    onChange={setTargetFolderId}
+                                                                    folderTree={folders || []}
+                                                                    type="task"
+                                                                />
                                                                 <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-100 mt-2">
                                                                     <Info size={12} className="text-slate-400" />
                                                                     <span className="text-[10px] text-slate-500 font-medium">Tasks can be moved between folders at any time.</span>

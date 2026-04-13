@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Patch } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto, UpdateTaskDto, CreateFolderDto, UpdateFolderDto } from './dto/task.dto';
 
@@ -8,15 +8,18 @@ export class TasksController {
 
     @Post()
     create(@Body() createTaskDto: CreateTaskDto) {
-        // TODO: Get ownerId from authenticated user
-        // For now, using a placeholder
         const ownerId = 'system';
         return this.tasksService.create(createTaskDto, ownerId);
     }
 
+    @Patch(':id/reorder')
+    reorder(@Param('id') id: string, @Body('order') order: number) {
+        return this.tasksService.reorder(id, order);
+    }
+
     @Get()
-    findAll(@Query('ownerId') ownerId?: string) {
-        return this.tasksService.findAll(ownerId);
+    findAll(@Query('ownerId') ownerId?: string, @Query('folderId') folderId?: string) {
+        return this.tasksService.findAll(ownerId, folderId);
     }
 
     @Get(':id')

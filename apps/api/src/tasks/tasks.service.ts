@@ -60,10 +60,16 @@ export class TasksService implements OnModuleInit {
         });
     }
 
-    async findAll(ownerId?: string) {
+    async findAll(ownerId?: string, folderId?: string) {
         return this.prisma.task.findMany({
-            where: ownerId ? { ownerId } : undefined,
-            orderBy: { createdAt: 'desc' },
+            where: {
+                ...(ownerId ? { ownerId } : {}),
+                ...(folderId ? { folderId } : {}),
+            },
+            orderBy: [
+                { order: 'asc' },
+                { createdAt: 'desc' }
+            ],
             include: { folder: true }
         });
     }
@@ -191,6 +197,13 @@ export class TasksService implements OnModuleInit {
         }
 
         return updatedTask;
+    }
+
+    async reorder(id: string, newOrder: number) {
+        return this.prisma.task.update({
+            where: { id },
+            data: { order: newOrder }
+        });
     }
 
     async remove(id: string) {

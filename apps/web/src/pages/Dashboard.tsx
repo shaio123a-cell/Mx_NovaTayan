@@ -4,19 +4,23 @@ import { workflowsApi } from '../api/workflows'
 
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, RefreshCcw } from 'lucide-react'
+import { useToast } from '../context/ToastContext'
+import { Workflow } from '@restmon/shared-types'
 
 function Dashboard() {
+    const { showToast } = useToast();
     const queryClient = useQueryClient();
     const navigate = useNavigate();
     const [refreshInterval, setRefreshInterval] = useState<number>(30000);
+    const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
 
-    const { data: workflows, isFetching: isFetchingWorkflows } = useQuery({
-        queryKey: ['workflows'],
-        queryFn: workflowsApi.getWorkflows,
+    const { data: workflows, isFetching: isFetchingWorkflows } = useQuery<Workflow[]>({
+        queryKey: ['workflows', currentFolderId],
+        queryFn: () => workflowsApi.getWorkflows(currentFolderId || undefined),
         refetchInterval: refreshInterval
     })
 
-    const { data: stats, isFetching: isFetchingStats } = useQuery({
+    const { data: stats, isFetching: isFetchingStats } = useQuery<any>({
         queryKey: ['system-stats'],
         queryFn: workflowsApi.getSystemStats,
         refetchInterval: refreshInterval
@@ -128,7 +132,7 @@ function Dashboard() {
                         <div className="p-16 text-center text-gray-400">
                             <div className="mb-4 opacity-10">🚀</div>
                             <p className="text-lg font-medium">No workflows found.</p>
-                            <p className="text-sm">Create your first automation to get started!</p>
+                            <p className="text-sm cursor-pointer hover:text-blue-500" onClick={() => showToast('Save the configuration first to get a real token URL for listening.', 'info')}>Create your first automation to get started!</p>
                         </div>
                     )}
                 </div>

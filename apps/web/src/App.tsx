@@ -9,6 +9,7 @@ import { BreadcrumbProvider } from './context/BreadcrumbContext'
 import Dashboard from './pages/Dashboard'
 import WorkflowDesigner from './pages/WorkflowDesigner'
 import Tasks from './pages/Tasks'
+import { Workflows } from './pages/Workflows'
 import AdminWorkers from './pages/AdminWorkers'
 import WorkflowExecutions from './pages/WorkflowExecutions'
 import WorkflowExecutionDetail from './pages/WorkflowExecutionDetail'
@@ -145,6 +146,7 @@ function AppContent() {
                 }}>
                     <Routes>
                         <Route path="/" element={<Dashboard />} />
+                        <Route path="/workflows" element={<Workflows />} />
                         <Route path="/tasks" element={<Tasks />} />
                         <Route path="/designer" element={<WorkflowDesigner />} />
                         <Route path="/output-processing" element={<Suspense fallback={<div>Loading...</div>}>{React.createElement(React.lazy(() => import('./pages/OutputProcessing')))}</Suspense>} />

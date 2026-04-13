@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Param, Put, Delete, Query, Patch } from '@nestjs/common';
 import { WorkflowsService } from './workflows.service';
-import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
+import { CreateWorkflowDto, UpdateWorkflowDto, CreateFolderDto, UpdateFolderDto } from './dto/workflow.dto';
 import { CreateBindingDto, UpdateBindingDto } from './dto/binding.dto';
 
 @Controller('workflows')
@@ -14,14 +14,18 @@ export class WorkflowsController {
 
     @Post()
     create(@Body() createWorkflowDto: CreateWorkflowDto) {
-        // TODO: Get ownerId from authenticated user
         const ownerId = 'system';
         return this.workflowsService.create(createWorkflowDto, ownerId);
     }
 
     @Get()
-    findAll(@Query('ownerId') ownerId?: string) {
-        return this.workflowsService.findAll(ownerId);
+    findAll(@Query('ownerId') ownerId?: string, @Query('folderId') folderId?: string) {
+        return this.workflowsService.findAll(ownerId, folderId);
+    }
+
+    @Patch(':id/reorder')
+    reorder(@Param('id') id: string, @Body('order') order: number) {
+        return this.workflowsService.reorder(id, order);
     }
 
     @Get('executions/all')
@@ -35,7 +39,6 @@ export class WorkflowsController {
     }
 
     @Get(':id')
-    // ... (rest of the file)
     findOne(@Param('id') id: string) {
         return this.workflowsService.findOne(id);
     }
@@ -141,5 +144,27 @@ export class WorkflowsController {
     @Delete(':workflowId/tokens/:tokenId/listen')
     stopListening(@Param('tokenId') tokenId: string) {
         return this.workflowsService.stopListening(tokenId);
+    }
+
+    // --- Folders ---
+
+    @Get('folders/all')
+    getFolderTree() {
+        return this.workflowsService.getFolderTree();
+    }
+
+    @Post('folders')
+    createFolder(@Body() dto: CreateFolderDto) {
+        return this.workflowsService.createFolder(dto);
+    }
+
+    @Put('folders/:id')
+    updateFolder(@Param('id') id: string, @Body() dto: UpdateFolderDto) {
+        return this.workflowsService.updateFolder(id, dto);
+    }
+
+    @Delete('folders/:id')
+    deleteFolder(@Param('id') id: string) {
+        return this.workflowsService.deleteFolder(id);
     }
 }

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { tasksApi } from '../api/tasks'
 import { TaskEditShelf } from '../components/TaskEditShelf'
-import { Play, Edit2, Trash2, Plus, Search, FolderPlus, Folder, ChevronRight, ChevronDown, Clock, History, AlertTriangle, ListTodo, X } from 'lucide-react'
+import { Play, Edit2, Trash2, Plus, Search, FolderPlus, Folder, ChevronRight, ChevronDown, Clock, History, AlertTriangle, ListTodo, X, MoreVertical, ArrowUp, ArrowDown } from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { useBreadcrumbs } from '../context/BreadcrumbContext'
 
@@ -88,8 +88,8 @@ function Tasks() {
     const queryClient = useQueryClient()
 
     const { data: tasks, isLoading } = useQuery({
-        queryKey: ['tasks'],
-        queryFn: tasksApi.getTasks,
+        queryKey: ['tasks', currentFolderId],
+        queryFn: () => tasksApi.getTasks(currentFolderId || undefined),
     })
 
     const { data: folderTree } = useQuery({
@@ -159,6 +159,13 @@ function Tasks() {
         }
     })
 
+    const reorderMutation = useMutation({
+        mutationFn: ({ id, order }: { id: string, order: number }) => tasksApi.reorderTask(id, order),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['tasks'] })
+        }
+    })
+
     const updateFolderMutation = useMutation({
         mutationFn: ({ id, name }: { id: string, name: string }) => tasksApi.updateFolder(id, { name }),
         onSuccess: () => {
@@ -197,20 +204,24 @@ function Tasks() {
         onError: (error: any) => showToast(`Execution failed: ${error.message}`, 'error'),
     })
 
-    const handleCreateFolder = async (e: React.FormEvent) => {
+    const createFolderMutation = useMutation({
+        mutationFn: (data: { name: string, parentId?: string }) => tasksApi.createFolder(data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['task-folders'] })
+            setIsCreatingFolder(false)
+            setNewFolderName('')
+            showToast('Folder created successfully', 'success')
+        },
+        onError: (err: any) => showToast(err.message || 'Failed to create folder', 'error')
+    })
+
+    const handleCreateFolder = (e: React.FormEvent) => {
         e.preventDefault()
         if (newFolderName) {
-            try {
-                await tasksApi.createFolder({ 
-                    name: newFolderName, 
-                    parentId: currentFolderId || undefined 
-                })
-                queryClient.invalidateQueries({ queryKey: ['task-folders'] })
-                setIsCreatingFolder(false)
-                setNewFolderName('')
-            } catch (err: any) {
-                showToast(err.message || 'Failed to create folder', 'error')
-            }
+            createFolderMutation.mutate({ 
+                name: newFolderName, 
+                parentId: currentFolderId || undefined 
+            })
         }
     }
 
@@ -258,6 +269,70 @@ function Tasks() {
             return (inName || inURL || inDetails || inHistory) && !isVariableTask;
         })
     }, [tasks, currentFolderId, searchQuery, searchInDetails, searchInHistory])
+
+    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+    const [localTasks, setLocalTasks] = useState<any[]>([]);
+
+    React.useEffect(() => {
+        setLocalTasks(filteredTasks);
+    }, [filteredTasks]);
+
+    const handleMove = (index: number, direction: 'up' | 'down') => {
+        const next = [...localTasks];
+        const target = direction === 'up' ? index - 1 : index + 1;
+        if (target < 0 || target >= next.length) return;
+
+        // Decimal ordering logic
+        let newOrder: number;
+        if (direction === 'up') {
+            const prev = next[target - 1];
+            const current = next[target];
+            newOrder = prev ? (prev.order + current.order) / 2 : current.order - 1;
+        } else {
+            const nextItem = next[target + 1];
+            const current = next[target];
+            newOrder = nextItem ? (nextItem.order + current.order) / 2 : current.order + 1;
+        }
+
+        reorderMutation.mutate({ id: next[index].id, order: newOrder });
+    };
+
+    const handleDragStart = (e: React.DragEvent, index: number) => {
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+        // Add task data for external drop targets (like the sidebar)
+        e.dataTransfer.setData('application/restmon-task', localTasks[index].id);
+    };
+
+    const handleDragOver = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        if (draggedIndex === null || draggedIndex === index) return;
+
+        const next = [...localTasks];
+        const item = next[draggedIndex];
+        next.splice(draggedIndex, 1);
+        next.splice(index, 0, item);
+        setLocalTasks(next);
+        setDraggedIndex(index);
+    };
+
+    const handleDragEnd = () => {
+        if (draggedIndex === null) return;
+        
+        // Calculate the new order based on surrounding items
+        const index = draggedIndex;
+        const prev = localTasks[index - 1];
+        const next = localTasks[index + 1];
+        
+        let newOrder: number;
+        if (!prev && !next) newOrder = 0;
+        else if (!prev) newOrder = next.order - 1;
+        else if (!next) newOrder = prev.order + 1;
+        else newOrder = (prev.order + next.order) / 2;
+
+        reorderMutation.mutate({ id: localTasks[index].id, order: newOrder });
+        setDraggedIndex(null);
+    };
 
     if (isLoading) return (
         <div className="flex justify-center items-center h-[60vh]">
@@ -348,10 +423,16 @@ function Tasks() {
 
             {/* Task List */}
             <div className="space-y-3">
-                {filteredTasks.map((task: any) => (
+                {localTasks.map((task: any, index) => (
                     <TaskCard 
                         key={task.id} 
                         task={task} 
+                        index={index}
+                        isDragged={draggedIndex === index}
+                        onDragStart={(e: any) => handleDragStart(e, index)}
+                        onDragOver={(e: any) => handleDragOver(e, index)}
+                        onDragEnd={handleDragEnd}
+                        onMove={(dir: 'up' | 'down') => handleMove(index, dir)}
                         onEdit={() => handleEdit(task.id)}
                         onDelete={() => window.confirm('Permanently delete this task?') && deleteMutation.mutate(task.id)}
                         onExecute={() => executeMutation.mutate(task.id)}
@@ -537,10 +618,31 @@ function SearchToggle({ active, onClick, label, icon }: any) {
     )
 }
 
-function TaskCard({ task, onEdit, onDelete, onExecute }: any) {
+function TaskCard({ task, onEdit, onDelete, onExecute, index, isDragged, onDragStart, onDragOver, onDragEnd, onMove }: any) {
     return (
-        <div className="group bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-all flex items-center justify-between">
-            <div className="flex items-center gap-6 flex-1 min-w-0">
+        <div 
+            draggable
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDragEnd={onDragEnd}
+            className={`group bg-white rounded-xl border border-gray-100 p-4 shadow-sm hover:shadow-md transition-all flex items-center justify-between ${isDragged ? 'opacity-30' : ''}`}
+        >
+            <div className="flex items-center gap-4 flex-1 min-w-0">
+                {/* Reorder Controls (Variable Manager Style) */}
+                <div className="flex items-center gap-1 shrink-0">
+                    <div className="cursor-move text-gray-300 group-hover:text-gray-400 p-1">
+                        <MoreVertical size={18} />
+                    </div>
+                    <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => onMove('up')} className="p-0.5 text-gray-400 hover:text-blue-600 rounded">
+                            <ArrowUp size={12} />
+                        </button>
+                        <button onClick={() => onMove('down')} className="p-0.5 text-gray-400 hover:text-blue-600 rounded">
+                            <ArrowDown size={12} />
+                        </button>
+                    </div>
+                </div>
+
                 <BrandIcon task={task} />
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3">

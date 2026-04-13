@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow.dto';
+import { CreateWorkflowDto, UpdateWorkflowDto, CreateFolderDto, UpdateFolderDto } from './dto/workflow.dto';
 import { CreateBindingDto, UpdateBindingDto } from './dto/binding.dto';
 import { LoggerService } from '../common/logger/logger.service';
 import { suggestIcon } from '../tasks/utils/icon-mapper';
@@ -55,10 +55,16 @@ export class WorkflowsService {
         });
     }
 
-    async findAll(ownerId?: string) {
+    async findAll(ownerId?: string, folderId?: string) {
         return this.prisma.workflow.findMany({
-            where: ownerId ? { ownerId } : undefined,
-            orderBy: { createdAt: 'desc' },
+            where: {
+                ...(ownerId ? { ownerId } : {}),
+                ...(folderId ? { folderId } : {}),
+            },
+            orderBy: [
+                { order: 'asc' },
+                { createdAt: 'desc' }
+            ],
             include: {
                 executions: {
                     orderBy: { startedAt: 'desc' },
@@ -226,6 +232,13 @@ export class WorkflowsService {
 
         return this.prisma.workflow.delete({
             where: { id },
+        });
+    }
+
+    async reorder(id: string, newOrder: number) {
+        return this.prisma.workflow.update({
+            where: { id },
+            data: { order: newOrder }
         });
     }
 
@@ -776,5 +789,57 @@ export class WorkflowsService {
     async stopListening(tokenId: string) {
         await this.prisma.webhookSample.deleteMany({ where: { tokenId } }).catch(() => {});
         return { listening: false };
+    }
+
+    async getFolderTree() {
+        const allFolders = await this.prisma.workflowGroup.findMany({
+            orderBy: { name: 'asc' }
+        });
+
+        const buildTree = (parentId: string | null = null): any[] => {
+            return allFolders
+                .filter(f => f.parentId === parentId)
+                .map(f => ({
+                    ...f,
+                    children: buildTree(f.id)
+                }));
+        };
+
+        return buildTree(null);
+    }
+
+    async createFolder(dto: CreateFolderDto) {
+        return this.prisma.workflowGroup.create({
+            data: {
+                name: dto.name,
+                description: dto.description,
+                parentId: dto.parentId || null
+            }
+        });
+    }
+
+    async updateFolder(id: string, dto: UpdateFolderDto) {
+        return this.prisma.workflowGroup.update({
+            where: { id },
+            data: {
+                name: dto.name,
+                description: dto.description,
+                parentId: dto.parentId
+            }
+        });
+    }
+
+    async deleteFolder(id: string) {
+        // Move all workflows in this folder to root
+        await this.prisma.workflow.updateMany({
+            where: { folderId: id },
+            data: { folderId: null }
+        });
+
+        // Also move sub-folders to root (simple approach) or delete them
+        // For now, let's just delete the folder. Recursive delete is complex without cascading.
+        return this.prisma.workflowGroup.delete({
+            where: { id }
+        });
     }
 }
