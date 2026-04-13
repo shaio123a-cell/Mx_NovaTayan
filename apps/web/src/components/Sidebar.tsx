@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { tasksApi } from '../api/tasks';
@@ -27,10 +27,11 @@ interface NavItemData {
 }
 
 interface SidebarProps {
-    isOpen: boolean; // Controls whether sidebar is visible at all
+    isOpen: boolean; 
+    onResizeStart: () => void;
 }
 
-export function Sidebar({ isOpen }: SidebarProps) {
+export function Sidebar({ isOpen, onResizeStart }: SidebarProps) {
     const location = useLocation();
     const navigate = useNavigate();
     const { isDirty, setShowDirtyModal, setPendingAction } = useDirtyState();
@@ -48,6 +49,36 @@ export function Sidebar({ isOpen }: SidebarProps) {
         queryKey: ['task-folders'],
         queryFn: tasksApi.getFolderTree
     });
+
+    // Auto-expand tree to show current folder
+    React.useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const folderId = params.get('folderId');
+        if (!folderId || !folderTree) return;
+
+        const path: string[] = [];
+        const findPath = (nodes: any[], targetId: string): boolean => {
+            for (const node of nodes) {
+                const nodePath = `/tasks?folderId=${node.id}`;
+                if (node.id === targetId) return true;
+                if (node.children && findPath(node.children, targetId)) {
+                    path.push(nodePath); 
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        if (findPath(folderTree, folderId)) {
+            setExpandedPaths(prev => {
+                const missing = path.filter(p => !prev.includes(p));
+                if (missing.length === 0) return prev;
+                const next = [...prev, ...missing];
+                localStorage.setItem('sidebar_expanded_paths', JSON.stringify(next));
+                return next;
+            });
+        }
+    }, [location.search, folderTree]);
 
     const toggleExpanded = (path: string) => {
         setExpandedPaths(prev => {
@@ -110,7 +141,7 @@ export function Sidebar({ isOpen }: SidebarProps) {
 
     return (
         <aside 
-            className={`bg-[#111217] flex flex-col h-full shrink-0 transition-all duration-300 border-r border-[#202226] overflow-hidden ${widthClass}`}
+            className={`bg-[#111217] flex flex-col h-full shrink-0 transition-all duration-300 border-r border-[#202226] overflow-hidden w-full`}
         >
             {/* Logo Section */}
             <div className={`h-12 flex items-center shrink-0 border-b border-[#202226] transition-all duration-300 ${isOpen ? 'px-4' : 'px-3 justify-center'}`}>
@@ -132,8 +163,8 @@ export function Sidebar({ isOpen }: SidebarProps) {
                             key={item.label + item.path}
                             item={item}
                             active={isActive(item.path)}
-                            isExpanded={expandedPaths.includes(item.label) || expandedPaths.includes(item.path)}
-                            onToggleExpanded={() => toggleExpanded(item.label || item.path)}
+                            isExpanded={expandedPaths.includes(item.path)}
+                            onToggleExpanded={() => toggleExpanded(item.path)}
                             checkActive={isActive}
                             isSidebarExpanded={isOpen}
                             isDirty={isDirty}
@@ -163,6 +194,15 @@ export function Sidebar({ isOpen }: SidebarProps) {
                     />
                 </nav>
             </div>
+            {/* Resize Handle */}
+            {isOpen && (
+                <div 
+                    onMouseDown={onResizeStart}
+                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-[#f05a28] transition-colors group z-50"
+                >
+                    <div className="absolute right-0 top-0 bottom-0 w-[4px] -mr-[2px]" />
+                </div>
+            )}
         </aside>
     );
 }
@@ -195,13 +235,15 @@ function SidebarItem({
 
     const displayActive = active || isAnyChildActive;
 
-    const handleClick = (e: React.MouseEvent) => {
+    const handleToggle = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        onToggleExpanded();
+    };
 
-        if (hasChildren) {
-            onToggleExpanded();
-        }
+    const handleNavigate = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
         
         if (isDirty) {
             setPendingAction(() => () => navigate(item.path));
@@ -214,7 +256,7 @@ function SidebarItem({
     return (
         <div className="mb-0.5">
             <div 
-                onClick={handleClick}
+                onClick={handleNavigate}
                 className={`flex items-center gap-3 py-2 cursor-pointer transition-all duration-200 group relative ${
                     displayActive ? 'text-[#f2f5f5]' : 'text-[#9fa2a8] hover:text-[#f2f5f5] hover:bg-[#202226]'
                 } ${isSidebarExpanded ? 'px-3 rounded-md' : 'px-0 justify-center'}`}
@@ -225,15 +267,22 @@ function SidebarItem({
                     <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#f05a28] rounded-r-full shadow-[0_0_8px_rgba(240,90,40,0.4)]" />
                 )}
 
-                <Icon className={`shrink-0 transition-transform duration-200 ${!isSidebarExpanded && 'scale-110'} ${displayActive ? 'text-[#f05a28]' : ''} w-4 h-4`} />
+                <div onClick={hasChildren ? handleToggle : handleNavigate} className="shrink-0 flex items-center justify-center w-4 h-4">
+                    <Icon className={`transition-transform duration-200 ${!isSidebarExpanded && 'scale-110'} ${displayActive ? 'text-[#f05a28]' : ''} w-4 h-4`} />
+                </div>
                 
                 {isSidebarExpanded && (
                     <div className="flex-1 flex items-center justify-between min-w-0">
                         <span className="text-[11px] font-semibold truncate leading-none pt-0.5">{item.label}</span>
                         {hasChildren && (
-                            <ChevronRight 
-                                className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
-                            />
+                            <div 
+                                onClick={handleToggle}
+                                className="p-1 hover:bg-white/10 rounded transition-colors"
+                            >
+                                <ChevronRight 
+                                    className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                                />
+                            </div>
                         )}
                     </div>
                 )}
@@ -253,8 +302,8 @@ function SidebarItem({
                             key={child.path + child.label}
                             item={child}
                             active={checkActive(child.path)}
-                            isExpanded={expandedPaths?.includes(child.path) || expandedPaths?.includes(child.label)}
-                            onToggleExpanded={() => toggleExpanded(child.path || child.label)}
+                            isExpanded={expandedPaths?.includes(child.path)}
+                            onToggleExpanded={() => toggleExpanded(child.path)}
                             checkActive={checkActive}
                             isSidebarExpanded={isSidebarExpanded}
                             isDirty={isDirty}

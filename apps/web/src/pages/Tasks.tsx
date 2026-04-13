@@ -324,26 +324,7 @@ function Tasks() {
             </div>
         </div>
 
-        {/* Subfolders Grid (If any) */}
-            {currentFolder?.children?.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                    {currentFolder.children.map((child: any) => (
-                        <div 
-                            key={child.id}
-                            onClick={() => navigate(`/tasks?folderId=${child.id}`)}
-                            className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer group"
-                        >
-                            <div className="flex items-center gap-3">
-                                <Folder size={20} className="text-blue-400 group-hover:text-blue-600 transition-colors" />
-                                <span className="font-bold text-gray-700">{child.name}</span>
-                                <span className="ml-auto text-[10px] font-bold text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded-full">
-                                    {child._count?.tasks || 0}
-                                </span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
+            {/* Subfolder navigation is now handled by the Sidebar Tree for better scalability */}
 
             {/* Filters & Search */}
             <div className="mb-8 space-y-4">

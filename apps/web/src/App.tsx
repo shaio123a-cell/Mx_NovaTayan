@@ -36,8 +36,34 @@ const queryClient = new QueryClient({
 function AppContent() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const { setIsDirty, showDirtyModal, setShowDirtyModal, pendingAction, setPendingAction } = useDirtyState();
+    
+    const [sidebarWidth, setSidebarWidth] = useState(() => {
+        const saved = localStorage.getItem('sidebar_width');
+        return saved ? Number(saved) : 240;
+    });
+    const [isDragging, setIsDragging] = useState(false);
 
-    const sidebarWidth = isSidebarOpen ? 240 : 52;
+    const startResizing = React.useCallback(() => {
+        setIsDragging(true);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', stopResizing);
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    }, []);
+
+    const stopResizing = React.useCallback(() => {
+        setIsDragging(false);
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', stopResizing);
+        document.body.style.cursor = 'default';
+        document.body.style.userSelect = 'auto';
+    }, []);
+
+    const handleMouseMove = React.useCallback((e: MouseEvent) => {
+        const newWidth = Math.min(Math.max(200, e.clientX), 600);
+        setSidebarWidth(newWidth);
+        localStorage.setItem('sidebar_width', String(newWidth));
+    }, []);
 
     const handleSaveAndContinue = () => {
         // Close the modal immediately so UI feels responsive
@@ -89,8 +115,11 @@ function AppContent() {
                 onCancel={handleCancel}
             />
             {/* Pillar 1: Sidebar */}
-            <div style={{ width: `${sidebarWidth}px`, flexShrink: 0, transition: 'width 0.3s ease' }}>
-                <Sidebar isOpen={isSidebarOpen} />
+            <div style={{ width: `${isSidebarOpen ? sidebarWidth : 52}px`, flexShrink: 0, transition: isDragging ? 'none' : 'width 0.3s ease', position: 'relative' }}>
+                <Sidebar 
+                    isOpen={isSidebarOpen} 
+                    onResizeStart={startResizing}
+                />
             </div>
 
             {/* Pillar 2: Content Stack */}
