@@ -483,6 +483,9 @@ export class WorkflowsService {
                 
                 if (isNested) {
                     await this.workerService.triggerSubWorkflow(taskExec);
+                } else if (isUtility) {
+                    // Start VMA execution (handled by same logic as in Orchestration)
+                    await this.workerService.executeUtilityNode(taskExec);
                 }
                 
                 startedCount++;

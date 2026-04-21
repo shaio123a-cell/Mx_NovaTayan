@@ -4,7 +4,7 @@ import { workflowsApi } from '../api/workflows'
 import React, { useState, useEffect, useRef } from 'react'
 // Output processing is now per-variable; top-level preview removed.
 import { VariableManager } from './VariableManager';
-import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive, Box, Activity, Sparkles, Loader2 } from 'lucide-react'
+import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive, Box, Activity, Sparkles, Loader2, GitBranch } from 'lucide-react'
 import { VariablePicker } from './VariablePicker';
 import { VariableAwareInput } from './VariableAwareInput';
 import { useToast } from '../context/ToastContext';
@@ -206,10 +206,17 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
     const isEditing = !!taskId || !!nodeData
     const isWorkflowNode = !!nodeData
     const isNestedWorkflow = nodeData?.taskType === 'WORKFLOW'
-    const isUtility = nodeData?.taskType === 'VARIABLE' || taskId === '00000000-0000-0000-0000-000000000001'
+    const isIfNode = nodeData?.taskType === 'IF' || taskId === 'util-if'
+    const isUtility = nodeData?.taskType === 'VARIABLE' || taskId === '00000000-0000-0000-0000-000000000001' || taskId === 'util-vars'
     const [openAccordions, setOpenAccordions] = useState<Record<string, boolean>>({ headers: true, payload: true, meta: false });
     const toggleAccordion = (key: string) => setOpenAccordions(prev => ({ ...prev, [key]: !prev[key] }));
     const initializedRef = React.useRef<string | null>(null);
+
+    // IF Node State
+    const [conditionGroups, setConditionGroups] = useState<any[]>(nodeData?.conditionGroups || [{ 
+        logicalOperator: 'AND', 
+        conditions: [{ variable: '', operator: '==', value: '' }] 
+    }])
 
     // Nested Workflow State
     const [inputMapping, setInputMapping] = useState<Record<string, any>>({})
@@ -247,7 +254,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
 
     // AI Copilot State
     const [aiMode, setAiMode] = useState(false);
-    const [chatHistory, setChatHistory] = useState<{role: 'user'|'assistant', content: string}[]>([]);
+    const [chatHistory, setChatHistory] = useState<{role: 'user'|'assistant', content: string, sources?: {title: string, url: string}[]}[]>([]);
     const chatScrollRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [aiDocs, setAiDocs] = useState('');
@@ -314,8 +321,8 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                      newVars[ve.variableName] = { 
                          valueMode: 'transformer',
                          transformer: {
-                             type: 'jmespath',
-                             spec: ve.path,
+                             type: ve.type || 'jmespath',
+                             spec: ve.spec || ve.path || '',
                              inputSource: 'task_output',
                              inputVariable: ''
                          }
@@ -328,7 +335,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
             }
 
             if (responseData.explanation) {
-                 setChatHistory(prev => [...prev, { role: 'assistant', content: responseData.explanation }]);
+                 setChatHistory(prev => [...prev, { role: 'assistant', content: responseData.explanation, sources: responseData.sources }]);
             }
             
             showToast('Task draft successfully generated/updated!', 'success');
@@ -349,11 +356,10 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
         setPickerOpen(false);
     };
 
-    // Fetch Task or Child Workflow
     const { data: task, isLoading: isTaskLoading, isFetching: isTaskFetching } = useQuery<any>({
         queryKey: ['task', taskId],
         queryFn: () => tasksApi.getTask(taskId!),
-        enabled: !!taskId && !isNestedWorkflow && !isUtility
+        enabled: !!taskId && !isNestedWorkflow && !isUtility && !isIfNode && !taskId.toString().startsWith('util-')
     })
 
     const { data: childWorkflow, isLoading: isChildWfLoading, isFetching: isChildWfFetching } = useQuery({
@@ -370,27 +376,29 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
     const { data: impact } = useQuery({
         queryKey: ['task-impact', taskId],
         queryFn: () => tasksApi.getTaskImpact(taskId!),
-        enabled: !!taskId && !isNestedWorkflow && !isUtility
+        enabled: !!taskId && !isNestedWorkflow && !isUtility && !isIfNode && !taskId.toString().startsWith('util-')
     })
 
     // Auto-switch tabs
     useEffect(() => {
-        if (isUtility) {
+        if (isIfNode) {
+            setActiveTab('details');
+        } else if (isUtility) {
             setActiveTab('output');
         } else if (isNestedWorkflow) {
             setActiveTab('details');
         }
-    }, [isUtility, isNestedWorkflow])
+    }, [isUtility, isNestedWorkflow, isIfNode])
 
     // Initialization
     useEffect(() => {
         const targetData = isNestedWorkflow ? childWorkflow : task;
         const currentSessionId = nodeData?.id || taskId;
 
-        if (!targetData && !isUtility) {
+        if (!targetData && !isUtility && !isIfNode) {
             initializedRef.current = null;
             // Set folder if creating new
-            if (!taskId && !nodeData && folderId) {
+            if (!taskId && !nodeData && folderId && !isIfNode) {
                 setTargetFolderId(folderId);
             }
             return;
@@ -400,7 +408,16 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
         if (initializedRef.current === currentSessionId) return;
         initializedRef.current = currentSessionId;
 
-        if (isUtility && nodeData) {
+        if (isIfNode && nodeData) {
+            setName(nodeData.label || 'Conditional Branch')
+            setDescription(nodeData.description || '')
+            setConditionGroups(nodeData.conditionGroups || [{ 
+                logicalOperator: 'AND', 
+                conditions: [{ variable: '', operator: '==', value: '' }] 
+            }])
+            setInheritedVars({});
+            setInheritedSanityChecks([]);
+        } else if (isUtility && nodeData) {
             setName(nodeData.label || 'Variables Manipulation')
             setDescription(nodeData.description || '')
             setOutputVars(nodeData.variableExtraction?.vars || {})
@@ -548,19 +565,20 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                     ...nodeData,
                     label: name,
                     taskId,
-                    taskType: isNestedWorkflow ? 'WORKFLOW' : (isUtility ? 'VARIABLE' : (task?.taskType || 'HTTP')),
+                    taskType: isIfNode ? 'IF' : (isNestedWorkflow ? 'WORKFLOW' : (isUtility ? 'VARIABLE' : (task?.taskType || 'HTTP'))),
                     inputMapping: isNestedWorkflow ? inputMapping : undefined,
                     variableExtraction: { vars: outputVars },
                     sanityChecks,
                     authorization: authOverride ? authorization : undefined,
                     timeout: timeoutOverride ? timeout : undefined,
-                    method: methodOverride ? method : (isNestedWorkflow ? 'WF' : undefined),
+                    method: isIfNode ? 'IF' : (methodOverride ? method : (isNestedWorkflow ? 'WF' : undefined)),
                     url: urlOverride ? url : undefined,
                     body: bodyOverride ? body : undefined,
                     headers: headersOverride ? finalHeaders : undefined,
-                    targetTags: overlayTags.length > 0 ? overlayTags : undefined
+                    targetTags: overlayTags.length > 0 ? overlayTags : undefined,
+                    conditionGroups: isIfNode ? conditionGroups : undefined
                 });
-                showToast(isUtility ? 'Variables saved successfully!' : 'Workflow node updated!', 'success');
+                showToast(isIfNode ? 'Branch logic saved!' : (isUtility ? 'Variables saved successfully!' : 'Workflow node updated!'), 'success');
                 onClose();
                 return;
             }
@@ -635,6 +653,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                             onError={() => setNameIconError(true)}
                                         />
                                     ) : (
+                                        isIfNode ? <GitBranch size={18} className="text-amber-500" /> :
                                         isUtility ? <Zap size={18} className="text-yellow-400" fill="currentColor" /> :
                                         isNestedWorkflow ? <Layers size={18} className="text-indigo-400" /> :
                                         <Activity size={18} className="text-slate-400" />
@@ -661,13 +680,13 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                     </span>
                                 )}
                             </div>
-                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: isUtility ? '#4f46e5' : '#9ca3af', marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                                {isUtility ? 'VARIABLES MANIPULATION' : (isNestedWorkflow ? 'NESTED WORKFLOW OVERLAY' : (isWorkflowNode ? 'NODE OVERLAY CONFIG' : 'LIBRARY TASK TEMPLATE'))}
+                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: isIfNode ? '#f59e0b' : (isUtility ? '#4f46e5' : '#9ca3af'), marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                                {isIfNode ? 'Conditional Branch Engine' : (isUtility ? 'VARIABLES MANIPULATION' : (isNestedWorkflow ? 'NESTED WORKFLOW OVERLAY' : (isWorkflowNode ? 'NODE OVERLAY CONFIG' : 'LIBRARY TASK TEMPLATE')))}
                             </div>
                         </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: '16px' }}>
-                        {!isUtility && !isNestedWorkflow && (
+                        {!isUtility && !isNestedWorkflow && !isIfNode && (
                             <button 
                                 onClick={() => setAiMode(!aiMode)}
                                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${aiMode ? 'bg-purple-100 text-purple-700' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'} border border-purple-200 shadow-sm`}
@@ -701,10 +720,21 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                 </div>
                              )}
                              {chatHistory.map((msg, i) => (
-                                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                 <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} mb-1`}>
                                      <div className={`max-w-[85%] p-3 rounded-2xl text-xs font-medium shadow-sm leading-relaxed ${msg.role === 'user' ? 'bg-purple-600 text-white rounded-tr-sm border border-purple-700' : 'bg-white text-purple-900 border border-purple-200 rounded-tl-sm'}`}>
                                          {msg.content}
                                      </div>
+                                     {msg.sources && msg.sources.length > 0 && (
+                                         <div className="flex gap-2 mt-1.5 max-w-[85%] flex-wrap">
+                                             {msg.sources.map((s, idx) => (
+                                                 <a key={idx} href={s.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[9px] font-bold bg-white text-purple-600 hover:text-purple-700 hover:bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-full shadow-sm transition-all whitespace-nowrap">
+                                                     <Link2 size={10} />
+                                                     {s.title}
+                                                     <ExternalLink size={8} className="translate-y-[0.5px]" />
+                                                 </a>
+                                             ))}
+                                         </div>
+                                     )}
                                  </div>
                              ))}
                              {isGenerating && (
@@ -739,15 +769,18 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                 )}
 
                 <div style={{ display: 'flex', padding: '0 32px', borderBottom: '1px solid #eee', marginTop: '16px' }}>
-                    {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
-                    {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />}
-                    {!isUtility && !isNestedWorkflow && <TabButton active={activeTab === 'auth'} onClick={() => setActiveTab('auth')} label="Authorization" />}
+                    {!isUtility && !isNestedWorkflow && !isIfNode && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
+                    {isIfNode && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Branching Logic" />}
+                    {!isUtility && !isNestedWorkflow && !isIfNode && <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />}
+                    {!isUtility && !isNestedWorkflow && !isIfNode && <TabButton active={activeTab === 'auth'} onClick={() => setActiveTab('auth')} label="Authorization" />}
                     {isNestedWorkflow && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Input Mapping" />}
-                    <TabButton 
-                       active={activeTab === 'output'} 
-                       onClick={() => setActiveTab('output')} 
-                       label={isUtility ? "Manipulations" : isNestedWorkflow ? "Output Mapping" : "Output Processing"} 
-                    />
+                    {!isIfNode && (
+                        <TabButton 
+                            active={activeTab === 'output'} 
+                            onClick={() => setActiveTab('output')} 
+                            label={isUtility ? "Manipulations" : isNestedWorkflow ? "Output Mapping" : "Output Processing"} 
+                        />
+                    )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8 overflow-x-hidden no-scrollbar" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -840,7 +873,43 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                 </div>
                             )}
 
-                            {!isNestedWorkflow && (
+                            {isIfNode && (
+                                <div className="space-y-6">
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                                        <GitBranch size={18} className="text-amber-500" />
+                                        <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                            CONDITIONAL LOGIC ENGINE
+                                        </h4>
+                                    </div>
+                                    
+                                    <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-6">
+                                        <ConditionBuilder 
+                                            groups={conditionGroups}
+                                            onChange={setConditionGroups}
+                                            availableVars={availableUpstreamVars}
+                                            onRequestVariable={openVarPicker}
+                                        />
+                                    </div>
+
+                                    <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200">
+                                        <div className="flex items-start gap-3">
+                                            <div className="p-2 bg-white rounded-lg border border-slate-200 text-slate-400">
+                                                <Info size={16} />
+                                            </div>
+                                            <div>
+                                                <p className="text-[11px] font-bold text-slate-700 mb-1 uppercase tracking-tight">Branch Routing Instructions</p>
+                                                <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                                                    If the conditions above evaluate to <span className="text-green-600 font-black">TRUE</span>, the execution will follow the <span className="font-bold underline">THEN</span> path. 
+                                                    Otherwise, it will follow the <span className="text-red-600 font-black">ELSE</span> path. 
+                                                    You can also attach an <span className="font-bold italic">ALWAYS</span> path for shared post-logic.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {!isNestedWorkflow && !isIfNode && (
                                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                     {/* Section 1: Target API */}
                                     <div className={`bg-white rounded-2xl border ${urlOverride || methodOverride ? 'border-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.05)]' : 'border-slate-200'} shadow-sm overflow-hidden transition-all duration-300`}>
@@ -1454,6 +1523,135 @@ function TabButton({ active, onClick, label }: any) {
             {label}
         </button>
     )
+}
+
+function ConditionBuilder({ groups, onChange, availableVars, onRequestVariable }: any) {
+    const addGroup = () => {
+        onChange([...groups, { logicalOperator: 'AND', conditions: [{ variable: '', operator: '==', value: '' }] }]);
+    };
+
+    const removeGroup = (index: number) => {
+        onChange(groups.filter((_: any, i: number) => i !== index));
+    };
+
+    const updateGroup = (index: number, newGroup: any) => {
+        const next = [...groups];
+        next[index] = newGroup;
+        onChange(next);
+    };
+
+    return (
+        <div className="space-y-6">
+            {groups.map((group: any, idx: number) => (
+                <div key={idx} className="relative">
+                    {idx > 0 && (
+                        <div className="flex items-center justify-center my-4">
+                            <div className="h-[1px] bg-amber-200 flex-1" />
+                            <div className="px-3 py-1 bg-amber-100 text-amber-700 text-[10px] font-black rounded-lg border border-amber-200 mx-4">
+                                OR
+                            </div>
+                            <div className="h-[1px] bg-amber-200 flex-1" />
+                        </div>
+                    )}
+                    <div className="bg-white border border-amber-100 rounded-xl p-5 shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                                <div className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black rounded uppercase tracking-widest border border-slate-200">Group #{idx + 1}</div>
+                                <select 
+                                    className="text-[10px] font-bold bg-amber-50 text-amber-700 border-none outline-none rounded p-1"
+                                    value={group.logicalOperator}
+                                    onChange={(e) => updateGroup(idx, { ...group, logicalOperator: e.target.value })}
+                                >
+                                    <option value="AND">ALL (AND)</option>
+                                    <option value="OR">ANY (OR)</option>
+                                </select>
+                            </div>
+                            {groups.length > 1 && (
+                                <button onClick={() => removeGroup(idx)} className="text-slate-300 hover:text-red-500 transition-colors">
+                                    <Trash2 size={14} />
+                                </button>
+                            )}
+                        </div>
+                        
+                        <div className="space-y-3">
+                            {group.conditions.map((cond: any, cidx: number) => (
+                                <div key={cidx} className="flex gap-2 items-center group/cond">
+                                    <div className="flex-1">
+                                        <MaterialInput 
+                                            placeholder="Variable (e.g. {{resp.status}})"
+                                            value={cond.variable}
+                                            onChange={(v: string) => {
+                                                const nextC = group.conditions.map((c: any, i: number) => i === cidx ? { ...c, variable: v } : c);
+                                                updateGroup(idx, { ...group, conditions: nextC });
+                                            }}
+                                            enableVariables
+                                            onRequestVariable={onRequestVariable}
+                                            availableVars={availableVars}
+                                        />
+                                    </div>
+                                    <select 
+                                        className="w-24 h-[44px] bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-center outline-none focus:border-amber-400"
+                                        value={cond.operator}
+                                        onChange={(e) => {
+                                            const nextC = group.conditions.map((c: any, i: number) => i === cidx ? { ...c, operator: e.target.value } : c);
+                                            updateGroup(idx, { ...group, conditions: nextC });
+                                        }}
+                                    >
+                                        <option value="==">==</option>
+                                        <option value="!=">!=</option>
+                                        <option value=">">&gt;</option>
+                                        <option value="<">&lt;</option>
+                                        <option value="contains">contains</option>
+                                        <option value="regex">regex</option>
+                                        <option value="exists">exists</option>
+                                    </select>
+                                    <div className="flex-1">
+                                        <MaterialInput 
+                                            placeholder="Value"
+                                            value={cond.value}
+                                            onChange={(v: string) => {
+                                                const nextC = group.conditions.map((c: any, i: number) => i === cidx ? { ...c, value: v } : c);
+                                                updateGroup(idx, { ...group, conditions: nextC });
+                                            }}
+                                            enableVariables
+                                            onRequestVariable={onRequestVariable}
+                                            availableVars={availableVars}
+                                        />
+                                    </div>
+                                    <button 
+                                        className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover/cond:opacity-100"
+                                        onClick={() => {
+                                            const nextC = group.conditions.filter((_: any, i: number) => i !== cidx);
+                                            if (nextC.length > 0) updateGroup(idx, { ...group, conditions: nextC });
+                                        }}
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <button 
+                            onClick={() => {
+                                const nextC = [...group.conditions, { variable: '', operator: '==', value: '' }];
+                                updateGroup(idx, { ...group, conditions: nextC });
+                            }}
+                            className="mt-4 flex items-center gap-1.5 text-[10px] font-bold text-amber-600 hover:text-amber-700 transition-all uppercase tracking-tight"
+                        >
+                            <Plus size={12} /> Add Condition
+                        </button>
+                    </div>
+                </div>
+            ))}
+
+            <button 
+                onClick={addGroup}
+                className="w-full py-4 border-2 border-dashed border-amber-200 rounded-2xl text-amber-500 hover:bg-amber-50/50 transition-all text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2"
+            >
+                <Plus size={16} /> New OR Group
+            </button>
+        </div>
+    );
 }
 
 function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false, availableVars }: any) {

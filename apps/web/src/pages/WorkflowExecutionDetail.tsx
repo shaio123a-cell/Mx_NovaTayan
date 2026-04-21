@@ -325,9 +325,14 @@ function WorkflowExecutionDetail() {
                                                    record.task?.taskType === 'WORKFLOW' ||
                                                    (stableWorkflow?.nodes as any[])?.find(n => n.id === nodeId)?.taskType === 'WORKFLOW';
 
+                                    const isIf = record.input?.taskType === 'IF' || 
+                                               record.input?.ifNode === true ||
+                                               record.task?.taskType === 'IF' ||
+                                               (stableWorkflow?.nodes as any[])?.find(n => n.id === nodeId)?.taskType === 'IF';
+
                                     setSelectedTask({
                                         ...record,
-                                        taskType: isUtil ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (record.task?.taskType || 'HTTP'))
+                                        taskType: isIf ? 'IF' : (isUtil ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (record.task?.taskType || 'HTTP')))
                                     });
                                     setInspectMode('task');
                                     setShowInspector(true);
@@ -439,7 +444,7 @@ function WorkflowExecutionDetail() {
                                         <h2 className="text-lg font-black text-slate-800 tracking-tight truncate max-w-[340px]">
                                             {selectedTask.task?.name || selectedTask.nodeId}
                                         </h2>
-                                        <StatusBadge status={selectedTask.status} size="sm" />
+                                        <StatusBadge status={selectedTask.status} size="sm" branchResult={selectedTask.result?.branchResult} />
                                     </div>
                                     <div className="flex items-center gap-3 mt-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                                         <span className="flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
@@ -811,11 +816,64 @@ function WorkflowExecutionDetail() {
                                     <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${
                                         selectedTask.taskType === 'VARIABLE' ? 'bg-amber-50 text-amber-600 border-amber-200' : 
                                         selectedTask.taskType === 'WORKFLOW' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
+                                        selectedTask.taskType === 'IF' ? 'bg-rose-50 text-rose-600 border-rose-200' :
                                         'bg-sky-50 text-sky-600 border-sky-200'
                                     }`}>
                                         {selectedTask.taskType} Engine Task
                                     </span>
                                 </div>
+
+                                {selectedTask.taskType === 'IF' && (
+                                    <section>
+                                        <h4 className="text-[11px] font-black text-rose-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                                            <Activity size={12} /> Branching Decision results
+                                        </h4>
+                                        <div className={`p-6 rounded-2xl border-2 flex items-center justify-between mb-8 ${
+                                            selectedTask.result?.branchResult === 'THEN' 
+                                                ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                                                : 'bg-rose-50 border-rose-200 text-rose-900'
+                                        }`}>
+                                            <div>
+                                                <div className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">Decision Reached</div>
+                                                <div className="text-2xl font-black">{selectedTask.result?.branchResult === 'THEN' ? 'THEN (True Path)' : 'ELSE (False Path)'}</div>
+                                            </div>
+                                            <div className={`p-3 rounded-xl ${selectedTask.result?.branchResult === 'THEN' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
+                                                <Zap size={24} />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-6">
+                                            <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Logic Trace</h5>
+                                            <div className="space-y-3">
+                                                {selectedTask.result?.trace?.map((group: any, gIdx: number) => (
+                                                    <div key={gIdx} className="bg-slate-50 border border-slate-100 rounded-xl overflow-hidden shadow-sm">
+                                                        <div className="px-4 py-2 bg-white border-b border-slate-100 flex items-center justify-between">
+                                                            <span className="text-[9px] font-black text-slate-400 uppercase">Condition Set #{gIdx + 1} ({group.operator})</span>
+                                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${group.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                                {group.passed ? 'PASSED' : 'FAILED'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="p-4 space-y-2">
+                                                            {group.conditions.map((cond: any, cIdx: number) => (
+                                                                <div key={cIdx} className="flex items-center justify-between text-xs font-medium">
+                                                                    <div className="flex items-center gap-3">
+                                                                        <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{cond.variable}</span>
+                                                                        <span className="text-slate-400">{cond.op}</span>
+                                                                        <span className="font-mono text-[10px] text-slate-800">{String(cond.expectedValue)}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-3">
+                                                                        <span className="text-[9px] text-slate-400 italic">Saw: {String(cond.resolvedValue)}</span>
+                                                                        {cond.passed ? <CheckCircle size={12} className="text-emerald-500" /> : <X size={12} className="text-rose-500" />}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </section>
+                                )}
 
                                 {selectedTask.taskType === 'HTTP' && (
                                     <section>
@@ -1087,18 +1145,19 @@ function ExecutionHistoryGraph({ executions, currentId, currentStatus, onNavigat
     );
 }
 
-function StatusBadge({ status, size = 'sm' }: { status: string, size?: 'sm' | 'lg' }) {
+function StatusBadge({ status, size = 'sm', branchResult }: { status: string, size?: 'sm' | 'lg', branchResult?: string }) {
     const getStyles = (s: string) => {
         switch (s) {
             case 'SUCCESS': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/20';
             case 'FAILED': return 'bg-red-500/20 text-red-400 border-red-500/20';
             case 'RUNNING': return 'bg-sky-500/20 text-sky-400 border-sky-500/20 animate-pulse';
+            case 'BRANCHED': return 'bg-rose-500/20 text-rose-400 border-rose-500/20';
             default: return 'bg-slate-500/10 text-slate-400 border-slate-700';
         }
     }
     return (
         <span className={`${size === 'lg' ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'} font-black rounded border ${getStyles(status || 'PENDING')} uppercase tracking-widest`}>
-            {(status || 'PENDING').replace(/_/g, ' ')}
+            {status === 'BRANCHED' ? (branchResult || 'BRANCHED') : (status || 'PENDING').replace(/_/g, ' ')}
         </span>
     )
 }

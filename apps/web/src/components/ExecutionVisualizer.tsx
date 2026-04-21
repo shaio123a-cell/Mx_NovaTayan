@@ -14,7 +14,7 @@ import ReactFlow, {
     useEdgesState,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap, Layers } from 'lucide-react'
+import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap, Layers, GitBranch } from 'lucide-react'
 
 /**
  * Node color mapping based on status
@@ -40,7 +40,10 @@ function ExecutionNode({ data }: any) {
     const isWorkflow = data.taskType === 'WORKFLOW';
     const { bg, border, icon } = getStatusStyles(data.status);
     
+    const isIfNode = data.taskType === 'IF';
+    
     const renderIcon = () => {
+        if (isIfNode) return <GitBranch size={14} className="text-amber-400" />;
         if (isUtility) return <Zap size={14} className="text-yellow-400" fill="currentColor" />;
         if (isWorkflow) return <Layers size={14} className="text-white" />;
         return icon;
@@ -51,12 +54,18 @@ function ExecutionNode({ data }: any) {
     return (
         <div 
             style={{ 
-                minWidth: isUtility ? '180px' : '240px',
+                minWidth: isIfNode ? '120px' : (isUtility ? '180px' : '240px'),
+                width: isIfNode ? '120px' : 'auto',
+                height: isIfNode ? '120px' : 'auto',
                 position: 'relative',
                 opacity: data.status ? 1 : 0.5,
                 transition: 'all 0.2s',
                 transform: isEditing ? 'scale(1.05)' : 'scale(1)',
-                zIndex: isEditing ? 50 : 1
+                zIndex: isEditing ? 50 : 1,
+                background: 'transparent',
+                backgroundColor: 'transparent',
+                border: 'none',
+                boxShadow: 'none'
             }}
             className="group"
         >
@@ -65,11 +74,13 @@ function ExecutionNode({ data }: any) {
             <div style={{
                 position: 'absolute',
                 inset: 0,
-                background: isWorkflow ? '#32a895' : (isUtility ? (isEditing ? '#f05a28' : '#ffcc00') : (isEditing ? '#f05a28' : border)),
-                clipPath: isUtility 
-                    ? 'none' 
-                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '12px'),
+                background: isIfNode ? '#f59e0b' : (isWorkflow ? '#32a895' : (isUtility ? (isEditing ? '#f05a28' : '#ffcc00') : (isEditing ? '#f05a28' : border))),
+                clipPath: isIfNode
+                    ? 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'
+                    : (isUtility 
+                        ? 'none' 
+                        : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none')),
+                borderRadius: isIfNode ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '12px')),
                 zIndex: 0
             }} />
             
@@ -77,11 +88,13 @@ function ExecutionNode({ data }: any) {
             <div style={{
                 position: 'absolute',
                 inset: '1.5px', // Border width
-                background: isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg),
-                clipPath: isUtility 
-                    ? 'none' 
-                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '11px'),
+                background: isIfNode ? '#111217' : (isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg)),
+                clipPath: isIfNode
+                    ? 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'
+                    : (isUtility 
+                        ? 'none' 
+                        : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none')),
+                borderRadius: isIfNode ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '11px')),
                 zIndex: 1
             }} />
             
@@ -98,11 +111,27 @@ function ExecutionNode({ data }: any) {
 
             <Handle type="target" position={Position.Left} style={{ visibility: 'hidden', zIndex: 10 }} />
             
-            <div style={{ padding: isUtility ? '12px 24px' : '12px', position: 'relative', zIndex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <div style={{ 
+                padding: isIfNode ? '15px 10px' : (isUtility ? '12px 24px' : '12px'), 
+                position: 'relative', 
+                zIndex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: isIfNode ? 'center' : 'stretch',
+                justifyContent: isIfNode ? 'center' : 'flex-start',
+                height: '100%',
+                textAlign: isIfNode ? 'center' : 'left'
+            }}>
+                <div style={{ 
+                    display: 'flex', 
+                    flexDirection: isIfNode ? 'column' : 'row',
+                    alignItems: 'center', 
+                    gap: '8px', 
+                    marginBottom: '8px' 
+                }}>
                     <div style={{ 
-                        width: '32px', 
-                        height: '32px', 
+                        width: isIfNode ? '24px' : '32px', 
+                        height: isIfNode ? '24px' : '32px', 
                         background: 'rgba(0,0,0,0.3)', 
                         borderRadius: isUtility ? '50%' : (isWorkflow ? '0' : '8px'), 
                         display: 'flex', 
@@ -113,23 +142,33 @@ function ExecutionNode({ data }: any) {
                         {renderIcon()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
-                        <div style={{ fontSize: '9px', fontWeight: 'bold', color: isWorkflow ? '#fff' : border, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{data.status || 'NOT REACHED'}</div>
+                        <div style={{ fontSize: isIfNode ? '11px' : '13px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: isIfNode ? '80px' : 'none' }}>{data.label}</div>
+                        <div style={{ 
+                            fontSize: '9px', 
+                            fontWeight: 'bold', 
+                            color: isWorkflow ? '#fff' : (isIfNode ? (data.status === 'BRANCHED' ? '#ef4444' : '#f59e0b') : border), 
+                            textTransform: 'uppercase', 
+                            letterSpacing: '0.05em' 
+                        }}>
+                            {data.status === 'BRANCHED' ? (data.branchResult || 'BRANCHED') : (data.status || 'NOT REACHED')}
+                        </div>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
-                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontFamily: 'monospace' }}>
-                        {!isUtility && !isWorkflow && data.httpStatus ? (
-                            <span style={{ color: data.httpStatus < 300 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>HTTP {data.httpStatus}</span>
-                        ) : (isUtility ? <span style={{ color: '#ffcc00', fontWeight: 'bold', fontSize: '10px' }}>⚡ VMA LOGIC</span> : (isWorkflow ? <span style={{ color: '#fff', fontWeight: 'bold' }}>NESTED WF</span> : '---'))}
-                    </div>
-                    {data.duration && (
-                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                            <Clock size={10} /> {data.duration}ms
+                {!isIfNode && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontFamily: 'monospace' }}>
+                            {!isUtility && !isWorkflow && data.httpStatus ? (
+                                <span style={{ color: data.httpStatus < 300 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>HTTP {data.httpStatus}</span>
+                            ) : (isUtility ? <span style={{ color: '#ffcc00', fontWeight: 'bold', fontSize: '10px' }}>⚡ VMA LOGIC</span> : (isWorkflow ? <span style={{ color: '#fff', fontWeight: 'bold' }}>NESTED WF</span> : '---'))}
                         </div>
-                    )}
-                </div>
+                        {data.duration && (
+                            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Clock size={10} /> {data.duration}ms
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* 3-Dots Menu Button */}
@@ -181,9 +220,24 @@ function ExecutionEdge({
     });
 
     const condition = data?.condition || 'ALWAYS';
-    const label = condition === 'ALWAYS' ? 'Run Always' : condition === 'ON_SUCCESS' ? 'On Success' : 'On Failure';
+    const labelMapping: Record<string, string> = {
+        'ALWAYS': 'Run Always',
+        'ON_SUCCESS': 'On Success',
+        'ON_FAILURE': 'On Failure',
+        'ON_THEN': 'IF TRUE (THEN)',
+        'ON_ELSE': 'IF FALSE (ELSE)'
+    };
+    const label = labelMapping[condition] || condition;
+    
+    const colorMapping: Record<string, string> = {
+        'ON_SUCCESS': '#10b981',
+        'ON_THEN': '#22c55e',
+        'ON_FAILURE': '#ef4444',
+        'ON_ELSE': '#ef4444',
+        'ALWAYS': '#3b82f6'
+    };
     const color = data?.isActive 
-        ? (condition === 'ON_SUCCESS' ? '#10b981' : condition === 'ON_FAILURE' ? '#ef4444' : '#3b82f6')
+        ? (colorMapping[condition] || '#3b82f6')
         : '#2d2e35';
 
     return (
@@ -239,6 +293,8 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                 position: existingNode?.position || n.position || { x: 0, y: 0 },
                 width: existingNode?.width,
                 height: existingNode?.height,
+                className: 'n8n-node-transparent',
+                style: { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' },
                 data: {
                     id: n.id,
                     taskId: n.taskId,
@@ -247,6 +303,7 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
                     status: record?.status,
                     duration: record?.duration,
                     httpStatus: record?.result?.status,
+                    branchResult: record?.result?.branchResult,
                     failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
                     isEditing: editingTaskId === n.taskId,
                     onInspect: onInspect || (() => {}),
@@ -267,20 +324,27 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
             const sourceRecord = taskExecutions?.find(r => r.nodeId === e.source);
             
             const strategy = sourceNode?.failureStrategy || 'SUCCESS_REQUIRED';
-            const isSourceFinished = sourceRecord && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(sourceRecord.status);
+            const isSourceFinished = sourceRecord && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND', 'BRANCHED'].includes(sourceRecord.status);
             
             const conditionMet = sourceRecord && (
-                (e.condition === 'ON_SUCCESS' && sourceRecord.status === 'SUCCESS') ||
-                (e.condition === 'ON_FAILURE' && sourceRecord.status !== 'SUCCESS') ||
+                (e.condition === 'ON_SUCCESS' && (sourceRecord.status === 'SUCCESS' || sourceRecord.status === 'BRANCHED')) ||
+                (e.condition === 'ON_FAILURE' && sourceRecord.status !== 'SUCCESS' && sourceRecord.status !== 'BRANCHED') ||
+                (e.condition === 'ON_THEN' && sourceRecord.result?.branchResult === 'THEN') ||
+                (e.condition === 'ON_ELSE' && sourceRecord.result?.branchResult === 'ELSE') ||
                 (e.condition === 'ALWAYS')
             );
 
-            const isActive = isSourceFinished && conditionMet && (sourceRecord.status === 'SUCCESS' || strategy === 'CONTINUE_ON_FAIL');
+            const isActive = isSourceFinished && conditionMet && (
+                sourceRecord.status === 'SUCCESS' || 
+                strategy === 'CONTINUE_ON_FAIL' || 
+                sourceNode?.taskType === 'IF' // IF nodes don't "fail" in the orchestration sense unless system error
+            );
 
             return {
                 id: e.id,
                 source: e.source,
                 target: e.target,
+                sourceHandle: e.sourceHandle || (sourceNode?.taskType === 'IF' ? (e.condition === 'ON_THEN' ? 'then' : 'else') : null),
                 type: 'executionEdge',
                 animated: sourceRecord?.status === 'RUNNING',
                 data: { 

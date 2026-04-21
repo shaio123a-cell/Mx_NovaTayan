@@ -230,7 +230,7 @@ function N8nTaskNode({ data }: any) {
         return <FallbackIcon />;
     }
 
-    const isUtility = data.taskType === 'VARIABLE' || data.taskId === '00000000-0000-0000-0000-000000000001';
+    const isUtility = data.taskType === 'VARIABLE' || data.taskId === '00000000-0000-0000-0000-000000000001' || data.taskId === 'util-vars';
     const isWorkflow = data.taskType === 'WORKFLOW';
 
     return (
@@ -576,6 +576,48 @@ function WorkflowNode({ data }: any) {
     );
 }
 
+function IfNode({ data }: any) {
+    return (
+        <div style={{ 
+            width: '100px',
+            height: '100px',
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+        }} className="hover:scale-105 transition-transform group">
+            {/* Diamond Shape */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: '#f59e0b',
+                clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+                zIndex: 0
+            }} />
+            <div style={{
+                position: 'absolute',
+                inset: '2px',
+                background: '#111217',
+                clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+                zIndex: 1
+            }} />
+
+            {/* Label */}
+            <div style={{ zIndex: 10, textAlign: 'center', padding: '10px' }}>
+                <div style={{ color: '#f59e0b', fontSize: '10px', fontWeight: '900', textTransform: 'uppercase', marginBottom: '2px' }}>IF NODE</div>
+                <div style={{ color: 'white', fontSize: '11px', fontWeight: 'bold', maxWidth: '70px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {data.label}
+                </div>
+            </div>
+
+            {/* Ports */}
+            <Handle type="target" position={Position.Left} style={{ background: '#3b82f6', border: '2px solid white', left: '-5px' }} />
+            <Handle type="source" position={Position.Right} id="then" className="then-handle" style={{ border: '2px solid white', right: '-8px', top: '35%' }} />
+            <Handle type="source" position={Position.Right} id="else" className="else-handle" style={{ border: '2px solid white', right: '-8px', top: '65%' }} />
+        </div>
+    );
+}
+
 
 function CustomEdge({
     id,
@@ -600,20 +642,42 @@ function CustomEdge({
     });
 
     const condition = data?.condition || 'ALWAYS';
-    const label = condition === 'ALWAYS' ? 'Run Always' : condition === 'ON_SUCCESS' ? 'On Success' : 'On Failure';
-    const color = condition === 'ALWAYS' ? '#94a3b8' : condition === 'ON_SUCCESS' ? '#22c55e' : '#ef4444';
+    const isThen = condition === 'ON_THEN';
+    const isElse = condition === 'ON_ELSE';
+    const isSuccess = condition === 'ON_SUCCESS';
+    const isFailure = condition === 'ON_FAILURE';
+
+    const label = condition === 'ALWAYS' ? 'Always' : 
+                  isThen ? 'THEN' : 
+                  isElse ? 'ELSE' : 
+                  isSuccess ? 'On Success' : 
+                  isFailure ? 'On Failure' : condition.replace('ON_', '');
+
+    const color = (isThen || isSuccess) ? '#22c55e' : 
+                  (isElse || isFailure) ? '#ef4444' : '#94a3b8';
 
     const onEdgeClick = (evt: any) => {
         evt.stopPropagation();
-        const nextCondition = condition === 'ALWAYS' ? 'ON_SUCCESS' : condition === 'ON_SUCCESS' ? 'ON_FAILURE' : 'ALWAYS';
+        // If coming from an IF node, cycle THEN -> ELSE -> ALWAYS
+        // Otherwise cycle SUCCESS -> FAILURE -> ALWAYS
+        const isFromIf = data?.sourceType === 'IF';
+        
+        let nextCondition = 'ALWAYS';
+        if (isFromIf) {
+            nextCondition = condition === 'ON_THEN' ? 'ON_ELSE' : condition === 'ON_ELSE' ? 'ALWAYS' : 'ON_THEN';
+        } else {
+            nextCondition = condition === 'ALWAYS' ? 'ON_SUCCESS' : condition === 'ON_SUCCESS' ? 'ON_FAILURE' : 'ALWAYS';
+        }
+
         setEdges((eds) =>
             eds.map((edge) => {
                 if (edge.id === id) {
                     return {
                         ...edge,
+                        sourceHandle: isFromIf ? (nextCondition === 'ON_THEN' ? 'then' : (nextCondition === 'ON_ELSE' ? 'else' : null)) : edge.sourceHandle,
                         data: { ...edge.data, condition: nextCondition },
                         label: nextCondition === 'ALWAYS' ? '' : nextCondition.replace('ON_', ''),
-                        style: { ...edge.style, stroke: nextCondition === 'ALWAYS' ? '#94a3b8' : nextCondition === 'ON_SUCCESS' ? '#22c55e' : '#ef4444' }
+                        style: { ...edge.style, stroke: (nextCondition === 'ON_THEN' || nextCondition === 'ON_SUCCESS') ? '#22c55e' : (nextCondition === 'ON_ELSE' || nextCondition === 'ON_FAILURE') ? '#ef4444' : '#94a3b8' }
                     };
                 }
                 return edge;
@@ -698,6 +762,7 @@ function CustomEdge({
 const nodeTypes = {
     taskNode: N8nTaskNode,
     workflowNode: WorkflowNode,
+    ifNode: IfNode,
 }
 
 const edgeTypes = {
@@ -750,22 +815,23 @@ function ReactFlowCanvas({
             const newNodeId = `node-${Date.now()}`;
             const isUtility = taskData.taskType === 'VARIABLE';
             const isWorkflow = taskData.itemType === 'WORKFLOW';
+            const isIf = taskData.taskType === 'IF';
             const randomSuffix = Math.floor(100000 + Math.random() * 900000);
             const label = isUtility ? `${taskData.name} ${randomSuffix}` : taskData.name;
  
             const newNode: Node = {
                 id: newNodeId,
-                type: isWorkflow ? 'workflowNode' : 'taskNode',
+                type: isIf ? 'ifNode' : (isWorkflow ? 'workflowNode' : 'taskNode'),
                 position,
                 data: {
                     id: newNodeId,
                     label: label,
                     taskId: taskData.id,
-                    taskType: isWorkflow ? 'WORKFLOW' : (taskData.taskType || 'HTTP'),
-                    utility: isUtility,
+                    taskType: isWorkflow ? 'WORKFLOW' : (isIf ? 'IF' : (taskData.taskType || 'HTTP')),
+                    utility: isUtility || isIf,
                     inputVarsCount: isWorkflow ? Object.keys(taskData.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
                     outputVarsCount: isWorkflow ? Object.keys(taskData.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
-                    method: isWorkflow ? 'WF' : (taskData.taskType === 'VARIABLE' ? 'VAR' : (taskData.command?.method || 'GET')),
+                    method: isWorkflow ? 'WF' : (taskData.taskType === 'VARIABLE' ? 'VAR' : (isIf ? 'IF' : (taskData.command?.method || 'GET'))),
                     targetTags: taskData.targetTags || [],
                     failureStrategy: 'SUCCESS_REQUIRED',
                     failureStatusOverride: 'FAILED',
@@ -773,6 +839,7 @@ function ReactFlowCanvas({
                     icon: taskData.icon,
                     onDelete: (id: string) => {
                         setNodes((nds: any) => nds.filter((node: any) => node.id !== id));
+                        setEdges((eds: any) => eds.filter((edge: any) => edge.source !== id && edge.target !== id));
                         setIsDirty(true);
                     },
                     onChangeTargetTags: (val: string) => {
@@ -788,6 +855,8 @@ function ReactFlowCanvas({
                         setIsDirty(true);
                     }
                 },
+                className: 'n8n-node-transparent',
+                style: { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }
             };
 
             setNodes((nds: any) => nds.concat(newNode));
@@ -814,7 +883,9 @@ function ReactFlowCanvas({
                     setIsDirty(true);
                 }}
                 onNodesDelete={(deletedNodes) => {
-                    setNodes(nds => nds.filter(n => !deletedNodes.find(dn => dn.id === n.id)));
+                    const deletedIds = new Set(deletedNodes.map(dn => dn.id));
+                    setNodes(nds => nds.filter(n => !deletedIds.has(n.id)));
+                    setEdges(eds => eds.filter(e => !deletedIds.has(e.source) && !deletedIds.has(e.target)));
                     setIsDirty(true);
                 }}
                 fitView
@@ -896,17 +967,19 @@ function WorkflowDesignerContent() {
             
             setNodes(existingWorkflow.nodes.map((n: any) => ({
                 id: n.id,
-                type: n.taskType === 'WORKFLOW' ? 'workflowNode' : 'taskNode',
+                type: (n.taskType === 'IF' || n.taskId === 'util-if') ? 'ifNode' : (n.taskType === 'WORKFLOW' ? 'workflowNode' : 'taskNode'),
                 position: n.position,
+                className: 'n8n-node-transparent',
+                style: { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' },
                 data: {
                     ...n,
                     id: n.id,
                     label: n.taskType === 'WORKFLOW' ? (n.label || allWorkflows?.find((w: any) => w.id === n.taskId)?.name || 'Nested Workflow') : (tasks?.find((t: any) => t.id === n.taskId)?.name || n.label),
                     taskId: n.taskId,
-                    taskType: n.taskType || 'HTTP',
+                    taskType: n.taskType || (n.taskId === 'util-if' ? 'IF' : (n.taskId === 'util-vars' ? 'VARIABLE' : 'HTTP')),
                     inputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
                     outputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
-                    method: n.taskType === 'VARIABLE' ? 'VAR' : n.taskType === 'WORKFLOW' ? 'WF' : (n.method || tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'),
+                    method: n.taskType === 'VARIABLE' ? 'VAR' : (n.taskType === 'IF' ? 'IF' : (n.taskType === 'WORKFLOW' ? 'WF' : (n.method || tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'))),
                     targetTags: n.targetTags || [],
                     failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
                     failureStatusOverride: n.failureStatusOverride || 'FAILED',
@@ -914,6 +987,7 @@ function WorkflowDesignerContent() {
                     icon: n.taskType === 'WORKFLOW' ? (n.icon || allWorkflows?.find((w: any) => w.id === n.taskId)?.icon) : (tasks?.find((t: any) => t.id === n.taskId)?.icon || n.icon),
                     onDelete: (id: string) => {
                         setNodes(nds => nds.filter(node => node.id !== id));
+                        setEdges(eds => eds.filter(edge => edge.source !== id && edge.target !== id));
                         setIsDirty(true);
                     },
                     onChangeTargetTags: (val: string) => {
@@ -931,18 +1005,36 @@ function WorkflowDesignerContent() {
                     }
                 }
             })))
-            setEdges(existingWorkflow.edges.map((e: any) => ({
-                id: e.id,
-                source: e.source,
-                target: e.target,
-                type: 'custom',
-                data: { condition: e.condition || 'ALWAYS' },
-                animated: true,
-                style: { 
-                    stroke: (e.condition === 'ON_SUCCESS' ? '#22c55e' : e.condition === 'ON_FAILURE' ? '#ef4444' : '#94a3b8'), 
-                    strokeWidth: 2 
-                },
-            })))
+            setEdges(existingWorkflow.edges.map((e: any) => {
+                const condition = e.condition || 'ALWAYS';
+                const sourceType = e.sourceType || 'TASK';
+                const isThen = condition === 'ON_THEN';
+                const isElse = condition === 'ON_ELSE';
+                const isSuccess = condition === 'ON_SUCCESS';
+                const isFailure = condition === 'ON_FAILURE';
+
+                const labelMapping: Record<string, string> = {
+                    'ON_SUCCESS': 'On Success',
+                    'ON_FAILURE': 'On Failure',
+                    'ON_THEN': 'IF TRUE (THEN)',
+                    'ON_ELSE': 'IF FALSE (ELSE)'
+                };
+
+                return {
+                    id: e.id,
+                    source: e.source,
+                    target: e.target,
+                    sourceHandle: e.sourceHandle || (sourceType === 'IF' ? (condition === 'ON_THEN' ? 'then' : 'else') : null),
+                    type: 'custom',
+                    data: { condition, sourceType },
+                    animated: true,
+                    label: condition === 'ALWAYS' ? '' : (labelMapping[condition] || condition.replace('ON_', '')),
+                    style: { 
+                        stroke: (isThen || isSuccess) ? '#22c55e' : (isElse || isFailure) ? '#ef4444' : '#94a3b8', 
+                        strokeWidth: 2 
+                    },
+                };
+            }))
             setTimeout(() => setIsDirty(false), 50); // Small delay to prevent initial load marking as dirty
         }
     }, [existingWorkflow, tasks])
@@ -968,16 +1060,56 @@ function WorkflowDesignerContent() {
 
     const onConnect = useCallback(
         (params: Connection) => {
+            const sourceNode = nodes.find(n => n.id === params.source);
+            const isIfNode = sourceNode?.type === 'ifNode';
+            
+            let condition = 'ALWAYS';
+            let color = '#94a3b8';
+            
+            if (isIfNode) {
+                if (params.sourceHandle === 'then') {
+                    const existingThen = edges.find(e => e.source === params.source && e.data?.condition === 'ON_THEN');
+                    if (existingThen) {
+                        showToast("Logic reached: This branch already has a connection.", "error");
+                        return;
+                    }
+                    condition = 'ON_THEN';
+                    color = '#22c55e';
+                } else if (params.sourceHandle === 'else') {
+                    const existingElse = edges.find(e => e.source === params.source && e.data?.condition === 'ON_ELSE');
+                    if (existingElse) {
+                        showToast("Logic reached: This branch already has a connection.", "error");
+                        return;
+                    }
+                    condition = 'ON_ELSE';
+                    color = '#ef4444';
+                } else {
+                    showToast("Please draw line from either the green (THEN) or red (ELSE) dot.", "error");
+                    return;
+                }
+            }
+
+            const labelMapping: Record<string, string> = {
+                'ON_SUCCESS': 'On Success',
+                'ON_FAILURE': 'On Failure',
+                'ON_THEN': 'IF TRUE (THEN)',
+                'ON_ELSE': 'IF FALSE (ELSE)'
+            };
+
             setEdges((eds) => addEdge({ 
                 ...params, 
                 type: 'custom',
-                data: { condition: 'ALWAYS' },
+                data: { 
+                    condition,
+                    sourceType: sourceNode?.type === 'ifNode' ? 'IF' : 'TASK'
+                },
                 animated: true, 
-                style: { stroke: '#94a3b8', strokeWidth: 2 } 
+                label: condition === 'ALWAYS' ? '' : (labelMapping[condition] || condition.replace('ON_', '')),
+                style: { stroke: color, strokeWidth: 2 } 
             }, eds));
             setIsDirty(true);
         },
-        [setEdges],
+        [setEdges, nodes, edges],
     )
 
     const saveMutation = useMutation({
@@ -1001,13 +1133,52 @@ function WorkflowDesignerContent() {
         onSuccess: () => showToast('Workflow execution started!', 'success'),
     })
 
+    const handleExecute = async () => {
+        if (!workflowId) return;
+        
+        if (isDirty) {
+            // Save first, then execute
+            const workflowData = {
+                name: workflowName,
+                tags: workflowTags,
+                nodes: nodes.map(n => {
+                    const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, position: stalePos, ...cleanData } = n.data;
+                    return {
+                        id: n.id,
+                        position: n.position,
+                        ...cleanData
+                    };
+                }),
+                edges: edges.map(e => ({
+                    id: e.id,
+                    source: e.source,
+                    target: e.target,
+                    sourceHandle: e.sourceHandle,
+                    condition: e.data?.condition || 'ALWAYS',
+                    sourceType: e.data?.sourceType || 'TASK'
+                })),
+                ...workflowMetadata
+            }
+            
+            try {
+                await saveMutation.mutateAsync(workflowData);
+                executeMutation.mutate(workflowId);
+            } catch (err) {
+                // Toast already shown by saveMutation
+            }
+        } else {
+            executeMutation.mutate(workflowId);
+        }
+    }
+
     const handleSave = () => {
         const workflowData = {
             name: workflowName,
             tags: workflowTags,
             nodes: nodes.map(n => {
-                // Remove UI-only functions before saving to DB
-                const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, ...cleanData } = n.data;
+                // Remove UI-only functions and POSITIONAL metadata from data object before saving
+                // We must exclude 'position' from cleanData because it will overwrite the live n.position spread!
+                const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, position: stalePos, ...cleanData } = n.data;
                 return {
                     id: n.id,
                     position: n.position,
@@ -1018,7 +1189,9 @@ function WorkflowDesignerContent() {
                 id: e.id,
                 source: e.source,
                 target: e.target,
-                condition: e.data?.condition || 'ALWAYS'
+                sourceHandle: e.sourceHandle,
+                condition: e.data?.condition || 'ALWAYS',
+                sourceType: e.data?.sourceType || 'TASK'
             })),
             ...workflowMetadata
         }
@@ -1186,7 +1359,7 @@ function WorkflowDesignerContent() {
                         <Shield style={{ color: '#1976D2' }} size={18} />
                     </button>
                     <button 
-                        onClick={() => workflowId && executeMutation.mutate(workflowId)}
+                        onClick={handleExecute}
                         disabled={!workflowId}
                         style={{ background: '#1976D2', color: '#fff', border: 'none', padding: '8px 28px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', opacity: workflowId ? 1 : 0.5, fontSize: '13px', boxShadow: '0 4px 6px rgba(25,118,210,0.2)' }}
                     >
@@ -1235,6 +1408,32 @@ function WorkflowDesignerContent() {
                                 <div>
                                     <div style={{ fontSize: '14px' }}>Variables Manipulation</div>
                                     <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#999' }}>Transform & Store Data</div>
+                                </div>
+                            </div>
+
+                            <div 
+                                draggable
+                                onDragStart={(e) => onDragStart(e, { id: 'util-if', name: 'Branch Logic', taskType: 'IF' })}
+                                style={{
+                                    padding: '16px 24px',
+                                    background: 'white',
+                                    border: '2px dashed #f59e0b',
+                                    borderRadius: '12px',
+                                    cursor: 'grab',
+                                    fontSize: '14px',
+                                    color: '#b45309',
+                                    fontWeight: 'bold',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    transition: 'all 0.2s'
+                                }}
+                                className="hover:shadow-lg hover:border-solid hover:scale-105"
+                            >
+                                <GitBranch size={20} className="text-amber-500" />
+                                <div>
+                                    <div style={{ fontSize: '14px' }}>IF / ELSE Branch</div>
+                                    <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#999' }}>Conditional Logic</div>
                                 </div>
                             </div>
                         </div>

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { LoggerService } from '../common/logger/logger.service';
 import { GlobalVarsService } from '../global-vars/global-vars.service';
+import { ConditionEvaluator } from './condition-evaluator';
 import { VariableEngine } from '../../../../packages/shared-xform/variable_engine';
 import { WorkflowsService } from '../workflows/workflows.service';
 
@@ -12,6 +13,7 @@ export class WorkerService {
         private prisma: PrismaService,
         private logger: LoggerService,
         private globalVarsService: GlobalVarsService,
+        private conditionEvaluator: ConditionEvaluator,
         @Inject(forwardRef(() => WorkflowsService))
         private workflowsService: WorkflowsService
     ) {
@@ -235,31 +237,44 @@ export class WorkerService {
             }
 
             // 4. HTTP / Task Shortcuts (macros)
-            if (['SUCCESS', 'COMPLETED', 'FAILED', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'TIMEOUT', 'NO_WORKER_FOUND'].includes(record.status)) {
+            if (['SUCCESS', 'COMPLETED', 'FAILED', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'TIMEOUT', 'NO_WORKER_FOUND', 'BRANCHED'].includes(record.status)) {
                 const shortcut = {
-                    status: result.status, // HTTP status if applicable
+                    ...(result.variables || {}), // Extract computed variables directly
+                    ...(result.data || {}),      // Extract raw data if it already exists (HTTP body)
+                    id: record.nodeId,
+                    name: taskName,
+                    status: result.status ?? record.status, // HTTP status (e.g. 200) or Execution status (e.g. SUCCESS)
                     executionStatus: record.status, 
                     duration: record.duration,
+                    error: record.error,
                     body: result.data,
                     headers: result.headers
                 };
-                const cleanName = String(taskName).replace(/\s+/g, '_');
                 
-                // HTTP.<name> for backward compatibility (body and status)
+                const cleanName = String(taskName).replace(/\s+/g, '_');
+
+                // Add httpStatus specifically to avoid ambiguity
+                if (result.status !== undefined) {
+                    (shortcut as any).httpStatus = result.status;
+                }
+                
+                // Populate macros
+                macros[cleanName] = shortcut;
+                macros[taskName] = shortcut;
+                
+                // HTTP.<name> for backward compatibility
                 macros[`HTTP.${cleanName}`] = shortcut;
                 macros[`HTTP.${taskName}`] = shortcut;
                 macros[`HTTP.last`] = shortcut;
 
-                // Task.<name> for more detailed info
+                // Explicit Task Namespace (Task.Task_A.status)
                 macros[`Task.${cleanName}.status`] = record.status;
                 macros[`Task.${taskName}.status`] = record.status;
+                macros[`Task.${cleanName}.executionStatus`] = record.status;
                 macros[`Task.${cleanName}.duration`] = record.duration;
-                macros[`Task.${taskName}.duration`] = record.duration;
                 
-                // If this was a CWF task, it might have workflowStatus and duration in result
                 if (result.workflowStatus) {
                     macros[`Task.${cleanName}.workflowStatus`] = result.workflowStatus;
-                    macros[`Task.${taskName}.workflowStatus`] = result.workflowStatus;
                 }
             }
         }
@@ -504,19 +519,21 @@ export class WorkerService {
                               (node as any).taskId === '00000000-0000-0000-0000-000000000001' || 
                               (node as any).taskId === 'util-vars';
             const isNested = (node as any).taskType === 'WORKFLOW';
+            const isIfNode = (node as any).taskType === 'IF';
             
             const childExec = await this.prisma.taskExecution.create({
                 data: {
-                    taskId: (isUtility || isNested) ? null : node.taskId,
+                    taskId: (isUtility || isNested || isIfNode) ? null : node.taskId,
                     nodeId: node.id,
                     workflowExecutionId: subExec.id,
-                    status: 'PENDING',
+                    status: (isNested || isIfNode) ? 'RUNNING' : 'PENDING',
                     targetTags: node.targetTags || (workflow.tags || []),
                     startedAt: new Date(),
                     input: {
                         utility: isUtility,
                         nested: isNested,
-                        taskType: (node as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
+                        ifNode: isIfNode,
+                        taskType: (node as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (isIfNode ? 'IF' : 'HTTP'))),
                         subWorkflowId: isNested ? node.taskId : undefined,
                         variableExtraction: node.variableExtraction || { vars: {} },
                         sanityChecks: node.sanityChecks || [],
@@ -528,13 +545,48 @@ export class WorkerService {
                 }
             });
 
-            // If the start node is ALSO a sub-workflow, trigger it recursively
+            // If the start node is ALSO a sub-workflow or IF node, trigger it recursively
             if (isNested) {
                 await this.prisma.taskExecution.update({
                     where: { id: childExec.id },
                     data: { status: 'RUNNING', startedAt: new Date() }
                 });
                 await this.triggerSubWorkflow(childExec);
+            } else if (isIfNode) {
+                this.logger.log(`[Orchestration] Executing IF node as sub-workflow start: ${node.id}`);
+                try {
+                    const { result: branchResult, trace } = this.conditionEvaluator.evaluate(
+                        (node as any).conditionGroups || [],
+                        { ...subWorkflowStartContext, macros: subWorkflowMacros }
+                    );
+                    
+                    const completedIf = await this.prisma.taskExecution.update({
+                        where: { id: childExec.id },
+                        data: {
+                            status: 'BRANCHED',
+                            completedAt: new Date(),
+                            result: {
+                                branchResult: branchResult ? 'THEN' : 'ELSE',
+                                trace
+                            }
+                        }
+                    });
+                    
+                    // Trigger next steps from the IF node recursively
+                    await this.handleWorkflowOrchestration(completedIf);
+                } catch (err) {
+                    this.logger.error(`[Orchestration] Sub-workflow IF node ${node.id} evaluation failed: ${err.message}`);
+                    await this.prisma.taskExecution.update({
+                        where: { id: childExec.id },
+                        data: {
+                            status: 'FAILED',
+                            completedAt: new Date(),
+                            error: `Conditional evaluation failed: ${err.message}`
+                        }
+                    });
+                }
+            } else if (isUtility) {
+                await this.executeUtilityNode(childExec);
             }
         }
     }
@@ -638,28 +690,41 @@ export class WorkerService {
         if (!workflowExecution || !workflowExecution.workflow) return;
 
         const workflow = workflowExecution.workflow;
-        const nodes = workflow.nodes as any[];
-        const edges = workflow.edges as any[];
-        const taskRecords = workflowExecution.taskExecutionRecords;
+        let nodes = workflow.nodes as any[];
+        let edges = workflow.edges as any[];
+        if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+        if (typeof edges === 'string') edges = JSON.parse(edges);
+        if (!Array.isArray(nodes)) nodes = Object.values(nodes || {});
+        if (!Array.isArray(edges)) edges = Object.values(edges || {});
+        
+        // Re-fetch records to get the most up-to-date status (crucial for recursive utility node calls)
+        const taskRecords = await this.prisma.taskExecution.findMany({
+            where: { workflowExecutionId }
+        });
 
         // 2. Find ALL next candidate nodes (downstream from the completed task)
         const outgoingEdges = edges.filter(edge => edge.source === nodeId);
         
         for (const edge of outgoingEdges) {
             const nextNodeId = edge.target;
-            const nextNode = nodes.find(n => n.id === nextNodeId);
-            if (!nextNode) continue;
+            this.logger.debug(`[Orchestration] Checking candidate node: ${nextNodeId}`);
 
             // 3. Fan-in logic: Check if ALL predecessors for 'nextNode' are finished
             const incomingEdges = edges.filter(e => e.target === nextNodeId);
             const predecessorNodeIds = incomingEdges.map(e => e.source);
             
+            this.logger.debug(`[Orchestration] Node ${nextNodeId} has predecessors: ${predecessorNodeIds.join(', ')}`);
+
             const predecessorRecords = taskRecords.filter(r => predecessorNodeIds.includes(r.nodeId));
             
             // Check if all predecessors have an execution record and are finished
             const allFinished = predecessorNodeIds.every(pid => {
                 const record = taskRecords.find(r => r.nodeId === pid);
-                return record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION'].includes(record.status);
+                const finished = record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'BRANCHED'].includes(record.status);
+                if (!finished) {
+                    this.logger.debug(`[Orchestration] Node ${nextNodeId} waiting for predecessor ${pid} (Current Status: ${record?.status || 'NOT_STARTED'})`);
+                }
+                return finished;
             });
 
             if (!allFinished) {
@@ -671,26 +736,37 @@ export class WorkerService {
             const strategy = nodes.find(n => n.id === nodeId)?.failureStrategy || 'SUCCESS_REQUIRED';
 
             // Check if the specific edge that leads to this trigger matches the current status
-            const condition = edge.condition || 'ALWAYS';
+            const condition = (edge as any).condition || 'ALWAYS';
+
+            let result = (completedTask as any).result || {};
+            if (typeof result === 'string') {
+                try { result = JSON.parse(result); } catch (e) { result = {}; }
+            }
+            const branchResult = (result as any).branchResult;
+            
             const statusMatch = condition === 'ALWAYS' || 
-                                (condition === 'ON_SUCCESS' && status === 'SUCCESS') ||
-                                (condition === 'ON_FAILURE' && status !== 'SUCCESS');
+                                (condition === 'ON_SUCCESS' && (status === 'SUCCESS' || status === 'BRANCHED')) ||
+                                (condition === 'ON_FAILURE' && status !== 'SUCCESS' && status !== 'BRANCHED') ||
+                                (condition === 'ON_THEN' && branchResult === 'THEN') ||
+                                (condition === 'ON_ELSE' && branchResult === 'ELSE');
 
             if (!statusMatch) {
-                this.logger.debug(`[Orchestration] Edge ${edge.id} skipped - status ${status} does not match condition ${condition}`);
+                this.logger.debug(`[Orchestration] Skipping edge ${edge.id} to ${nextNodeId} (Condition: ${condition}, Node Status: ${status}, Branch Result: ${branchResult}) - Reason: Condition mismatch`);
                 continue;
             }
 
+            this.logger.log(`[Orchestration] PASSED Fan-in and Edge Condition. Triggering node: ${nextNodeId} (Type: ${nodes.find(n => n.id === nextNodeId)?.taskType || 'HTTP'})`);
+
             // If task failed and strategy is SUCCESS_REQUIRED, we don't proceed even if edge is ON_FAILURE / ALWAYS
-            if (status !== 'SUCCESS' && strategy === 'SUCCESS_REQUIRED') {
-                this.logger.warn(`[Orchestration] Node ${nextNodeId} BLOCKED because predecessor ${nodeId} failed with SUCCESS_REQUIRED`);
+            if (status !== 'SUCCESS' && status !== 'BRANCHED' && strategy === 'SUCCESS_REQUIRED') {
+                this.logger.debug(`[Orchestration] Node ${nextNodeId} skipped because predecessor ${nodeId} status is ${status} and strategy is SUCCESS_REQUIRED`);
                 continue;
             }
 
             const blocker = predecessorRecords.find(r => {
                 const nodeDef = nodes.find(n => n.id === r.nodeId);
                 const strat = nodeDef?.failureStrategy || 'SUCCESS_REQUIRED';
-                return r.status !== 'SUCCESS' && strat === 'SUCCESS_REQUIRED';
+                return r.status !== 'SUCCESS' && r.status !== 'BRANCHED' && strat === 'SUCCESS_REQUIRED';
             });
 
             if (blocker) {
@@ -698,10 +774,9 @@ export class WorkerService {
                 continue;
             }
 
-
-
             // 5. Trigger the task
             // Determine targeting
+            const nextNode = nodes.find(n => n.id === nextNodeId);
             let targetWorkerId = nextNode.targetWorkerId;
             let targetTags = (nextNode.targetTags && nextNode.targetTags.length > 0)
                 ? nextNode.targetTags
@@ -730,57 +805,103 @@ export class WorkerService {
                 }
 
                 if (matchingWorkerCount === 0 || !isPinnedWorkerValid) {
-                    this.logger.warn(`[Orchestration] NO VALID WORKER FOUND for next node ${nextNode.id}`);
+                    this.logger.warn(`[Orchestration] NO VALID WORKER FOUND for next node ${nextNode.id} (Tags: ${targetTags.join(',')})`);
                     initialStatus = 'NO_WORKER_FOUND';
                 }
             }
 
+            // Determine node type for server-side processing
+            const isUtility = (nextNode as any).taskType === 'VARIABLE' || 
+                              (nextNode as any).taskId === '00000000-0000-0000-0000-000000000001' || 
+                              (nextNode as any).taskId === 'util-vars';
+            const isNested = (nextNode as any).taskType === 'WORKFLOW';
+            const isIfNode = (nextNode as any).taskType === 'IF';
+
             // Ensure we don't create duplicate executions for the same node in this run
-            const existing = await this.prisma.taskExecution.findFirst({
+            let nextTaskExec = await this.prisma.taskExecution.findFirst({
                 where: { workflowExecutionId, nodeId: nextNode.id }
             });
 
             // Pre-gather workflow context to store in the task input. 
-            // This ensures the worker has everything it needs and the UI can inspect the EXACT state at trigger time.
             const { workflowVars, macros: orchestrationMacros } = await this.gatherWorkflowContext(workflowExecutionId);
 
-            if (!existing) {
-                const isUtility = (nextNode as any).taskType === 'VARIABLE' || 
-                                  (nextNode as any).taskId === '00000000-0000-0000-0000-000000000001' || 
-                                  (nextNode as any).taskId === 'util-vars';
-                const isNested = (nextNode as any).taskType === 'WORKFLOW';
-                const SYSTEM_VAR_ID = '00000000-0000-0000-0000-000000000001';
-
-                const nextTaskExec = await this.prisma.taskExecution.create({
+            if (!nextTaskExec) {
+                this.logger.log(`[Orchestration] Creating new record for node ${nextNode.id} (Type: ${nextNode.taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (isIfNode ? 'IF' : 'HTTP')))})`);
+                nextTaskExec = await this.prisma.taskExecution.create({
                     data: {
-                        taskId: (isUtility || isNested) ? null : nextNode.taskId,
+                        taskId: (isUtility || isNested || isIfNode) ? null : nextNode.taskId,
                         nodeId: nextNode.id,
                         workflowExecutionId,
-                        status: isNested ? 'RUNNING' : initialStatus,
+                        status: (isNested || isIfNode) ? 'RUNNING' : initialStatus,
                         targetWorkerId,
                         targetTags,
-                        startedAt: new Date(), // Initialize for FIFO sorting
+                        startedAt: new Date(),
                         input: { 
                             utility: isUtility,
                             nested: isNested,
-                            workflowVars, // Crucial for PWF VMA inspection
+                            ifNode: isIfNode,
+                            workflowVars, 
                             macros: orchestrationMacros,
                             subWorkflowId: isNested ? nextNode.taskId : undefined,
-                            taskType: (nextNode as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : 'HTTP')),
+                            taskType: (nextNode as any).taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (isIfNode ? 'IF' : 'HTTP'))),
                             variableExtraction: nextNode.variableExtraction || { vars: {} },
                             sanityChecks: nextNode.sanityChecks || [],
                             authorization: nextNode.authorization,
-                            inputMapping: nextNode.inputMapping // Important for WORKFLOW
+                            inputMapping: nextNode.inputMapping 
                         }
                     },
                 });
-                this.logger.log(`[Orchestration] Triggered next node: ${nextNode.id} (${nextNode.label}) type=${(nextNode as any).taskType}`);
-                
-                if (isNested) {
-                    await this.triggerSubWorkflow(nextTaskExec);
+            } else if (['PENDING', 'RUNNING'].includes(nextTaskExec.status)) {
+                this.logger.log(`[Orchestration] Resuming/Triggering existing record for node ${nextNode.id} (Status: ${nextTaskExec.status})`);
+            } else if (['NO_WORKER_FOUND'].includes(nextTaskExec.status)) {
+                this.logger.warn(`[Orchestration] Node ${nextNode.id} is already in NO_WORKER_FOUND status. Retrying...`);
+            } else {
+                this.logger.debug(`[Orchestration] Node ${nextNode.id} already has terminal record with status ${nextTaskExec.status}. Skipping.`);
+                continue;
+            }
+            
+            // Trigger Server-Side Execution Logic
+            if (isIfNode) {
+                this.logger.log(`[Orchestration] EVALUATING IF node: ${nextNode.id}`);
+                try {
+                    const evaluation = this.conditionEvaluator.evaluate(
+                        nextNode.conditionGroups || [],
+                        { ...workflowVars, macros: orchestrationMacros }
+                    );
+                    
+                    this.logger.log(`[Orchestration] IF node ${nextNode.id} EVALUATION RESULT: ${evaluation.result ? 'THEN' : 'ELSE'}`);
+                    this.logger.debug(`[Orchestration] IF node trace: ${JSON.stringify(evaluation.trace)}`);
+
+                    const completedIf = await this.prisma.taskExecution.update({
+                        where: { id: nextTaskExec.id },
+                        data: {
+                            status: 'BRANCHED',
+                            completedAt: new Date(),
+                            result: {
+                                branchResult: evaluation.result ? 'THEN' : 'ELSE',
+                                trace: evaluation.trace
+                            }
+                        }
+                    });
+                    
+                    await this.handleWorkflowOrchestration(completedIf);
+                } catch (err) {
+                    this.logger.error(`[Orchestration] IF node ${nextNode.id} evaluation CRASHED: ${err.message}`);
+                    await this.prisma.taskExecution.update({
+                        where: { id: nextTaskExec.id },
+                        data: {
+                            status: 'FAILED',
+                            completedAt: new Date(),
+                            error: `Conditional evaluation failed: ${err.message}`
+                        }
+                    });
                 }
-                // Utility tasks (VARIABLE) are created as PENDING (initialStatus) 
-                // and will be picked up by workers. No special case needed here.
+            } else if (isNested) {
+                this.logger.log(`[Orchestration] Launching Nested Workflow: ${nextNode.id}`);
+                await this.triggerSubWorkflow(nextTaskExec);
+            } else if (isUtility) {
+                this.logger.log(`[Orchestration] Launching Utility Node: ${nextNode.id}`);
+                await this.executeUtilityNode(nextTaskExec);
             }
         }
 
@@ -983,6 +1104,88 @@ export class WorkerService {
                 data: {
                     status: finalStatus,
                     duration: duration
+                }
+            });
+        }
+    }
+
+    async executeUtilityNode(taskExec: any) {
+        this.logger.log(`[Orchestration] Executing Utility Node server-side: ${taskExec.nodeId}`);
+        
+        const execution = await this.prisma.workflowExecution.findUnique({
+            where: { id: taskExec.workflowExecutionId },
+            include: { workflow: true }
+        });
+        if (!execution) return;
+
+        const { workflowVars, macros } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
+        const workflow = execution.workflow as any;
+        let nodes = workflow.nodes as any;
+        if (typeof nodes === 'string') nodes = JSON.parse(nodes);
+        if (!Array.isArray(nodes)) nodes = Object.values(nodes || {});
+        
+        const node = nodes.find((n: any) => n.id === taskExec.nodeId);
+        
+        if (!node) {
+            this.logger.error(`[Orchestration] Node definition not found for ${taskExec.nodeId}`);
+            return;
+        }
+
+        try {
+            const { transform } = await import('../../../../packages/shared-xform/xform_engine');
+            const { validateSpecYaml } = await import('../../../../packages/shared-xform/xform_validation');
+            
+            const results: Record<string, any> = {};
+            const variableInputs: Record<string, any> = {};
+            const extraction = node.variableExtraction || { vars: {} };
+            
+            const engine = new VariableEngine({
+                global: {},
+                workflow: workflowVars,
+                macros
+            });
+
+            for (const [key, def] of Object.entries(extraction.vars || {})) {
+                const d = def as any;
+                if (d.valueMode === 'transformer') {
+                    const spec = d.transformer?.specYaml || d.transformer?.spec || '';
+                    if (spec) {
+                        const validation = validateSpecYaml(spec);
+                        if (validation.ok) {
+                            let inputText = '';
+                            if (d.transformer.inputSource === 'variable' && d.transformer.inputVariable) {
+                                const resolvedInput = engine.evaluateExpression(d.transformer.inputVariable);
+                                inputText = typeof resolvedInput === 'object' ? JSON.stringify(resolvedInput) : String(resolvedInput || '');
+                                variableInputs[key] = resolvedInput;
+                            }
+                            results[key] = await transform(validation.spec, inputText, { 
+                                task: {}, workflow: workflowVars, global: {} 
+                            });
+                        }
+                    }
+                } else {
+                    results[key] = engine.resolve(String(d.value || ''));
+                }
+            }
+
+            const updated = await this.prisma.taskExecution.update({
+                where: { id: taskExec.id },
+                data: {
+                    status: 'SUCCESS',
+                    completedAt: new Date(),
+                    result: { variables: results, variableInputs }
+                }
+            });
+
+            await this.handleWorkflowOrchestration(updated);
+        } catch (err) {
+            this.logger.error(`[Orchestration] Utility node execution failed: ${err.message}`);
+            await this.prisma.taskExecution.update({
+                where: { id: taskExec.id },
+                data: {
+                    status: 'FAILED',
+                    completedAt: new Date(),
+                    error: err.message
                 }
             });
         }
