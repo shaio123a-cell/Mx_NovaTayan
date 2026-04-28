@@ -255,20 +255,11 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                         value={newVal}
                         onValueChange={setNewVal}
                         availableVars={availableUpstreamVars}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all font-mono pr-12"
+                        onInsertClick={!useParentInput ? () => {
+                            setPickerTarget('newVal');
+                            setShowVarPicker(true);
+                        } : undefined}
                     />
-                    {!useParentInput && (
-                        <button 
-                            onClick={() => {
-                                setPickerTarget('newVal');
-                                setShowVarPicker(true);
-                            }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-all z-10"
-                            title="Pick Variable"
-                        >
-                            <Zap size={14} fill="currentColor" />
-                        </button>
-                    )}
                 </div>
             </div>
             {showWorkflowInputToggle && (

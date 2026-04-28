@@ -1,22 +1,46 @@
-import React, { useRef, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useState, useMemo, forwardRef, useImperativeHandle, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { globalVarsApi } from '../api/globalVars';
+import { ActionPicker } from './ActionPicker';
+import { 
+    X, Search, Calculator, Type, Hash, Clock, 
+    Code, List, Settings, ChevronRight, Zap, Trash2, Check, Edit3 
+} from 'lucide-react';
 
 interface VariableAwareInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>, 'onChange'> {
     isTextarea?: boolean;
     onValueChange: (val: string) => void;
     availableVars?: (string | { name: string, taskName: string, value?: any })[];
+    onInsertClick?: () => void;
+    mode?: 'standard' | 'implicit';
 }
 
-export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ value, onValueChange, placeholder, isTextarea = false, availableVars, ...props }, ref) => {
+interface Region {
+    full: string;
+    expr: string;
+    start: number;
+    end: number;
+    isImplicit: boolean;
+}
+
+export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ value, onValueChange, placeholder, isTextarea = false, availableVars, onInsertClick, mode = 'standard', ...props }, ref) => {
     const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
     const [tooltip, setTooltip] = useState<{ text: string, x: number, y: number } | null>(null);
+    const [actionPicker, setActionPicker] = useState<{ x: number, y: number, regionIdx: number } | null>(null);
+    const [editingAction, setEditingAction] = useState<{ regionIdx: number, actionIdx: number, value: string, rect: DOMRect } | null>(null);
+    
     const containerRef = useRef<HTMLDivElement>(null);
     const mirrorRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<any>(null);
     const selectionRef = useRef<number | null>(null);
 
+    const [cursorPos, setCursorPos] = useState(0);
+    const handleCursorSync = () => {
+        if (inputRef.current) setCursorPos(inputRef.current.selectionStart);
+    };
+
     useImperativeHandle(ref, () => ({
+        get value() { return inputRef.current?.value; },
         get selectionStart() { return inputRef.current?.selectionStart; },
         get selectionEnd() { return inputRef.current?.selectionEnd; },
         setSelectionRange: (start: number, end: number) => inputRef.current?.setSelectionRange(start, end),
@@ -24,107 +48,254 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         insertTextAtCursor: (text: string) => {
             const input = inputRef.current;
             if (!input) return;
-            const start = input.selectionStart ?? 0;
-            const end = input.selectionEnd ?? 0;
+            let start = input.selectionStart ?? 0;
+            let end = input.selectionEnd ?? 0;
             const value = input.value;
+
+            // SMART-SNAP: If inserting an action, ensure we don't splice another expression
+            if (text.startsWith(' | ')) {
+                const region = regions.find(r => start > r.start && start <= r.end);
+                if (region) {
+                    // Snap to the end of the expression part (before }})
+                    // Find actual end of content before }}
+                    const closeBraces = value.indexOf('}}', region.start);
+                    if (closeBraces !== -1) {
+                        start = closeBraces;
+                        end = closeBraces;
+                    }
+                }
+            }
+
             const nextValue = value.substring(0, start) + text + value.substring(end);
             onValueChange(nextValue);
+            
             // Move cursor to after inserted text on next tick
+            const newPos = start + text.length;
             setTimeout(() => {
                 input.focus();
-                input.setSelectionRange(start + text.length, start + text.length);
+                input.setSelectionRange(newPos, newPos);
+                handleCursorSync();
             }, 0);
         }
     }));
 
     const strValue = String(value || '');
 
-    // Highlight regions
     const regions = useMemo(() => {
+        const val = String(value || '');
+        if (mode === 'implicit' && val.trim()) {
+            return [{ full: val, expr: val.trim(), start: 0, end: val.length, isImplicit: true }];
+        }
         const regex = /({{\s*(.+?)\s*}})/g;
         const res = [];
         let match;
-        while ((match = regex.exec(strValue)) !== null) {
-            res.push({
-                full: match[0],
-                expr: match[2].trim(),
-                start: match.index,
-                end: regex.lastIndex
-            });
+        while ((match = regex.exec(val)) !== null) {
+            res.push({ full: match[0], expr: match[2].trim(), start: match.index, end: regex.lastIndex, isImplicit: false });
         }
         return res;
-    }, [strValue]);
+    }, [value, mode]);
 
-    // Simple Recursive Resolver for UI Tooltips
-    const resolveVar = (expr: string, depth = 0): string => {
-        if (depth > 5) return '... (too deep)';
-        
-        // Check if it's a workflow or local variable from availableVars
-        if (availableVars && availableVars.length > 0) {
-            const varName = expr.replace(/^(workflow\.|local\.)/, '');
-            const found = availableVars.find(v => {
-                if (typeof v === 'string') return v === varName;
-                return v.name === varName;
-            });
-            
-            if (found) {
-                // For upstream variables, we can't resolve their actual values in the UI
-                // Just indicate they're available
-                if (typeof found === 'string') {
-                    return `[Workflow/Local: ${found}]`;
-                } else {
-                    const valPreview = found.value !== undefined && found.value !== null 
-                        ? ` = ${typeof found.value === 'object' ? JSON.stringify(found.value).substring(0, 50) + (JSON.stringify(found.value).length > 50 ? '...' : '') : String(found.value)}`
-                        : '';
-                    return `[From ${found.taskName}: ${found.name}]${valPreview}`;
-                }
-            }
-        }
-        
-        // Fall back to global variable resolution
-        const name = expr.startsWith('global.') ? expr.substring(7) : expr;
-        const v = globalVars?.find((gv: any) => gv.name === name);
-        if (!v) return 'Not found';
-        if (v.isSecret || v.type === 'secret') return '********';
-        
-        const val = String(v.value);
-        if (val.includes('{{')) {
-            return val.replace(/\{\{\s*(.+?)\s*\}\}/g, (match, innerExpr) => {
-                return resolveVar(innerExpr.trim(), depth + 1);
-            });
-        }
-        return val;
+    const findSpanUnderMouse = (x: number, y: number) => {
+        const elements = document.elementsFromPoint(x, y);
+        return elements.find(el => el.hasAttribute('data-region-idx'));
     };
 
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (!containerRef.current || !mirrorRef.current || regions.length === 0) {
-            setTooltip(null);
-            return;
-        }
+    const handleClick = (e: React.MouseEvent) => {
+        const span = findSpanUnderMouse(e.clientX, e.clientY) as HTMLElement;
+        if (span) {
+            const regionIdx = parseInt(span.dataset.regionIdx || '-1');
+            const actionIdx = parseInt(span.dataset.actionIdx || '-1');
+            const expr = span.dataset.variableExpr || '';
+            const rect = span.getBoundingClientRect();
 
-        const x = e.clientX;
-        const y = e.clientY;
-        
-        const input = inputRef.current;
-        if (input) {
-            // Hit detection: disable input briefly to hit mirror spans
-            const oldPE = input.style.pointerEvents;
-            input.style.pointerEvents = 'none';
-            mirrorRef.current.style.pointerEvents = 'auto';
-            const elements = document.elementsFromPoint(x, y);
-            input.style.pointerEvents = oldPE;
-            mirrorRef.current.style.pointerEvents = 'none';
-
-            const span = elements.find(el => (el as any).dataset?.variableExpr);
-            
-            if (span) {
-                const expr = (span as any).dataset.variableExpr;
-                const val = resolveVar(expr);
-                setTooltip({ text: val, x, y: y - 10 });
-            } else {
+            if (regionIdx !== -1) {
+                setEditingAction({ regionIdx, actionIdx, value: expr, rect });
+                setActionPicker(null);
                 setTooltip(null);
+                return;
             }
         }
+        setEditingAction(null);
+        setActionPicker(null);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Backspace') {
+            const input = inputRef.current;
+            if (!input || input.selectionStart !== input.selectionEnd) return;
+            const pos = input.selectionStart;
+            const region = regions.find(r => pos > r.start && pos <= r.end);
+            if (region && pos === region.end) {
+                e.preventDefault();
+                const newValue = strValue.substring(0, region.start) + strValue.substring(region.end);
+                onValueChange(newValue);
+            }
+        }
+    };
+
+    const handleActionClick = (e: React.MouseEvent, regionIdx: number, actionIdx: number, currentValue: string) => {
+        e.stopPropagation();
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        setEditingAction({ regionIdx, actionIdx, value: currentValue, rect });
+    };
+
+    const commitActionChange = (newValue: string, isDelete: boolean = false) => {
+        if (!editingAction) return;
+        const region = regions[editingAction.regionIdx];
+        const parts = region.expr.split('|').map(p => p.trim());
+        
+        if (isDelete) {
+            if (editingAction.actionIdx === -1) {
+                // Deleting the base variable deletes the whole thing
+                const nextValue = strValue.substring(0, region.start) + strValue.substring(region.end);
+                onValueChange(nextValue);
+                setEditingAction(null);
+                return;
+            }
+            parts.splice(editingAction.actionIdx + 1, 1);
+        } else {
+            if (editingAction.actionIdx === -1) {
+                parts[0] = newValue;
+            } else {
+                parts[editingAction.actionIdx + 1] = newValue;
+            }
+        }
+
+        const newExpr = parts.join(' | ');
+        const newFull = region.isImplicit ? newExpr : `{{ ${newExpr} }}`;
+        const nextValue = strValue.substring(0, region.start) + newFull + strValue.substring(region.end);
+        
+        onValueChange(nextValue);
+        if (isDelete || (!newValue.includes(':') && editingAction.actionIdx !== -1)) {
+            setEditingAction(null);
+        }
+    };
+
+    const renderHighlights = () => {
+        const result = [];
+        let lastIndex = 0;
+        const isPassword = (props as any).type === 'password';
+        const maskText = (text: string) => isPassword ? '●'.repeat(text.length) : text;
+        
+        regions.forEach((region, idx) => {
+            if (region.start > lastIndex) {
+                result.push(<span key={`text-${idx}`}>{maskText(strValue.substring(lastIndex, region.start))}</span>);
+            }
+
+            const expr = region.expr;
+            const parts = expr.split('|').map(s => s.trim());
+            const baseVar = parts[0];
+            const actions = parts.slice(1);
+
+            const isGlobal = baseVar.startsWith('global.');
+            const isWorkflow = baseVar.startsWith('workflow.');
+            const isLocal = baseVar.startsWith('local.');
+            
+            let isAvailable = false;
+            if (availableVars && !isGlobal && !isWorkflow && !isLocal) {
+                isAvailable = availableVars.some(v => {
+                    if (typeof v === 'string') return v === baseVar;
+                    return v.name === baseVar;
+                });
+            }
+
+            let bgColor = '#f3f4f6'; 
+            let textColor = '#1E40AF'; 
+            let borderColor = '#d1d5db';
+
+            if (region.isImplicit) {
+                bgColor = '#F1F5F9'; textColor = '#475569'; borderColor = '#E2E8F0';
+            } else if (isGlobal) {
+                bgColor = '#DBEAFE'; textColor = '#1E40AF'; borderColor = '#BFDBFE'; 
+            } else if (isWorkflow || baseVar.startsWith('HTTP.')) {
+                bgColor = '#FFEDD5'; textColor = '#9A3412'; borderColor = '#FED7AA'; 
+            } else if (isLocal || isAvailable) {
+                bgColor = '#F3E8FF'; textColor = '#6B21A8'; borderColor = '#E9D5FF';
+            }
+
+            // TRANSPARENT ANCHOR: Forced 1:1 mapping (scaled up for visibility)
+            const fullRawText = strValue.substring(region.start, region.end);
+            const charCount = fullRawText.length;
+            const totalWidth = charCount * 8.423;
+
+            result.push(
+                <span 
+                    key={`var-group-${idx}`} 
+                    className="relative inline-block"
+                    style={{ 
+                        pointerEvents: 'auto', 
+                        width: `${totalWidth}px`,
+                        height: '28px',
+                        verticalAlign: 'middle'
+                    }}
+                >
+                    {/* The Anchor: Strictly forced to match textarea font metrics */}
+                    <span 
+                        className="opacity-0 whitespace-pre absolute inset-0 select-none"
+                        style={{ 
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                            fontSize: '14px',
+                            letterSpacing: 'normal'
+                        }}
+                    >
+                        {fullRawText}
+                    </span>
+
+                    {/* The Visual Chip Layer: Now scaled up to match text size */}
+                    <div className="absolute inset-0 flex items-center overflow-visible pointer-events-none">
+                        <div className="flex items-center pointer-events-auto h-full w-full">
+                            <mark 
+                                data-region-idx={idx}
+                                data-action-idx={-1}
+                                data-variable-expr={baseVar}
+                                className="hover:shadow-md hover:z-10 transition-all group/chip flex items-center gap-1.5 whitespace-nowrap"
+                                style={{ 
+                                    backgroundColor: bgColor, color: textColor, padding: '0 8px', margin: '0 1px',
+                                    borderRadius: '6px', border: `1px solid ${borderColor}`,
+                                    fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                    height: '24px'
+                                }}
+                            >
+                                {region.isImplicit && <Code size={12} className="opacity-50" />}
+                                {baseVar}
+                            </mark>
+
+                            {actions.map((action, aidx) => {
+                                const [name, ...params] = action.split(':');
+                                const paramString = params.join(':').trim();
+                                return (
+                                    <React.Fragment key={aidx}>
+                                        <ChevronRight size={12} className="text-gray-300 mx-0.5" />
+                                        <mark 
+                                            data-region-idx={idx}
+                                            data-action-idx={aidx}
+                                            data-variable-expr={action}
+                                            className="hover:shadow-md hover:z-10 transition-all group/chip whitespace-nowrap"
+                                            style={{ 
+                                                backgroundColor: '#f8fafc', color: '#475569', padding: '0 8px', margin: '0 1px',
+                                                borderRadius: '6px', border: '1px solid #e2e8f0',
+                                                fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                                                height: '24px'
+                                            }}
+                                        >
+                                            {name.trim()}
+                                            {paramString && <span className="ml-1 text-[11px] text-blue-500 font-mono font-black">{paramString}</span>}
+                                        </mark>
+                                    </React.Fragment>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </span>
+            );
+            lastIndex = region.end;
+        });
+        
+        if (lastIndex < strValue.length) {
+            result.push(<span key="text-end">{maskText(strValue.substring(lastIndex))}</span>);
+        }
+        return result;
     };
 
     const handleScroll = (e: any) => {
@@ -134,89 +305,7 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         }
     };
 
-    const renderHighlights = () => {
-        const result = [];
-        let lastIndex = 0;
-        const isPassword = (props as any).type === 'password';
-        
-        const maskText = (text: string) => isPassword ? '●'.repeat(text.length) : text;
-        
-        regions.forEach((region, idx) => {
-            if (region.start > lastIndex) {
-                result.push(<span key={`text-${idx}`}>{maskText(strValue.substring(lastIndex, region.start))}</span>);
-            }
-
-            const expr = region.expr;
-            const isGlobal = expr.startsWith('global.');
-            const isWorkflow = expr.startsWith('workflow.');
-            const isLocal = expr.startsWith('local.');
-            
-            // Check if it's in availableVars (which could be plain names)
-            let isAvailable = false;
-            if (availableVars && !isGlobal && !isWorkflow && !isLocal) {
-                const varName = expr;
-                isAvailable = availableVars.some(v => {
-                    if (typeof v === 'string') return v === varName;
-                    return v.name === varName;
-                });
-            }
-
-            let bgColor = '#f3f4f6'; 
-            let textColor = '#1E40AF'; 
-            let borderColor = '#d1d5db';
-
-            if (isGlobal) {
-                bgColor = '#DBEAFE'; // blue-100
-                textColor = '#1E40AF'; // blue-800
-                borderColor = '#BFDBFE'; 
-            } else if (isWorkflow || expr.startsWith('HTTP.')) {
-                bgColor = '#FFEDD5'; // orange-100
-                textColor = '#9A3412'; // orange-800
-                borderColor = '#FED7AA'; 
-            } else if (isLocal || isAvailable) {
-                bgColor = '#F3E8FF'; // purple-100
-                textColor = '#6B21A8'; // purple-800
-                borderColor = '#E9D5FF';
-            }
-
-            result.push(
-                <mark 
-                    key={`var-${idx}`} 
-                    data-variable-expr={region.expr}
-                    style={{ 
-                        backgroundColor: bgColor, 
-                        color: textColor,
-                        padding: '0 2px',
-                        margin: '0 -1px',
-                        borderRadius: '3px',
-                        border: `1px solid ${borderColor}`,
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                        fontWeight: '600',
-                        fontStyle: 'normal',
-                        pointerEvents: 'auto'
-                    }}
-                >
-                    {region.full}
-                </mark>
-            );
-            lastIndex = region.end;
-        });
-
-        if (lastIndex < strValue.length) {
-            result.push(<span key="text-end">{maskText(strValue.substring(lastIndex))}</span>);
-        }
-        return result;
-    };
-
     const Component = isTextarea ? 'textarea' : 'input';
-
-    // Fix cursor jumping when value changes
-    React.useEffect(() => {
-        if (inputRef.current && selectionRef.current !== null) {
-            inputRef.current.setSelectionRange(selectionRef.current, selectionRef.current);
-            selectionRef.current = null;
-        }
-    });
 
     const baseStyles: React.CSSProperties = {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
@@ -233,79 +322,127 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
     return (
         <div 
             ref={containerRef}
-            className="relative w-full rounded-lg overflow-hidden border border-gray-200 focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-400 transition-all bg-white" 
-            onMouseMove={handleMouseMove}
+            className="relative w-full rounded-lg overflow-hidden border border-gray-200 focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-400 transition-all bg-white shadow-sm flex items-center" 
+            onMouseMove={(e) => {
+                if (!containerRef.current || !mirrorRef.current || regions.length === 0 || editingAction) {
+                    setTooltip(null);
+                    return;
+                }
+            }}
             onMouseLeave={() => setTooltip(null)}
+            onClick={handleClick}
         >
-            {/* Mirror Layer: Displays highlights and base text */}
-            <div 
-                ref={mirrorRef}
-                className="absolute inset-0 pointer-events-none scrollbar-hide"
-                style={{ 
-                    ...baseStyles,
-                    color: '#374151', // text-gray-700
-                    zIndex: 0,
-                    overflowY: isTextarea ? 'auto' : 'hidden',
-                    overflowX: 'hidden'
-                }}
-            >
-                {renderHighlights()}
-            </div>
-
-            {/* Input Layer: Captures input. Text is transparent so mirror shows through. */}
-            <Component 
-                {...props as any}
-                ref={inputRef}
-                value={strValue}
-                onChange={(e: any) => {
-                    selectionRef.current = e.target.selectionStart;
-                    onValueChange(e.target.value);
-                }}
-                onScroll={handleScroll}
-                placeholder={placeholder}
-                className="outline-none block w-full bg-transparent scrollbar-hide"
-                style={{ 
-                    ...baseStyles,
-                    position: 'relative',
-                    zIndex: 1,
-                    color: 'transparent', 
-                    WebkitTextFillColor: 'transparent',
-                    background: 'transparent',
-                    caretColor: '#111827',
-                    minHeight: isTextarea ? (props.style?.minHeight || '120px') : (props.style?.minHeight || '46px'),
-                    height: props.style?.height || (isTextarea ? 'auto' : '46px'),
-                    resize: isTextarea ? 'vertical' : 'none',
-                    ...props.style
-                }}
-            />
-
-            {/* Tooltip Overlay */}
-            {tooltip && (
+            <div className="relative flex-1 min-w-0 h-full">
                 <div 
-                    className="fixed z-[999999] bg-gray-900/95 backdrop-blur-sm text-white px-3 py-2 rounded-lg text-xs font-bold shadow-2xl pointer-events-none animate-in fade-in zoom-in-95 duration-100 border border-white/10"
+                    ref={mirrorRef}
+                    className="absolute inset-0 pointer-events-none scrollbar-hide"
                     style={{ 
-                        left: tooltip.x, 
-                        top: tooltip.y, 
-                        transform: 'translate(-50%, -100%)' 
+                        ...baseStyles, color: '#374151', zIndex: 0,
+                        overflowY: isTextarea ? 'auto' : 'hidden', overflowX: 'hidden'
                     }}
                 >
-                    <div className="flex flex-col gap-0.5">
-                        <span className="text-blue-300 text-[9px] uppercase tracking-wider font-extrabold">Value Preview</span>
-                        <span className="font-mono text-white text-sm break-all max-w-[320px]">{tooltip.text}</span>
+                    {renderHighlights()}
+                </div>
+
+                <Component 
+                    {...props as any}
+                    ref={inputRef}
+                    value={strValue}
+                    onChange={(e: any) => onValueChange(e.target.value)}
+                    onScroll={handleScroll}
+                    onKeyDown={handleKeyDown}
+                    placeholder={placeholder}
+                    className="outline-none block w-full bg-transparent scrollbar-hide"
+                    style={{ 
+                        ...baseStyles, position: 'relative', zIndex: 1,
+                        color: 'transparent', WebkitTextFillColor: 'transparent',
+                        background: 'transparent', caretColor: '#111827',
+                        minHeight: isTextarea ? (props.style?.minHeight || '120px') : (props.style?.minHeight || '46px'),
+                        height: props.style?.height || (isTextarea ? 'auto' : '46px'),
+                        resize: isTextarea ? 'vertical' : 'none',
+                        ...props.style
+                    }}
+                />
+            </div>
+            
+            <div className="px-2 shrink-0 border-l border-gray-100 flex gap-1 h-full items-center bg-gray-50/50">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onInsertClick?.(); }}
+                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-md transition-all group"
+                >
+                    <Zap size={16} className="group-hover:rotate-90 transition-transform fill-current" />
+                </button>
+            </div>
+
+            {/* THE ACTION HUB - The new interactive portal */}
+            {editingAction && (
+                <div 
+                    className="fixed z-[2000000] animate-in fade-in zoom-in duration-200"
+                    style={{ 
+                        left: editingAction.rect.left + (editingAction.rect.width / 2),
+                        top: editingAction.rect.top - 12,
+                        transform: 'translate(-50%, -100%)'
+                    }}
+                >
+                    <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-2 min-w-[200px] flex flex-col gap-2 ring-1 ring-black/5">
+                        <div className="flex items-center justify-between px-1">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
+                                <Edit3 size={10} /> Edit {editingAction.actionIdx === -1 ? 'Variable' : 'Action'}
+                            </span>
+                            <button onClick={() => setEditingAction(null)} className="text-gray-400 hover:text-gray-600"><X size={12}/></button>
+                        </div>
+
+                        <div className="flex gap-2 items-center">
+                            <div className="flex-1">
+                                {editingAction.value.includes(':') || editingAction.actionIdx === -1 ? (
+                                    <input 
+                                        autoFocus
+                                        className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono font-bold focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all"
+                                        value={editingAction.value}
+                                        onChange={(e) => setEditingAction({ ...editingAction, value: e.target.value })}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') commitActionChange(editingAction.value);
+                                            if (e.key === 'Escape') setEditingAction(null);
+                                        }}
+                                    />
+                                ) : (
+                                    <div className="text-xs text-gray-500 px-2 py-1 italic font-medium">Simple operation (no parameters)</div>
+                                )}
+                            </div>
+                            <button 
+                                onClick={() => commitActionChange(editingAction.value)}
+                                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                            >
+                                <Check size={14} />
+                            </button>
+                            <button 
+                                onClick={() => commitActionChange('', true)}
+                                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm"
+                                title="Delete Operation"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                        
+                        {editingAction.actionIdx === -1 && (
+                            <div className="text-[9px] text-amber-600 font-bold px-1 flex items-center gap-1">
+                                <Search size={9} /> Base variable name
+                            </div>
+                        )}
+                        {editingAction.value.includes(':') && (
+                            <div className="text-[9px] text-blue-600 font-bold px-1 flex items-center gap-1">
+                                <Calculator size={9} /> Add parameters after the colon
+                            </div>
+                        )}
                     </div>
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-gray-900/95" />
+                    {/* Popover Arrow */}
+                    <div className="absolute top-[calc(100%-1px)] left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-b border-r border-gray-100 rotate-45 shadow-[3px_3px_5px_rgba(0,0,0,0.03)]" />
                 </div>
             )}
 
             <style>{`
                 .scrollbar-hide::-webkit-scrollbar { display: none; }
                 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-                
-                /* Selection visibility */
-                .scrollbar-hide::selection {
-                    background: rgba(59, 130, 246, 0.25) !important;
-                    -webkit-text-fill-color: #1e3a8a !important;
-                }
             `}</style>
         </div>
     );

@@ -1599,8 +1599,10 @@ function ConditionBuilder({ groups, onChange, availableVars, onRequestVariable }
                                     >
                                         <option value="==">==</option>
                                         <option value="!=">!=</option>
-                                        <option value=">">&gt;</option>
-                                        <option value="<">&lt;</option>
+                                        <option value=">">{">"}</option>
+                                        <option value=">=">{">="}</option>
+                                        <option value="<">{"<"}</option>
+                                        <option value="<=">{"<="}</option>
                                         <option value="contains">contains</option>
                                         <option value="regex">regex</option>
                                         <option value="exists">exists</option>
@@ -1659,10 +1661,16 @@ function MaterialInput({ label, value, onChange, placeholder, type = 'text', ena
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
-            {enableVariables ? (
-                <div className="relative">
-                    <VariableAwareInput ref={inputRef} value={value} onValueChange={onChange} placeholder={placeholder} type={type} disabled={disabled} availableVars={availableVars} />
-                    <button onClick={() => onRequestVariable && onRequestVariable((val: string) => {
+            <div className="relative">
+                <VariableAwareInput 
+                    ref={inputRef} 
+                    value={value} 
+                    onValueChange={onChange} 
+                    placeholder={placeholder} 
+                    type={type} 
+                    disabled={disabled} 
+                    availableVars={availableVars} 
+                    onInsertClick={enableVariables ? () => onRequestVariable?.((val: string) => {
                         const el = inputRef.current;
                         if (el) {
                             const start = el.selectionStart || 0;
@@ -1671,13 +1679,9 @@ function MaterialInput({ label, value, onChange, placeholder, type = 'text', ena
                             onChange(newVal);
                             setTimeout(() => { el.focus(); el.setSelectionRange(start + val.length, start + val.length); }, 0);
                         } else onChange((value || '') + val);
-                    })} disabled={disabled} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', color: disabled ? '#ccc' : '#1976D2', cursor: disabled ? 'default' : 'pointer', padding: '4px', zIndex: 10 }}>
-                        <Zap size={14} fill="currentColor" />
-                    </button>
-                </div>
-            ) : (
-                <input ref={inputRef} type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} disabled={disabled} className="material-box" style={{ opacity: disabled ? 0.6 : 1 }} />
-            )}
+                    }) : undefined}
+                />
+            </div>
         </div>
     )
 }
@@ -1687,10 +1691,17 @@ function MaterialTextArea({ label, value, onChange, height = '100px', mono = fal
     return (
         <div style={{ position: 'relative' }}>
             <label className="material-label">{label}</label>
-            {enableVariables ? (
-                <div className="relative">
-                    <VariableAwareInput ref={areaRef} isTextarea={true} value={value} onValueChange={onChange} placeholder={placeholder} style={{ minHeight: '46px', height }} disabled={disabled} availableVars={availableVars} />
-                    <button onClick={() => onRequestVariable && onRequestVariable((val: string) => {
+            <div className="relative">
+                <VariableAwareInput 
+                    ref={areaRef} 
+                    isTextarea={true} 
+                    value={value} 
+                    onValueChange={onChange} 
+                    placeholder={placeholder} 
+                    style={{ minHeight: '46px', height }} 
+                    disabled={disabled} 
+                    availableVars={availableVars} 
+                    onInsertClick={enableVariables ? () => onRequestVariable?.((val: string) => {
                         const el = areaRef.current;
                         if (el) {
                             const start = el.selectionStart || 0;
@@ -1699,13 +1710,9 @@ function MaterialTextArea({ label, value, onChange, height = '100px', mono = fal
                             onChange(newVal);
                             setTimeout(() => { el.focus(); el.setSelectionRange(start + val.length, start + val.length); }, 0);
                         } else onChange((value || '') + val);
-                    })} disabled={disabled} style={{ position: 'absolute', right: '12px', top: '12px', border: 'none', background: 'white', color: disabled ? '#ccc' : '#1976D2', cursor: disabled ? 'default' : 'pointer', padding: '4px', borderRadius: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', zIndex: 10 }}>
-                        <Zap size={14} fill="currentColor" />
-                    </button>
-                </div>
-            ) : (
-                <textarea ref={areaRef} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder} style={{ height, minHeight: '46px', resize: 'vertical', fontFamily: mono ? 'monospace' : 'inherit', opacity: disabled ? 0.6 : 1 }} className="material-box" />
-            )}
+                    }) : undefined}
+                />
+            </div>
         </div>
     )
 }

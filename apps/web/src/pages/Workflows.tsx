@@ -422,11 +422,11 @@ function WorkflowCard({ workflow, index, isDragged, onDragStart, onDragOver, onD
                     >
                         <h4 className="font-bold text-xl text-gray-800 mb-1 group-hover/title:text-[#1976D2] transition-colors truncate">{workflow.name}</h4>
                     </Link>
-                    <div className="flex items-center gap-4 pointer-events-none">
-                        <span className="text-xs font-medium text-gray-400">
+                    <div className="flex items-center gap-4">
+                        <span className="text-xs font-medium text-gray-400 pointer-events-none">
                             {workflow.nodes?.length || 0} nodes • v{workflow.version}
                         </span>
-                        <div className="h-3 w-px bg-gray-200" />
+                        <div className="h-3 w-px bg-gray-200 pointer-events-none" />
                         <ExecutionHistoryCubes workflow={workflow} />
                     </div>
                 </div>

@@ -9,9 +9,15 @@
 - WFM - Is the Workflow Meta shelf opened from the WF Inspect 
 - WFI - is Workflow Inspect Shelf 
 - VMA - Variables Manipulation Activity - is a task that is used to manipulate variables in a workflow
+- WFD - Workflow Designer 
 
 # Scheuling 
 - ADS - Advanced Scheduling from in a WFA in te deisgner of WF
 - CAL - Calendar 
+
+# Workflow Utilities 
+- IFN - If node - is a node that is used to evaluate a condition and return a value based on the condition
+- VMA - Variables Manipulation Activity - is a node that is used to manipulate variables in a workflow
+- 
 
 

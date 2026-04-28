@@ -50,16 +50,42 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
   if (!open) return null;
 
   const handleVarSelect = (val: string) => {
-      if (pickerMode === 'input' && inputVarRef.current) {
-          inputVarRef.current.insertTextAtCursor(val);
-      } else if (pickerMode === 'spec' && specInputRef.current) {
-          specInputRef.current.insertTextAtCursor(val);
+      let toInsert = val;
+      const target = pickerMode === 'spec' ? specInputRef.current : inputVarRef.current;
+      const currentVal = (target?.value || '').trim();
+
+      if (pickerMode === 'spec') {
+          // Detect if we are adding a logic operational helper
+          const isLogic = val.includes('|') || 
+                          ['length', 'count', 'upper', 'lower', 'round'].some(k => val.toLowerCase().includes(k));
+          
+          if (!currentVal.includes('{{')) {
+              if (currentVal === '') {
+                  // Case 1: Empty field -> Wrap the item
+                  toInsert = val.includes('{{') ? val : `{{ ${val.trim().replace(/^\| /,'')} }}`;
+              } else if (isLogic) {
+                  // Case 2: Naked text exists (like $.name) -> Scoop and wrap the WHOLE thing
+                  const logicPart = val.startsWith(' ') || val.startsWith('|') ? val : ` | ${val}`;
+                  const wrapped = `{{ ${currentVal}${logicPart} }}`;
+                  setSpec(wrapped);
+                  setDirty(true);
+                  setShowVarPicker(false);
+                  return;
+              } else if (!val.includes('{{')) {
+                  // Case 3: Naked var added to naked field (standard var insertion)
+                  toInsert = `{{ ${val} }}`;
+              }
+          }
+      }
+
+      if (target) {
+          target.insertTextAtCursor(toInsert);
       } else {
           // Fallback
           if (pickerMode === 'input') {
-              setInputVariable(prev => prev + val);
+              setInputVariable(prev => prev + toInsert);
           } else {
-              setSpec(prev => prev + val);
+              setSpec(prev => prev + toInsert);
           }
       }
       setDirty(true);
@@ -134,79 +160,67 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
           });
       }
 
-      // Interpolate the spec first if it contains variables
-       let interpolatedSpec = spec;
-       try {
-           const { interpolateExpr } = await import('shared-xform/xform_vars');
-           if (spec.includes('{{')) {
-               // We need to resolve recursively for deep variables
-               interpolatedSpec = interpolateExpr(spec, context, tab === 'jmespath' ? 'jmespath' : tab === 'xpath' ? 'xpath' : 'css');
-           }
-       } catch (e: any) {
-           setError('Interpolation Error: ' + e.message);
-           return; 
-       }
+      // INITIALIZE ENGINE
+      const { VariableEngine } = await import('shared-xform/variable_engine');
+      const ve = new VariableEngine(context);
+      let testInput = input;
 
-       // Resolve input if it comes from a variable
-       let testInput = input;
-       if (inputSource === 'variable' && inputVariable) {
-           try {
-               const { interpolateExpr } = await import('shared-xform/xform_vars');
-               testInput = interpolateExpr(inputVariable, context, 'jmespath');
-           } catch (e: any) {
-               setError('Input Resolution Error: ' + e.message);
-               return;
-           }
-       }
-       
-      // Engine Execution
+      // ENGINE EXECUTION
+      let result: any = null;
+      let engineQuery = spec;
+      let actions: string[] = [];
+
+      // Extract actions if present
+      const inner = spec.includes('{{') ? spec.match(/{{(.*?)}}/)?.[1] || spec : spec;
+      const parts = inner.split('|').map(s => s.trim());
+      engineQuery = parts[0];
+      actions = parts.slice(1);
+
       if (tab === 'regex') {
-        const re = new RegExp(interpolatedSpec);
-        const m = testInput.match(re);
-        setTestResult(m ? JSON.stringify(m, null, 2) : "No match");
-        return;
+        try {
+            const re = new RegExp(engineQuery);
+            const m = testInput.match(re);
+            result = m ? (m[1] !== undefined ? m[1] : m[0]) : null;
+        } catch (e: any) {
+            setError('Regex Error: ' + e.message); return;
+        }
+      } else if (tab === 'jmespath') {
+          try {
+            let parsed = null;
+            try { parsed = (typeof testInput === 'string' && (testInput.trim().startsWith('{') || testInput.trim().startsWith('['))) ? JSON.parse(testInput) : testInput; } catch(e) { parsed = testInput; }
+            const sel: any = await import('shared-xform/xform_selectors_json');
+            result = sel.evalExpr(parsed, engineQuery);
+          } catch (e: any) {
+            setError('JSONPath Error: ' + e.message); return;
+          }
+      } else if (tab === 'constant') {
+          // If constant contains variables, resolve them first
+          result = spec.includes('{{') ? ve.resolve(spec) : engineQuery;
+      } else {
+          // VARIABLE MODE: Resolve the base variable (e.g. 'epoch' or '$.name')
+          result = ve.evaluateExpression(engineQuery);
       }
 
-      const eng: any = await import('shared-xform/xform_engine');
-      try {
-        if (tab === 'jmespath') {
-          let parsed = null;
+      // Apply Remaining Actions
+      if (actions.length > 0) {
           try {
-              // If testInput is stringified JSON, parse it for JMESPath
-              parsed = (typeof testInput === 'string' && (testInput.trim().startsWith('{') || testInput.trim().startsWith('['))) 
-                       ? JSON.parse(testInput) 
-                       : testInput;
-          } catch(e) {
-              parsed = testInput;
+              // Apply actions to the result of the query
+              // FIXED: Correctly merge macros so 'value' is not overwritten by context spread
+              const veInternal = new VariableEngine({ 
+                  ...context,
+                  macros: { 
+                      ...(context.macros || {}),
+                      value: result 
+                  } 
+              });
+              let actionChain = `value | ${actions.join(' | ')}`;
+              result = veInternal.evaluateExpression(actionChain);
+          } catch (e: any) {
+              setError('Action Error: ' + e.message); return;
           }
-          const sel: any = await import('shared-xform/xform_selectors_json');
-          const res = sel.evalExpr(parsed, interpolatedSpec);
-          setTestResult(typeof res === 'object' ? JSON.stringify(res, null, 2) : String(res));
-          return;
-        }
-        if (tab === 'advanced') {
-          // Pass raw spec (which is YAML) and let engine handle it? 
-          // Actually if user interpolates YAML structure it might break validation if we interpolate first.
-          // But if we don't, engine must support context.
-          // xform_engine does support context. 
-          const validate = eng.validateSpec || eng.validateSpecYaml || eng.validateSpecFromYaml;
-          const validated = validate ? await validate(spec) : null;
-          const out = await (eng.transform || eng.run || eng.execute)(validated?.spec || spec, testInput, context, { previewLimit: 20 });
-          setTestResult(typeof out === 'string' ? out : JSON.stringify(out, null, 2));
-          return;
-        }
-        if (tab === 'constant') {
-            setTestResult(interpolatedSpec);
-            return;
-        }
-        if (tab === 'none') {
-            setTestResult(typeof testInput === 'object' ? JSON.stringify(testInput, null, 2) : String(testInput));
-            return;
-        }
-        setTestResult('No engine available to test this transformer in the browser.');
-      } catch (e: any) {
-        setError(String(e?.message || e));
       }
+
+      setTestResult(typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result));
     } catch (e: any) {
       setError(String(e?.message || e));
     }
@@ -305,9 +319,9 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                             {!readOnly && (
                                 <button 
                                     onClick={() => openPicker('input')}
-                                    className="px-3 py-2 bg-purple-100 text-purple-700 font-bold text-sm rounded-md hover:bg-purple-200 transition-colors flex items-center gap-2 h-[46px]"
+                                    className="px-3 py-2 bg-purple-100 text-purple-700 font-bold text-sm rounded-md hover:bg-purple-200 transition-colors flex items-center h-[46px]"
                                 >
-                                    <Plus size={14}/> Pick
+                                    Pick
                                 </button>
                             )}
                         </div>
@@ -340,9 +354,9 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                         <label className="text-xs font-semibold text-gray-500">Expression / Pattern</label>
                         <button 
                             onClick={() => openPicker('spec')}
-                            className="text-[10px] text-blue-600 font-bold flex items-center gap-1 hover:bg-blue-50 px-2 py-0.5 rounded transition-colors"
+                            className="text-[10px] text-blue-600 font-bold flex items-center hover:bg-blue-50 px-2 py-0.5 rounded transition-colors"
                         >
-                            <Plus size={10}/> Insert Variable
+                            Add Variable or Action
                         </button>
                     </div>
                     {tab !== 'none' ? (
@@ -350,6 +364,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                             ref={specInputRef}
                             value={spec} 
                             onValueChange={val => { if (!readOnly) { setSpec(val); setDirty(true); } }} 
+                            onInsertClick={() => openPicker('spec')}
                             isTextarea={true}
                             disabled={readOnly}
                             placeholder={tab === 'advanced' ? "mappings:\n  - name: id\n    expr: {{global.prefix}}-{{uuid}}" : "Expression..."}

@@ -110,6 +110,15 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
 
     // If the time has come, execute but update next time
     if (binding.nextFireAt && DateTime.fromJSDate(binding.nextFireAt) <= now) {
+      if (!workflow.enabled) {
+        // Skip execution if workflow is disabled, but still advance the target time
+        const next = DateUtils.calculateNextFire(schedule, now.plus({ seconds: 1 }));
+        await this.prisma.workflowScheduleBinding.update({
+          where: { id: binding.id },
+          data: { nextFireAt: next?.toJSDate() }
+        });
+        return;
+      }
       // Logic continues below
     } else {
       return;

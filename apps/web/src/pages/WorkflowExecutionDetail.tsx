@@ -23,7 +23,12 @@ import {
     ArrowRight,
     Box,
     FileText,
-    Bell
+    Bell,
+    ChevronDown,
+    ChevronUp,
+    GripVertical,
+    ArrowUp,
+    ArrowDown
 } from 'lucide-react'
 
 function WorkflowExecutionDetail() {
@@ -37,6 +42,38 @@ function WorkflowExecutionDetail() {
     const [inspectedVarName, setInspectedVarName] = useState<string | null>(null);
     const [inspectedVarPayload, setInspectedVarPayload] = useState<{ value: any; transformer?: any; input?: any } | null>(null);
     const [expandedSections, setExpandedSections] = useState<string[]>(['definition', 'results']);
+    
+    // WFI Result Section Management
+    const [wfiSectionOrder, setWfiSectionOrder] = useState<string[]>(() => {
+        const saved = localStorage.getItem('wfi_section_order');
+        return saved ? JSON.parse(saved) : ['manipulation', 'response', 'trace'];
+    });
+    const [wfiExpanded, setWfiExpanded] = useState<Record<string, boolean>>(() => {
+        const saved = localStorage.getItem('wfi_section_expanded');
+        return saved ? JSON.parse(saved) : { manipulation: true, response: true, trace: false };
+    });
+
+    useEffect(() => {
+        localStorage.setItem('wfi_section_order', JSON.stringify(wfiSectionOrder));
+    }, [wfiSectionOrder]);
+
+    useEffect(() => {
+        localStorage.setItem('wfi_section_expanded', JSON.stringify(wfiExpanded));
+    }, [wfiExpanded]);
+
+    const moveSection = (index: number, direction: 'up' | 'down') => {
+        const newOrder = [...wfiSectionOrder];
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= newOrder.length) return;
+        const temp = newOrder[index];
+        newOrder[index] = newOrder[targetIndex];
+        newOrder[targetIndex] = temp;
+        setWfiSectionOrder(newOrder);
+    };
+
+    const toggleWfiSection = (id: string) => {
+        setWfiExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+    };
 
     const queryClient = useQueryClient();
 
@@ -945,96 +982,180 @@ function WorkflowExecutionDetail() {
                                     </section>
                                 )}
 
-                                {selectedTask.taskType === 'HTTP' && (
-                                    <section>
-                                        <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Response Raw Data</h4>
-                                        {selectedTask.error && (
-                                            <div className="mb-4 bg-red-50 border border-red-100 p-4 rounded-xl flex gap-3">
-                                                <AlertCircle className="text-red-500 shrink-0" size={16} />
-                                                <div className="text-xs text-red-900 font-mono italic">{selectedTask.error}</div>
-                                            </div>
-                                        )}
-                                        <div className="bg-slate-50 border border-slate-200 p-6 rounded-2xl shadow-inner max-h-[500px] overflow-auto">
-                                            <pre className="text-xs text-slate-600">
-                                                {selectedTask.result?.data ? (typeof selectedTask.result.data === 'string' ? selectedTask.result.data : JSON.stringify(selectedTask.result.data, null, 2)) : '---'}
-                                            </pre>
-                                        </div>
-                                    </section>
-                                )}
-
-                                {(selectedTask.taskType === 'VARIABLE' || selectedTask.taskType === 'WORKFLOW' || Object.keys(selectedTask.result?.variables || {}).filter(k => !k.startsWith('__')).length > 0) && (
-                                <section>
-                                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                                        <Zap size={14} className="text-amber-500" /> Manipulation results
-                                    </h4>
+                                {wfiSectionOrder.map((sectionId, index) => {
+                                    const isExpanded = wfiExpanded[sectionId];
+                                    const isFirst = index === 0;
+                                    const isLast = index === wfiSectionOrder.length - 1;
                                     
-                                    <div className="space-y-4">
-                                        {Object.keys(selectedTask.result?.variables || {}).filter(k => !k.startsWith('__')).length > 0 ? (
-                                            <div className="border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/30">
-                                                <table className="w-full text-left border-collapse">
-                                                    <thead>
-                                                        <tr className="bg-slate-100/50">
-                                                            <th className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Variable Key</th>
-                                                            <th className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Computed Value</th>
-                                                            <th className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Action</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {(() => {
-                                                            const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
-                                                            const allVars = selectedTask.result.variables || {};
-                                                            
-                                                            // For WORKFLOW tasks, only show declared output variables
-                                                            let varsToShow = Object.entries(allVars).filter(([k]) => !k.startsWith('__'));
-                                                            if (selectedTask.taskType === 'WORKFLOW') {
-                                                                const declaredOutputs = nodeDef?.outputVariables || selectedTask.task?.outputVariables || {};
-                                                                const declaredKeys = Object.keys(declaredOutputs);
-                                                                varsToShow = varsToShow.filter(([k]) => declaredKeys.includes(k));
-                                                            }
-                                                            
-                                                            return varsToShow.map(([key, val]) => (
-                                                            <tr key={key} className="group hover:bg-white transition-colors">
-                                                                <td className="px-4 py-3 border-b border-slate-100/50">
-                                                                    <div className="text-[10px] font-black text-slate-600 font-mono tracking-tight">{key}</div>
-                                                                </td>
-                                                                <td className="px-4 py-3 border-b border-slate-100/50">
-                                                                    <div className="font-mono text-[10px] text-slate-800 break-all max-w-[200px]" title={String(val)}>{String(val)}</div>
-                                                                </td>
-                                                                    <td className="px-4 py-3 border-b border-slate-100/50 text-right">
-                                                                        <button 
-                                                                            onClick={() => {
+                                    if (sectionId === 'response' && selectedTask.taskType === 'HTTP') {
+                                        return (
+                                            <section key="response" className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all">
+                                                <div 
+                                                    className={`px-6 py-4 flex items-center justify-between cursor-pointer select-none transition-colors ${isExpanded ? 'bg-slate-50/50' : 'bg-white'}`}
+                                                    onClick={() => toggleWfiSection('response')}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="flex flex-col gap-0.5">
+                                                            {!isFirst && <button onClick={(e) => { e.stopPropagation(); moveSection(index, 'up'); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-300 hover:text-primary-500 transition-colors"><ArrowUp size={10} /></button>}
+                                                            {!isLast && <button onClick={(e) => { e.stopPropagation(); moveSection(index, 'down'); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-300 hover:text-primary-500 transition-colors"><ArrowDown size={10} /></button>}
+                                                        </div>
+                                                        <div className="w-[1px] h-4 bg-slate-100 mx-1" />
+                                                        <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                            <ArrowRight size={12} /> Response Raw Data
+                                                        </h4>
+                                                    </div>
+                                                    {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                                                </div>
+                                                {isExpanded && (
+                                                    <div className="p-6 border-t border-slate-50 bg-white animate-in slide-in-from-top-1 duration-200">
+                                                        {selectedTask.error && (
+                                                            <div className="mb-4 bg-red-50 border border-red-100 p-4 rounded-xl flex gap-3">
+                                                                <AlertCircle className="text-red-500 shrink-0" size={16} />
+                                                                <div className="text-xs text-red-900 font-mono italic">{selectedTask.error}</div>
+                                                            </div>
+                                                        )}
+                                                        <div className="bg-slate-50 border border-slate-200 p-6 rounded-2xl shadow-inner max-h-[500px] overflow-auto">
+                                                            <pre className="text-xs text-slate-600">
+                                                                {selectedTask.result?.data ? (typeof selectedTask.result.data === 'string' ? selectedTask.result.data : JSON.stringify(selectedTask.result.data, null, 2)) : '---'}
+                                                            </pre>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </section>
+                                        );
+                                    }
+
+                                    if (sectionId === 'manipulation' && (selectedTask.taskType === 'VARIABLE' || selectedTask.taskType === 'WORKFLOW' || Object.keys(selectedTask.result?.variables || {}).filter(k => !k.startsWith('__')).length > 0)) {
+                                        return (
+                                            <section key="manipulation" className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all">
+                                                <div 
+                                                    className={`px-6 py-4 flex items-center justify-between cursor-pointer select-none transition-colors ${isExpanded ? 'bg-slate-50/50' : 'bg-white'}`}
+                                                    onClick={() => toggleWfiSection('manipulation')}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="flex flex-col gap-0.5">
+                                                            {!isFirst && <button onClick={(e) => { e.stopPropagation(); moveSection(index, 'up'); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-300 hover:text-primary-500 transition-colors"><ArrowUp size={10} /></button>}
+                                                            {!isLast && <button onClick={(e) => { e.stopPropagation(); moveSection(index, 'down'); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-300 hover:text-primary-500 transition-colors"><ArrowDown size={10} /></button>}
+                                                        </div>
+                                                        <div className="w-[1px] h-4 bg-slate-100 mx-1" />
+                                                        <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                            <Zap size={14} className="text-amber-500" /> Manipulation results
+                                                        </h4>
+                                                    </div>
+                                                    {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                                                </div>
+                                                {isExpanded && (
+                                                    <div className="p-6 border-t border-slate-50 bg-white animate-in slide-in-from-top-1 duration-200">
+                                                        <div className="space-y-4">
+                                                            {Object.keys(selectedTask.result?.variables || {}).filter(k => !k.startsWith('__')).length > 0 ? (
+                                                                <div className="border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/30">
+                                                                    <table className="w-full text-left border-collapse">
+                                                                        <thead>
+                                                                            <tr className="bg-slate-100/50">
+                                                                                <th className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Variable Key</th>
+                                                                                <th className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Computed Value</th>
+                                                                                <th className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Action</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {(() => {
                                                                                 const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
-                                                                                const libVars = selectedTask.task?.variableExtraction?.vars || {};
-                                                                                const instVars = { ...(selectedTask.input?.variableExtraction?.vars || {}), ...(nodeDef?.variableExtraction?.vars || {}) };
-                                                                                const savedDef = { ...libVars, ...instVars }[key];
-                                                                                const transformer = (savedDef && typeof savedDef === 'object' && savedDef.valueMode === 'transformer') ? savedDef.transformer : null;
-                                                                                let inputUsed = selectedTask.result?.data ?? selectedTask.task?.command?.body ?? null;
-                                                                                if (transformer && transformer.inputSource === 'variable' && transformer.inputVariable) inputUsed = selectedTask.result?.variables?.[transformer.inputVariable] ?? null;
+                                                                                const allVars = selectedTask.result.variables || {};
                                                                                 
-                                                                                setInspectedVarName(key);
-                                                                                setInspectedVarPayload({ value: val, transformer, input: selectedTask.result?.variableInputs?.[key] ?? inputUsed });
-                                                                                setInspectorVarOpen(true);
-                                                                            }}
-                                                                            className="p-1.5 transition-all bg-primary-50 text-primary-600 rounded-md hover:bg-primary-600 hover:text-white shadow-sm"
-                                                                            title="Inspect Trace"
-                                                                        >
-                                                                            <Zap size={12} />
-                                                                        </button>
-                                                                    </td>
-                                                            </tr>
-                                                            ));
-                                                        })()}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        ) : (
-                                            <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
-                                                No manipulated variables were produced in this cycle.
-                                            </div>
-                                        )}
-                                    </div>
-                                </section>
-                                )}
+                                                                                // For WORKFLOW tasks, only show declared output variables
+                                                                                let varsToShow = Object.entries(allVars).filter(([k]) => !k.startsWith('__'));
+                                                                                if (selectedTask.taskType === 'WORKFLOW') {
+                                                                                    const declaredOutputs = nodeDef?.outputVariables || selectedTask.task?.outputVariables || {};
+                                                                                    const declaredKeys = Object.keys(declaredOutputs);
+                                                                                    varsToShow = varsToShow.filter(([k]) => declaredKeys.includes(k));
+                                                                                }
+                                                                                
+                                                                                return varsToShow.map(([key, val]) => (
+                                                                                <tr key={key} className="group hover:bg-white transition-colors">
+                                                                                    <td className="px-4 py-3 border-b border-slate-100/50">
+                                                                                        <div className="text-[10px] font-black text-slate-600 font-mono tracking-tight">{key}</div>
+                                                                                    </td>
+                                                                                    <td className="px-4 py-3 border-b border-slate-100/50">
+                                                                                        <div className="font-mono text-[10px] text-slate-800 break-all max-w-[200px]" title={String(val)}>{String(val)}</div>
+                                                                                    </td>
+                                                                                        <td className="px-4 py-3 border-b border-slate-100/50 text-right">
+                                                                                            <button 
+                                                                                                onClick={() => {
+                                                                                                    const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
+                                                                                                    const libVars = selectedTask.task?.variableExtraction?.vars || {};
+                                                                                                    const instVars = { ...(selectedTask.input?.variableExtraction?.vars || {}), ...(nodeDef?.variableExtraction?.vars || {}) };
+                                                                                                    const savedDef = { ...libVars, ...instVars }[key];
+                                                                                                    const transformer = (savedDef && typeof savedDef === 'object' && savedDef.valueMode === 'transformer') ? savedDef.transformer : null;
+                                                                                                    let inputUsed = selectedTask.result?.data ?? selectedTask.task?.command?.body ?? null;
+                                                                                                    if (transformer && transformer.inputSource === 'variable' && transformer.inputVariable) inputUsed = selectedTask.result?.variables?.[transformer.inputVariable] ?? null;
+                                                                                                    
+                                                                                                    setInspectedVarName(key);
+                                                                                                    setInspectedVarPayload({ value: val, transformer, input: selectedTask.result?.variableInputs?.[key] ?? inputUsed });
+                                                                                                    setInspectorVarOpen(true);
+                                                                                                }}
+                                                                                                className="p-1.5 transition-all bg-primary-50 text-primary-600 rounded-md hover:bg-primary-600 hover:text-white shadow-sm"
+                                                                                                title="Inspect Trace"
+                                                                                            >
+                                                                                                <Zap size={12} />
+                                                                                            </button>
+                                                                                        </td>
+                                                                                </tr>
+                                                                                ));
+                                                                            })()}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
+                                                                    No manipulated variables were produced in this cycle.
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </section>
+                                        );
+                                    }
+
+                                    if (sectionId === 'trace') {
+                                        return (
+                                            <section key="trace" className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all">
+                                                <div 
+                                                    className={`px-6 py-4 flex items-center justify-between cursor-pointer select-none transition-colors ${isExpanded ? 'bg-slate-50/50' : 'bg-white'}`}
+                                                    onClick={() => toggleWfiSection('trace')}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="flex flex-col gap-0.5">
+                                                            {!isFirst && <button onClick={(e) => { e.stopPropagation(); moveSection(index, 'up'); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-300 hover:text-primary-500 transition-colors"><ArrowUp size={10} /></button>}
+                                                            {!isLast && <button onClick={(e) => { e.stopPropagation(); moveSection(index, 'down'); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-300 hover:text-primary-500 transition-colors"><ArrowDown size={10} /></button>}
+                                                        </div>
+                                                        <div className="w-[1px] h-4 bg-slate-100 mx-1" />
+                                                        <h4 className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] flex items-center gap-2 font-mono">
+                                                            <FileText size={10} /> RAW DB TRACE (DEBUG)
+                                                        </h4>
+                                                    </div>
+                                                    {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                                                </div>
+                                                {isExpanded && (
+                                                    <div className="p-6 border-t border-slate-50 bg-white animate-in slide-in-from-top-1 duration-200">
+                                                        <div className="space-y-4">
+                                                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 overflow-auto">
+                                                                <div className="text-[8px] font-black text-slate-400 uppercase mb-2">Input JSON</div>
+                                                                <pre className="text-[9px] text-slate-500 font-mono leading-tight">{JSON.stringify(selectedTask.input, null, 2)}</pre>
+                                                            </div>
+                                                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 overflow-auto">
+                                                                <div className="text-[8px] font-black text-slate-400 uppercase mb-2">Result JSON</div>
+                                                                <pre className="text-[9px] text-slate-500 font-mono leading-tight">{JSON.stringify(selectedTask.result, null, 2)}</pre>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </section>
+                                        );
+                                    }
+
+                                    return null;
+                                })}
 
                                 {selectedTask.taskType !== 'VARIABLE' && (
                                     <section>
@@ -1070,22 +1191,6 @@ function WorkflowExecutionDetail() {
                                         </div>
                                     </section>
                                 )}
-                                {/* DEBUG RAW TRACE */}
-                                <section className="mt-12 pt-8 border-t border-slate-100">
-                                    <h4 className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] mb-4 flex items-center gap-2 font-mono">
-                                        <FileText size={10} /> RAW DB TRACE (DEBUG)
-                                    </h4>
-                                    <div className="space-y-4">
-                                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 overflow-auto">
-                                            <div className="text-[8px] font-black text-slate-400 uppercase mb-2">Input JSON</div>
-                                            <pre className="text-[9px] text-slate-500 font-mono leading-tight">{JSON.stringify(selectedTask.input, null, 2)}</pre>
-                                        </div>
-                                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 overflow-auto">
-                                            <div className="text-[8px] font-black text-slate-400 uppercase mb-2">Result JSON</div>
-                                            <pre className="text-[9px] text-slate-500 font-mono leading-tight">{JSON.stringify(selectedTask.result, null, 2)}</pre>
-                                        </div>
-                                    </div>
-                                </section>
                             </div>
                         )}
                     </div>

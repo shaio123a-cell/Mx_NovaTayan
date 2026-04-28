@@ -1,7 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { globalVarsApi } from '../api/globalVars';
-import { ChevronRight, Globe, Box, Workflow, X, Zap, Folder, Search } from 'lucide-react';
+import { 
+    ChevronRight, Globe, Box, Workflow, X, Zap, 
+    Folder, Search, Calculator, Globe as GlobeIcon 
+} from 'lucide-react';
+import { ACTIONS } from '../constants/action_definitions';
 
 type VarSource = { name: string, taskName: string; source?: 'workflow' | 'task' | 'workflow_input' | 'workflow_output' };
 
@@ -11,6 +15,29 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
     const [expanded, setExpanded] = useState<Record<string, boolean>>({ 'global': false, 'task': false, 'workflow': false, 'local': true, 'macros': false, 'utils': false, 'trigger': true });
 
     const toggle = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+
+    // UNIFIED ROW RENDERING - Single source of truth for fonts and spacing
+    const renderRow = (item: { label: string, value: string, icon: any, description?: string, color?: string, isMono?: boolean }) => {
+        const Icon = item.icon || Box;
+        return (
+            <button 
+                key={item.value}
+                onClick={() => onSelect(item.value)}
+                className="w-full text-left p-2 rounded-lg hover:bg-blue-50 group/item transition-all border border-transparent hover:border-blue-100"
+            >
+                <div className="flex items-center gap-3">
+                    <div className="p-1.5 bg-gray-50 rounded group-hover/item:bg-white group-hover/item:shadow-sm transition-colors">
+                        <Icon size={12} className={item.color || "text-gray-500"} />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <div className={`text-xs font-bold text-gray-700 group-hover/item:text-blue-700 truncate ${item.isMono ? 'font-mono' : ''}`}>{item.label}</div>
+                        <div className="text-[10px] text-gray-400 truncate opacity-70 font-medium">{item.description || 'Variable'}</div>
+                    </div>
+                    <ChevronRight size={10} className="text-gray-300 opacity-0 group-hover/item:opacity-100 transition-opacity" />
+                </div>
+            </button>
+        );
+    };
 
     // Group Global Vars
     const groupedGlobalVars = useMemo(() => {
@@ -25,6 +52,12 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
     }, [globalVars]);
 
     const systemSections = [
+        {
+            id: 'utils',
+            label: 'Operations & Actions',
+            icon: Calculator,
+            items: ACTIONS.map(a => ({ label: a.label, value: ` | ${a.template}`, icon: a.icon, description: a.description }))
+        },
         { 
             id: 'task', 
             label: 'HTTP Response', 
@@ -66,25 +99,6 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
                 { label: 'Last Body', value: '{{HTTP.last.body}}' },
                 { label: 'Last Status', value: '{{HTTP.last.status}}' }
             ]
-        },
-        {
-            id: 'utils',
-            label: 'Utility Helpers',
-            icon: Folder,
-            items: [
-                { label: 'Upper Case', value: '{{ value | upper }}' },
-                { label: 'Lower Case', value: '{{ value | lower }}' },
-                { label: 'Format Date', value: '{{ epoch | formatDate:\'YYYY-MM-DD HH:mm:ss\' }}' },
-                { label: 'To Epoch (sec)', value: '{{ date | toEpoch:\'s\' }}' },
-                { label: 'To Epoch (ms)', value: '{{ date | toEpoch:\'ms\' }}' },
-                { label: 'JSON Path', value: '{{ payload | jsonPath:$.token }}' },
-                { label: 'Coalesce', value: '{{ val1 | coalesce:val2,fallback }}' },
-                { label: 'To JSON', value: '{{ obj | toJson }}' },
-                { label: 'From JSON', value: '{{ str | fromJson }}' },
-                { label: 'Base64 Enc', value: '{{ x | base64enc }}' },
-                { label: 'URL Enc', value: '{{ x | urlenc }}' },
-                { label: 'SHA256', value: '{{ x | sha256 }}' }
-            ]
         }
     ];
 
@@ -107,8 +121,6 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
         const normalizedTrigger = (triggerVars || []).map(v => ({
             label: `${v} payload`,
             value: v, // No double curly braces for trigger mapping usually, or {{body.path}}? 
-                      // Actually for webhook mapping, they often type body.key directly or with {{}}. 
-                      // Let's provide it in a way that works for both.
             icon: Globe
         })).filter(v => v.label.toLowerCase().includes(query));
 
@@ -122,7 +134,10 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
         // Process System Sections
         const filteredSystem = systemSections.map(s => ({
             ...s,
-            items: s.items.filter(i => i.label.toLowerCase().includes(query))
+            items: s.items.filter(i => 
+                i.label.toLowerCase().includes(query) || 
+                (i as any).description?.toLowerCase().includes(query)
+            )
         })).filter(s => s.items.length > 0);
 
         return {
@@ -135,16 +150,13 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
 
     // Automatically expand sections with results when searching
     useEffect(() => {
-        if (searchQuery.length > 1) {
-            setExpanded({
-                local: filteredSections.local.length > 0,
-                trigger: filteredSections.trigger.length > 0,
-                global: Object.keys(filteredSections.globals).length > 0,
-                task: filteredSections.system.some(s => s.id === 'task'),
-                workflow: filteredSections.system.some(s => s.id === 'workflow'),
-                macros: filteredSections.system.some(s => s.id === 'macros'),
-                utils: filteredSections.system.some(s => s.id === 'utils')
-            });
+        if (searchQuery.length >= 1) {
+            const newExpanded: any = {};
+            if (filteredSections.local.length > 0) newExpanded.local = true;
+            if (filteredSections.trigger.length > 0) newExpanded.trigger = true;
+            if (Object.keys(filteredSections.globals).length > 0) newExpanded.global = true;
+            filteredSections.system.forEach(s => { newExpanded[s.id] = true; });
+            setExpanded(newExpanded);
         }
     }, [filteredSections, searchQuery]);
 
@@ -209,48 +221,22 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
                             <span className="ml-auto text-[10px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{filteredSections.local.length}</span>
                         </button>
                         {expanded['local'] && (
-                            <div className="ml-6 space-y-1 mt-1 border-l border-gray-100 pl-2">
+                            <div className="ml-6 space-y-0.5 mt-1 border-l border-gray-100 pl-2">
                                 {filteredSections.local.map((item: any) => {
-                                    const isWorkflowSource = ['workflow', 'workflow_input', 'workflow_output'].includes(item.source);
-                                    let bgColor = 'hover:bg-blue-50';
-                                    let textColor = 'text-gray-600';
-                                    let subColor = 'text-gray-400 group-hover/item:text-blue-400';
-                                    let icon = <Box size={11} className="text-blue-500 shrink-0" />;
+                                    let icon = Box;
+                                    let color = "text-blue-500";
+                                    if (item.source === 'workflow_input') { icon = Zap; color = "text-amber-500"; }
+                                    else if (item.source === 'workflow_output') { icon = Workflow; color = "text-indigo-500"; }
+                                    else if (item.source === 'workflow') { icon = Workflow; color = "text-purple-500"; }
 
-                                    if (item.source === 'workflow_input') {
-                                        bgColor = 'hover:bg-amber-50';
-                                        textColor = 'text-amber-700 font-bold';
-                                        subColor = 'text-amber-400';
-                                        icon = <Zap size={11} className="text-amber-500 shrink-0" />;
-                                    } else if (item.source === 'workflow_output') {
-                                        bgColor = 'hover:bg-indigo-50';
-                                        textColor = 'text-indigo-700 font-bold';
-                                        subColor = 'text-indigo-400';
-                                        icon = <Workflow size={11} className="text-indigo-500 shrink-0" />;
-                                    } else if (item.source === 'workflow') {
-                                        bgColor = 'hover:bg-purple-50';
-                                        textColor = 'text-purple-700';
-                                        subColor = 'text-purple-400';
-                                        icon = <Workflow size={11} className="text-purple-500 shrink-0" />;
-                                    }
-
-                                    return (
-                                        <button 
-                                            key={item.value + Math.random()} 
-                                            onClick={() => onSelect(item.value)} 
-                                            className={`w-full text-left text-xs p-2 rounded transition-all group/item relative ${bgColor} ${textColor}`}
-                                            title={`${item.value}\nSource: ${item.taskName}`}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                {icon}
-                                                <div className="font-mono truncate">{item.label}</div>
-                                            </div>
-                                            <div className={`text-[9px] font-medium truncate uppercase tracking-tighter mt-0.5 ${subColor}`}>
-                                                {isWorkflowSource && <span className="mr-1">⚡</span>}
-                                                {item.taskName}
-                                            </div>
-                                        </button>
-                                    );
+                                    return renderRow({
+                                        label: item.label,
+                                        value: item.value,
+                                        icon: icon,
+                                        color: color,
+                                        description: item.taskName,
+                                        isMono: true
+                                    });
                                 })}
                             </div>
                         )}
@@ -273,11 +259,14 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
                                             <Folder size={10}/> {group}
                                         </div>
                                         <div className="pl-2 mt-1 space-y-0.5">
-                                            {vars.map((v: any) => (
-                                                <button key={v.id} onClick={() => onSelect(`{{global.${v.name}}}`)} className="w-full text-left text-xs text-gray-600 hover:text-green-700 hover:bg-green-50 p-1.5 rounded transition-colors truncate font-mono">
-                                                    {v.name}
-                                                </button>
-                                            ))}
+                                            {vars.map((v: any) => renderRow({
+                                                label: v.name,
+                                                value: `{{global.${v.name}}}`,
+                                                icon: GlobeIcon,
+                                                color: "text-green-500",
+                                                description: `Global: ${group}`,
+                                                isMono: true
+                                            }))}
                                         </div>
                                     </div>
                                 ))}
@@ -295,12 +284,14 @@ export function VariablePicker({ onSelect, onClose, localVars = [], triggerVars 
                             <span className="text-sm font-semibold text-gray-700">{section.label}</span>
                         </button>
                         {expanded[section.id] && (
-                            <div className="ml-6 space-y-1 mt-1 border-l border-gray-100 pl-2">
-                                {section.items.map((item: any) => (
-                                    <button key={item.value} onClick={() => onSelect(item.value)} className="w-full text-left text-xs text-gray-600 hover:text-purple-700 hover:bg-purple-50 p-1.5 rounded transition-colors truncate font-mono" title={item.value}>
-                                        {item.label}
-                                    </button>
-                                ))}
+                            <div className="ml-6 space-y-0.5 mt-1 border-l border-gray-100 pl-2">
+                                {section.items.map((item: any) => renderRow({
+                                    label: item.label,
+                                    value: item.value,
+                                    icon: item.icon || section.icon,
+                                    description: item.description || section.label,
+                                    color: section.id === 'utils' ? 'text-indigo-500' : 'text-purple-500'
+                                }))}
                             </div>
                         )}
                     </div>

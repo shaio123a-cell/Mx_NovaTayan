@@ -269,6 +269,88 @@ export class VariableEngine {
     switch (helperName) {
       case 'upper': return String(value).toUpperCase();
       case 'lower': return String(value).toLowerCase();
+      case 'length': {
+          if (Array.isArray(value)) return value.length;
+          if (typeof value === 'object' && value !== null) return Object.keys(value).length;
+          return String(value || '').length;
+      }
+      case 'countWords': {
+          const s = String(value || '').trim();
+          if (!s) return 0;
+          return s.split(/\s+/).length;
+      }
+      case 'countMatches': {
+          const s = String(value || '');
+          const match = argsString.trim();
+          if (!match || !s) return 0;
+          // Escape regex special chars in match string to avoid errors if searching for things like '.'
+          const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return (s.match(new RegExp(escaped, 'g')) || []).length;
+      }
+      case 'countUnique': {
+          if (!Array.isArray(value)) return 0;
+          return new Set(value).size;
+      }
+      case 'count': {
+          if (Array.isArray(value)) return value.length;
+          const s = String(value || '').trim();
+          if (!s) return 0;
+          return s.split(/\s+/).length;
+      }
+      case 'sum': {
+          if (!Array.isArray(value)) return 0;
+          return value.reduce((a, b) => a + (Number(b) || 0), 0);
+      }
+      case 'avg': {
+          if (!Array.isArray(value) || value.length === 0) return 0;
+          const sum = value.reduce((a, b) => a + (Number(b) || 0), 0);
+          return sum / value.length;
+      }
+      case 'min': {
+          if (!Array.isArray(value) || value.length === 0) return 0;
+          return Math.min(...value.map(v => Number(v) || 0));
+      }
+      case 'max': {
+          if (!Array.isArray(value) || value.length === 0) return 0;
+          return Math.max(...value.map(v => Number(v) || 0));
+      }
+      case 'math': {
+          // Usage: | math: * 1.15  or  | math: + 10
+          const expr = argsString.trim();
+          const val = Number(value) || 0;
+          if (!expr) return val;
+          try {
+              // Basic sanitization: only allow math operators and numbers
+              if (!/^[+\-*/%().0-9\s]+$/.test(expr)) return val;
+              // Prepend value if it starts with an operator
+              const fullExpr = /^[+\-*/%]/.test(expr) ? `${val} ${expr}` : expr;
+              // eslint-disable-next-line no-eval
+              return eval(fullExpr);
+          } catch (e) {
+              return val;
+          }
+      }
+      case 'abs': return Math.abs(Number(value) || 0);
+      case 'round': return Math.round(Number(value) || 0);
+      case 'ceil': return Math.ceil(Number(value) || 0);
+      case 'floor': return Math.floor(Number(value) || 0);
+      case 'xpath': {
+          try {
+              const { selectNodes, evalXPath } = require('./xform_selectors_xml');
+              const xmlText = typeof value === 'string' ? value : JSON.stringify(value);
+              // If args[0] is root and args[1] is selection
+              const root = args[1] ? args[0] : '/*';
+              const selector = args[1] || args[0];
+              const nodes = selectNodes(xmlText, root);
+              if (nodes && nodes.length > 0) {
+                  const res = evalXPath(nodes[0], selector);
+                  return typeof res === 'object' ? JSON.stringify(res) : String(res);
+              }
+              return '';
+          } catch (e) {
+              return '';
+          }
+      }
       case 'jsonPath': 
         try {
             const jmespath = require('jmespath');

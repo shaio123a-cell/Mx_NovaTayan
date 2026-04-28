@@ -81,9 +81,11 @@ export class DateUtils {
         const cronStr = (payload.cron || '').trim();
         if (!cronStr) return null;
         try {
-          // In this TypeScript configuration, 'cronParser' is imported directly
-          // as the CronExpressionParser class, so we call .parse() directly on it.
-          const interval = (cronParser as any).parse(cronStr, {
+          let parserFn = (cronParser as any).parseExpression || (cronParser as any).default?.parseExpression;
+          if (!parserFn) {
+            parserFn = (cronParser as any).CronExpressionParser?.parse;
+          }
+          const interval = parserFn(cronStr, {
             currentDate: fromInZone.toJSDate(),
             tz: timezone
           });

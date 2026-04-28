@@ -30,12 +30,24 @@ export function evalExpr(row: any, expr: string): any {
   const toJmes = (e: string) => {
     if (!e) return e;
     if (e === '$' || e === '$.') return '';
-    if (e.startsWith('$.')) return e.slice(2);
-    if (e.startsWith('$')) return e.slice(1);
-    return e;
+    let out = e;
+    if (e.startsWith('$.')) out = e.slice(2);
+    else if (e.startsWith('$')) out = e.slice(1);
+    return out;
   };
+
   if (expr === '$' || expr === '$.') return row;
   const jmes = toJmes(expr);
   if (jmes === '') return row;
-  return jmespath.search(row, jmes);
+  
+  let result = jmespath.search(row, jmes);
+  
+  // SMARTER FALLBACK: If result is null/undefined and we are querying an array
+  // but didn't use projection, try projecting automatically. 
+  // e.g. input is [{name: 'A'}], query is 'name' -> try '[].name'
+  if ((result === null || result === undefined) && Array.isArray(row) && !jmes.startsWith('[') && !jmes.includes('[].')) {
+     result = jmespath.search(row, `[].${jmes}`);
+  }
+  
+  return result;
 }
