@@ -1138,33 +1138,67 @@ export class WorkerService {
             const results: Record<string, any> = {};
             const variableInputs: Record<string, any> = {};
             const extraction = node.variableExtraction || { vars: {} };
+            const varDefs = extraction.vars || {};
             
-            const engine = new VariableEngine({
-                global: {},
+            const globalVars = await this.globalVarsService.findAllResolved();
+            const varContext = {
+                global: globalVars || {},
                 workflow: workflowVars,
-                macros
-            });
+                macros: {
+                    ...macros,
+                    "task.name": node.name || node.id,
+                    "task.id": node.id
+                },
+                task: results // Allow variables to reference each other
+            };
 
-            for (const [key, def] of Object.entries(extraction.vars || {})) {
-                const d = def as any;
-                if (d.valueMode === 'transformer') {
-                    const spec = d.transformer?.specYaml || d.transformer?.spec || '';
-                    if (spec) {
-                        const validation = validateSpecYaml(spec);
-                        if (validation.ok) {
-                            let inputText = '';
-                            if (d.transformer.inputSource === 'variable' && d.transformer.inputVariable) {
-                                const resolvedInput = engine.evaluateExpression(d.transformer.inputVariable);
-                                inputText = typeof resolvedInput === 'object' ? JSON.stringify(resolvedInput) : String(resolvedInput || '');
-                                variableInputs[key] = resolvedInput;
+            const engine = new VariableEngine(varContext);
+            const varNames = varDefs.__order || Object.keys(varDefs).filter(k => !k.startsWith('__'));
+
+            for (const key of varNames) {
+                const def = varDefs[key];
+                if (!def) continue;
+
+                this.logger.log(`[VMA API] Processing '${key}'...`);
+
+                if (def.valueMode === 'transformer') {
+                    const t = def.transformer || {};
+                    const type = (t.type || '').toLowerCase();
+
+                    if (type === 'constant') {
+                        const val = t.hasOwnProperty('value') ? t.value : (t.hasOwnProperty('spec') ? t.spec : t.specYaml);
+                        const resolved = typeof val === 'string' ? engine.resolve(val) : val;
+                        this.logger.log(`[VMA API] Constant resolution for '${key}': '${val}' -> '${resolved}'`);
+                        results[key] = resolved;
+                    } else if (type === 'none' || t.inputSource === 'variable') {
+                        const inputVal = t.inputVariable ? engine.resolve(t.inputVariable) : '';
+                        this.logger.log(`[VMA API] Variable resolution for '${key}': '${t.inputVariable}' -> '${inputVal}'`);
+                        results[key] = inputVal;
+                    } else {
+                        // Fallback to transform engine for complex types (JMESPath, etc)
+                        const spec = t.specYaml || t.spec || '';
+                        if (spec) {
+                            const validation = validateSpecYaml(spec);
+                            if (validation.ok) {
+                                let inputText = '';
+                                if (t.inputSource === 'variable' && t.inputVariable) {
+                                    const resolvedInput = engine.resolve(t.inputVariable);
+                                    inputText = typeof resolvedInput === 'object' ? JSON.stringify(resolvedInput) : String(resolvedInput || '');
+                                }
+                                results[key] = await transform(validation.spec, inputText, varContext);
+                                this.logger.log(`[VMA API] Transform resolution for '${key}' (type: ${type}) completed.`);
                             }
-                            results[key] = await transform(validation.spec, inputText, { 
-                                task: {}, workflow: workflowVars, global: {} 
-                            });
                         }
                     }
+                } else if (def.valueMode === 'parent') {
+                    const parentVal = workflowVars[key];
+                    results[key] = parentVal !== undefined ? parentVal : (def.defaultValue || null);
+                    this.logger.log(`[VMA API] Parent resolution for '${key}': ${JSON.stringify(results[key])}`);
                 } else {
-                    results[key] = engine.resolve(String(d.value || ''));
+                    const val = typeof def === 'string' ? def : (def.value !== undefined ? def.value : def);
+                    const resolved = typeof val === 'string' ? engine.resolve(val) : val;
+                    this.logger.log(`[VMA API] Direct resolution for '${key}': '${val}' -> '${resolved}'`);
+                    results[key] = resolved;
                 }
             }
 

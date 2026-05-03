@@ -251,6 +251,7 @@ export function VariableManager({ value, onChange, usedNames = [], availableUpst
                 <div className="relative">
                     <VariableAwareInput
                         ref={newValInputRef}
+                        expandable
                         placeholder={useParentInput ? "Supplied By Parent" : "Omit if using transformer"}
                         value={newVal}
                         onValueChange={setNewVal}

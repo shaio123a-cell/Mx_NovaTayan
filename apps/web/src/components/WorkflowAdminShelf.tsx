@@ -518,12 +518,12 @@ export function WorkflowAdminShelf({ workflowId, availableVars = [], draftMetada
                                         <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
                                             <div>
                                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Cron Expression</label>
-                                                <input 
-                                                    type="text"
+                                                <VariableAwareInput 
                                                     value={scheduling.cron}
-                                                    onChange={(e) => handleSaveBasicScheduling({ ...scheduling, cron: e.target.value })}
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono text-blue-600 focus:outline-none focus:border-blue-500"
+                                                    onValueChange={(val) => handleSaveBasicScheduling({ ...scheduling, cron: val })}
                                                     placeholder="0 * * * *"
+                                                    style={{ fontSize: '14px' }}
+                                                    availableVars={availableVars}
                                                 />
                                                 <p className="mt-1.5 text-[10px] text-slate-400 font-medium tracking-tight">Format: min hour day-of-month month day-of-week</p>
                                             </div>

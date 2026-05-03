@@ -224,36 +224,83 @@ export class VariableEngine {
   }
 
   private getMacro(name: string): any {
-    // Check custom macros in context?
-    if (this.context.macros && name in this.context.macros) return this.context.macros[name];
+    // Standardize name: allow both "now" and "global.now" to resolve to the same macro
+    let lowerName = name.startsWith('global.') ? name.substring(7) : name;
+    lowerName = lowerName.toLowerCase();
 
-    // System macros
-    switch (name) {
+    // 1. DYNAMIC ARITHMETIC (e.g., now-5m, epoch+1h, today-2d)
+    const arithmeticMatch = lowerName.match(/^(now|epoch|epochms|epochsec|today|yesterday|tomorrow)([+\-])(\d+)([smhd])$/);
+    if (arithmeticMatch) {
+        const [_, base, op, val, unit] = arithmeticMatch;
+        let date = new Date();
+        
+        // Adjust for tomorrow/yesterday bases
+        if (base === 'yesterday') date.setDate(date.getDate() - 1);
+        if (base === 'tomorrow') date.setDate(date.getDate() + 1);
+
+        const amount = parseInt(val) * (op === '-' ? -1 : 1);
+        const msPerUnit = { s: 1000, m: 60000, h: 3600000, d: 86400000 }[unit as 's'|'m'|'h'|'d'];
+        date = new Date(date.getTime() + (amount * msPerUnit));
+
+        if (base.startsWith('epoch')) {
+            const ts = date.getTime();
+            return (base === 'epochms') ? ts : Math.floor(ts / 1000);
+        }
+        if (base === 'today' || base === 'yesterday' || base === 'tomorrow') {
+            return date.toISOString().split('T')[0];
+        }
+        return date.toISOString();
+    }
+
+    // 2. CONTEXT MACROS (Strictly prioritize non-empty values)
+    if (this.context.macros) {
+        const val1 = this.context.macros[lowerName];
+        if (val1 !== undefined && val1 !== null && val1 !== '') return val1;
+        const val2 = this.context.macros[name];
+        if (val2 !== undefined && val2 !== null && val2 !== '') return val2;
+    }
+
+    // 3. SYSTEM MACROS (Standard)
+    switch (lowerName) {
       case 'now': return new Date().toISOString();
-      case 'epoch': return Math.floor(Date.now() / 1000);
-      case 'epochMs': return Date.now();
-      case 'uuid': return uuidv4();
+      case 'now_fs': return new Date().toISOString().replace(/[:.]/g, '-');
+      case 'epoch': 
+      case 'epochsec': return Math.floor(Date.now() / 1000);
+      case 'epochms': return Date.now();
+      case 'uuid': 
+      case 'guid': return uuidv4();
+      case 'random_hex': return Math.random().toString(16).substring(2, 10);
+      case 'today': return new Date().toISOString().split('T')[0];
+      case 'yesterday': {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        return d.toISOString().split('T')[0];
+      }
+      case 'tomorrow': {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        return d.toISOString().split('T')[0];
+      }
+      case 'random': return Math.floor(Math.random() * 1000000);
       case 'env': return process.env.NODE_ENV || 'production';
-      case 'appVer': return '0.1.0'; 
+      case 'appver': return '0.1.0'; 
       case 'region': return process.env.REGION || 'local';
       case 'task.name': return this.context.task?.name || this.context.macros?.['task.name'];
       case 'task.id': return this.context.task?.id || this.context.macros?.['task.id'];
       case 'workflow.name': return this.context.workflow?.name || this.context.macros?.['workflow.name'];
       case 'workflow.id': return this.context.workflow?.id || this.context.macros?.['workflow.id'];
-      case 'workflow.executionId': return this.context.workflow?.executionId || this.context.macros?.['workflow.executionId'];
-      case 'workflow.lastExecutionEpoch': return this.context.workflow?.lastExecutionEpoch || this.context.macros?.['workflow.lastExecutionEpoch'];
-      case 'workflow.lastSuccessEpoch': return this.context.workflow?.lastSuccessEpoch || this.context.macros?.['workflow.lastSuccessEpoch'];
-      case 'workflow.lastFailedEpoch': return this.context.workflow?.lastFailedEpoch || this.context.macros?.['workflow.lastFailedEpoch'];
-      case 'workflow.lastCancelledEpoch': return this.context.workflow?.lastCancelledEpoch || this.context.macros?.['workflow.lastCancelledEpoch'];
-      case 'workflow.lastSuccessDuration': return this.context.workflow?.lastSuccessDuration || this.context.macros?.['workflow.lastSuccessDuration'];
+      case 'workflow.executionid': return this.context.workflow?.executionId || this.context.macros?.['workflow.executionId'];
+      case 'workflow.lastexecutionepoch': return this.context.workflow?.lastExecutionEpoch || this.context.macros?.['workflow.lastExecutionEpoch'];
+      case 'workflow.lastsuccessepoch': return this.context.workflow?.lastSuccessEpoch || this.context.macros?.['workflow.lastSuccessEpoch'];
+      case 'workflow.lastfailedepoch': return this.context.workflow?.lastFailedEpoch || this.context.macros?.['workflow.lastFailedEpoch'];
+      case 'workflow.lastcancelledepoch': return this.context.workflow?.lastCancelledEpoch || this.context.macros?.['workflow.lastCancelledEpoch'];
+      case 'workflow.lastsuccessduration': return this.context.workflow?.lastSuccessDuration || this.context.macros?.['workflow.lastSuccessDuration'];
       default: 
-        if (name.startsWith('HTTP.')) {
-            // Support HTTP.<taskName>.status, HTTP.<taskName>.body.path, HTTP.last.body, HTTP.<taskName>.duration
-            return this.getValue(this.context.macros, name.substring(5));
+        if (lowerName.startsWith('http.')) {
+            return this.getValue(this.context.macros, lowerName.substring(5));
         }
-        if (name.startsWith('Task.')) {
-            // Support Task.<taskName>.status, Task.<taskName>.duration, Task.<taskName>.lastSuccessDuration
-            return this.getValue(this.context.macros, name.substring(5));
+        if (lowerName.startsWith('task.')) {
+            return this.getValue(this.context.macros, lowerName.substring(5));
         }
         return undefined;
     }
@@ -365,10 +412,34 @@ export class VariableEngine {
              if (fallback !== null && fallback !== undefined && fallback !== '') return fallback;
         }
         return null;
+      case 'trim': return String(value || '').trim();
+      case 'mask': {
+          const s = String(value || '');
+          const n = Number(args[0]) || 4;
+          if (s.length <= n) return s;
+          return '*'.repeat(s.length - n) + s.slice(-n);
+      }
+      case 'first': return Array.isArray(value) ? value[0] : value;
+      case 'last': return Array.isArray(value) ? value[value.length - 1] : value;
+      case 'join': {
+          const sep = args[0] || ', ';
+          return Array.isArray(value) ? value.join(sep) : value;
+      }
       case 'toJson': return JSON.stringify(value, null, 2);
       case 'fromJson': try { return typeof value === 'string' ? JSON.parse(value) : value; } catch(e) { return value; }
-      case 'base64enc': return typeof Buffer !== 'undefined' ? Buffer.from(String(value)).toString('base64') : btoa(String(value));
+      case 'base64enc':
+      case 'base64Encode': return typeof Buffer !== 'undefined' ? Buffer.from(String(value)).toString('base64') : btoa(String(value));
+      case 'base64dec':
+      case 'base64Decode': return typeof Buffer !== 'undefined' ? Buffer.from(String(value), 'base64').toString('utf8') : atob(String(value));
       case 'urlenc': return encodeURIComponent(String(value));
+      case 'md5':
+           try {
+              if (typeof require !== 'undefined') {
+                 const nodeCrypto = require('crypto');
+                 return nodeCrypto.createHash('md5').update(String(value)).digest('hex');
+              }
+           } catch (e) {}
+           return 'md5_unavailable'; 
       case 'sha256': 
           try {
              if (typeof require !== 'undefined') {
@@ -377,6 +448,17 @@ export class VariableEngine {
              }
           } catch (e) {}
           return 'sha256_unavailable'; 
+      case 'startOf': {
+          if (!value) return '';
+          const d = new Date(value);
+          if (isNaN(d.getTime())) return value;
+          const unit = (args[0] || 'day').toLowerCase();
+          if (unit === 'year') d.setMonth(0, 1);
+          else if (unit === 'month') d.setDate(1);
+          else if (unit === 'day') d.setHours(0, 0, 0, 0);
+          else if (unit === 'hour') d.setMinutes(0, 0, 0);
+          return d.toISOString();
+      }
       case 'formatDate': {
           if (!value) return '';
           let d: Date;

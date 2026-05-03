@@ -620,7 +620,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
             <div 
                 style={{ 
                     position: 'relative', 
-                    width: '700px', 
+                    width: '1000px', 
                     height: '100%', 
                     backgroundColor: 'white', 
                     boxShadow: '-10px 0 30px rgba(0,0,0,0.2)',
@@ -956,6 +956,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                                         value={url} 
                                                         onChange={setUrl} 
                                                         enableVariables 
+                                                        expandable
                                                         onRequestVariable={openVarPicker}
                                                         disabled={isWorkflowNode ? !urlOverride : false}
                                                         availableVars={availableUpstreamVars}
@@ -1012,28 +1013,32 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                                         )}
                                                         {kvHeaders.map((h, i) => (
                                                             <div key={i} className="flex gap-2 group/header items-center bg-white p-1.5 rounded-lg border border-slate-200 shadow-sm focus-within:border-primary-300 transition-colors">
-                                                                <input 
-                                                                    className="flex-1 px-3 py-1.5 text-[11px] border-none bg-transparent font-mono outline-none" 
+                                                                <VariableAwareInput 
+                                                                    placeholder="Key" 
                                                                     value={h.key} 
-                                                                    placeholder="Key"
-                                                                    disabled={isWorkflowNode && !headersOverride}
-                                                                    onChange={e => {
+                                                                    onValueChange={val => {
                                                                         const newH = [...kvHeaders];
-                                                                        newH[i].key = e.target.value;
+                                                                        newH[i].key = val;
                                                                         setKvHeaders(newH);
                                                                     }}
+                                                                    availableVars={availableUpstreamVars}
+                                                                    onInsertClick={() => openVarPicker()}
+                                                                    disabled={isWorkflowNode && !headersOverride}
+                                                                    style={{ fontSize: '14px', border: 'none', background: 'transparent' }}
                                                                 />
                                                                 <div className="w-[1px] h-4 bg-slate-200" />
-                                                                <input 
-                                                                    className="flex-1 px-3 py-1.5 text-[11px] border-none bg-transparent font-mono outline-none" 
+                                                                <VariableAwareInput 
+                                                                    placeholder="Value" 
                                                                     value={h.value} 
-                                                                    placeholder="Value"
-                                                                    disabled={isWorkflowNode && !headersOverride}
-                                                                    onChange={e => {
+                                                                    onValueChange={val => {
                                                                         const newH = [...kvHeaders];
-                                                                        newH[i].value = e.target.value;
+                                                                        newH[i].value = val;
                                                                         setKvHeaders(newH);
                                                                     }}
+                                                                    availableVars={availableUpstreamVars}
+                                                                    onInsertClick={() => openVarPicker()}
+                                                                    disabled={isWorkflowNode && !headersOverride}
+                                                                    style={{ fontSize: '14px', border: 'none', background: 'transparent' }}
                                                                 />
                                                                 <button 
                                                                     disabled={isWorkflowNode && !headersOverride}
@@ -1096,6 +1101,27 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                             
                                             {openAccordions.payload && (
                                                 <div className="p-6 animate-in slide-in-from-top-1 duration-200">
+                                                    <div className="flex justify-end mb-3">
+                                                        <button 
+                                                            disabled={isWorkflowNode ? !bodyOverride : false}
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                try {
+                                                                    const parsed = JSON.parse(body);
+                                                                    setBody(JSON.stringify(parsed, null, 4));
+                                                                } catch(err) {
+                                                                    showToast('Invalid JSON. Cannot beautify.', 'error');
+                                                                }
+                                                            }}
+                                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${
+                                                                (isWorkflowNode && !bodyOverride)
+                                                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                                                : 'bg-blue-50 text-blue-600 hover:bg-blue-100 active:scale-95 cursor-pointer'
+                                                            }`}
+                                                        >
+                                                            <Sparkles size={12} /> Format JSON
+                                                        </button>
+                                                    </div>
                                                     <MaterialTextArea 
                                                         label="JSON / Text Body" 
                                                         value={body} 
@@ -1395,7 +1421,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
     )
 }
 
-function SanityCheckManager({ value, onChange, inherited = [] }: { value: any[], onChange: (val: any[]) => void, inherited?: any[] }) {
+function SanityCheckManager({ value, onChange, inherited = [], availableVars = [], onRequestVariable }: { value: any[], onChange: (val: any[]) => void, inherited?: any[], availableVars?: any[], onRequestVariable?: () => void }) {
     const [regex, setRegex] = useState('');
     const [condition, setCondition] = useState('MUST_CONTAIN');
     const [severity, setSeverity] = useState('ERROR');
@@ -1416,11 +1442,13 @@ function SanityCheckManager({ value, onChange, inherited = [] }: { value: any[],
     return (
         <div className="space-y-4">
             <div className="flex gap-2">
-                <input 
+                <VariableAwareInput 
                     placeholder="Regex e.g. success: true" 
                     value={regex} 
-                    onChange={e => setRegex(e.target.value)} 
-                    className="flex-1 px-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white outline-none"
+                    onValueChange={setRegex} 
+                    availableVars={availableVars}
+                    onInsertClick={onRequestVariable}
+                    style={{ fontSize: '14px' }}
                 />
                 <select value={condition} onChange={e => setCondition(e.target.value)} className="px-2 py-2 border rounded-lg text-xs font-bold bg-gray-50">
                     <option value="MUST_CONTAIN">MUST CONTAIN</option>
@@ -1465,7 +1493,7 @@ function SanityCheckManager({ value, onChange, inherited = [] }: { value: any[],
     );
 }
 
-function StatusMappingManager({ value, onChange }: { value: any[], onChange: (val: any[]) => void }) {
+function StatusMappingManager({ value, onChange, availableVars = [], onRequestVariable }: { value: any[], onChange: (val: any[]) => void, availableVars?: any[], onRequestVariable?: () => void }) {
     const [pattern, setPattern] = useState('');
     const [status, setStatus] = useState('SUCCESS');
 
@@ -1482,11 +1510,13 @@ function StatusMappingManager({ value, onChange }: { value: any[], onChange: (va
     return (
         <div className="space-y-4">
             <div className="flex gap-2">
-                <input 
+                <VariableAwareInput 
                     placeholder="Code or Range e.g. 200-204, 404" 
                     value={pattern} 
-                    onChange={e => setPattern(e.target.value)} 
-                    className="flex-1 px-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white outline-none font-mono"
+                    onValueChange={setPattern} 
+                    availableVars={availableVars}
+                    onInsertClick={onRequestVariable}
+                    style={{ fontSize: '14px' }}
                 />
                 <select value={status} onChange={e => setStatus(e.target.value)} className="px-3 py-2 border rounded-lg text-xs font-bold bg-gray-50">
                     {['SUCCESS', 'FAILED', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION'].map(s => (
@@ -1656,7 +1686,7 @@ function ConditionBuilder({ groups, onChange, availableVars, onRequestVariable }
     );
 }
 
-function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false, availableVars }: any) {
+function MaterialInput({ label, value, onChange, placeholder, type = 'text', enableVariables = false, onRequestVariable, disabled = false, availableVars, expandable = false }: any) {
     const inputRef = useRef<any>(null);
     return (
         <div style={{ position: 'relative' }}>
@@ -1664,6 +1694,7 @@ function MaterialInput({ label, value, onChange, placeholder, type = 'text', ena
             <div className="relative">
                 <VariableAwareInput 
                     ref={inputRef} 
+                    expandable={expandable}
                     value={value} 
                     onValueChange={onChange} 
                     placeholder={placeholder} 

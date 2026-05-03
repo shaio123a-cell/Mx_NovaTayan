@@ -354,19 +354,15 @@ async function executeTask(data: any) {
                         // or its default value if we're running top-level.
                         if (def && typeof def === 'object' && def.valueMode === 'parent') {
                             const currentVal = varContext.workflow?.[name];
-                            // If the value in context is still the definition object itself, use defaultValue
-                            if (currentVal && typeof currentVal === 'object' && currentVal.valueMode === 'parent') {
-                                computedVars[name] = def.defaultValue || null;
-                            } else {
-                                computedVars[name] = currentVal !== undefined ? currentVal : (def.defaultValue || null);
-                            }
+                            computedVars[name] = currentVal !== undefined ? currentVal : (def.defaultValue || null);
+                            logger.info(`🔎 [VMA] Parent mode for '${name}': resolved to ${JSON.stringify(computedVars[name])}`);
                         } else if (typeof def === 'string') {
-                            // If it's a string with variable references, resolve them
-                            // Update context so engine can see currently computed vars
                             varContext.task = computedVars;
                             const resolved = engine.resolve(def);
+                            logger.info(`🔎 [VMA] String resolution for '${name}': '${def}' -> '${resolved}'`);
                             computedVars[name] = resolved;
                         } else {
+                            logger.info(`🔎 [VMA] Literal resolution for '${name}': ${JSON.stringify(def)}`);
                             computedVars[name] = def;
                         }
                         continue;
@@ -411,8 +407,9 @@ async function executeTask(data: any) {
 
                     if (t.type === 'constant') {
                         const val = t.hasOwnProperty('value') ? t.value : (t.hasOwnProperty('spec') ? t.spec : t.specYaml);
-                        logger.info(`🔎 Constant block hit for '${name}', value found: ${val !== undefined}`);
-                        computedVars[name] = typeof val === 'string' ? engine.resolve(val) : val;
+                        const resolvedVal = typeof val === 'string' ? engine.resolve(val) : val;
+                        logger.info(`🔎 [VMA] Constant transformer for '${name}': '${val}' -> '${resolvedVal}'`);
+                        computedVars[name] = resolvedVal;
                     } else if (t.type === 'regex') {
                         const text = typeof inputForVar === 'string' ? inputForVar : JSON.stringify(inputForVar);
                         const pattern = engine.resolve(t.spec || t.pattern || '');

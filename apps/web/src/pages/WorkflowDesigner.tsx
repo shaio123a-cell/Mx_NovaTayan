@@ -23,7 +23,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { workflowsApi } from '../api/workflows'
 import { TaskEditShelf } from '../components/TaskEditShelf'
-import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil, Zap, Settings2, X, Box, GitBranch, LayoutDashboard, Clock, Bell, Info, Layers, Shield } from 'lucide-react'
+import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil, Zap, Settings2, X, Box, GitBranch, LayoutDashboard, Clock, Bell, Info, Layers, Shield, ChevronRight, Folder } from 'lucide-react'
 import { useDirtyState } from '../context/DirtyStateContext'
 import { useToast } from '../context/ToastContext'
 import { WorkflowAdminShelf } from '../components/WorkflowAdminShelf'
@@ -779,7 +779,8 @@ function ReactFlowCanvas({
     setEdges,
     setIsDirty,
     onNodeClick,
-    reactFlowWrapper 
+    reactFlowWrapper,
+    disableKeyboardActions
 }: any) {
     const reactFlowInstance = useReactFlow();
     const projectRef = useRef<any>(null);
@@ -888,6 +889,7 @@ function ReactFlowCanvas({
                     setEdges(eds => eds.filter(e => !deletedIds.has(e.source) && !deletedIds.has(e.target)));
                     setIsDirty(true);
                 }}
+                deleteKeyCode={disableKeyboardActions ? null : ['Backspace', 'Delete']}
                 fitView
                 snapToGrid={true}
                 snapGrid={[15, 15]}
@@ -949,6 +951,16 @@ function WorkflowDesignerContent() {
         queryKey: ['workflow-bindings', workflowId],
         queryFn: () => workflowsApi.getBindings(workflowId!),
         enabled: !!workflowId
+    });
+
+    const { data: taskFolders } = useQuery({
+        queryKey: ['task-folders'],
+        queryFn: () => tasksApi.getFolderTree()
+    });
+
+    const { data: workflowFolders } = useQuery({
+        queryKey: ['workflow-folders'],
+        queryFn: () => workflowsApi.getFolderTree()
     });
 
     useEffect(() => {
@@ -1207,48 +1219,55 @@ function WorkflowDesignerContent() {
         }
     };
 
-    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ 'Global Tasks': true, 'Workflows': true })
+    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ 'tasks': true, 'workflows': false });
+    const [expandedSubFolders, setExpandedSubFolders] = useState<Record<string, boolean>>({});
 
     const groupedLibraryItems = (() => {
-        const grouped: Record<string, any[]> = {}
+        const result: Record<string, Record<string, any[]>> = {
+            'Tasks': {},
+            'Workflows': {}
+        };
         
         const q = searchQuery.toLowerCase();
 
-        // Add Tasks
-        const filteredTasks = tasks?.filter((t: any) => {
+        // Helper to find folder name by ID
+        const getFolderName = (folders: any[], id?: string): string => {
+            if (!id) return 'Default';
+            const findInTree = (nodes: any[]): string | null => {
+                for (const node of nodes) {
+                    if (node.id === id) return node.name;
+                    if (node.children) {
+                        const found = findInTree(node.children);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            };
+            return findInTree(folders || []) || 'Default';
+        };
+
+        // Group Tasks
+        tasks?.filter((t: any) => {
             const name = t.name?.toLowerCase() ?? '';
-            const label = t.label?.toLowerCase() ?? '';
-            const method = t.command?.method?.toLowerCase() ?? '';
-            return name.includes(q) || label.includes(q) || method.includes(q);
+            return name.includes(q);
+        }).forEach((t: any) => {
+            const folderName = getFolderName(taskFolders || [], t.folderId);
+            if (!result['Tasks'][folderName]) result['Tasks'][folderName] = [];
+            result['Tasks'][folderName].push({ ...t, itemType: 'TASK' });
         });
 
-        filteredTasks?.forEach((t: any) => {
-            const tg = t.groups || []
-            if (tg.length === 0) {
-                if (!grouped['Global Tasks']) grouped['Global Tasks'] = []
-                grouped['Global Tasks'].push({ ...t, itemType: 'TASK' })
-            } else {
-                tg.forEach((g: any) => {
-                    const name = typeof g === 'string' ? g : g.name
-                    if (!grouped[name]) grouped[name] = []
-                    grouped[name].push({ ...t, itemType: 'TASK' })
-                })
-            }
-        })
-
-        // Add Workflows (exclude current)
-        const filteredWorkflows = allWorkflows?.filter((w: any) => {
+        // Group Workflows
+        allWorkflows?.filter((w: any) => {
             if (w.id === workflowId) return false;
             const name = w.name?.toLowerCase() ?? '';
             return name.includes(q);
+        }).forEach((w: any) => {
+            const folderName = getFolderName(workflowFolders || [], w.folderId);
+            if (!result['Workflows'][folderName]) result['Workflows'][folderName] = [];
+            result['Workflows'][folderName].push({ ...w, itemType: 'WORKFLOW' });
         });
 
-        filteredWorkflows?.forEach((w: any) => {
-            if (!grouped['Workflows']) grouped['Workflows'] = []
-            grouped['Workflows'].push({ ...w, itemType: 'WORKFLOW' })
-        })
-
-        return grouped
+        return result;
     })()
 
     const onDragStart = (event: any, task: any) => {
@@ -1476,7 +1495,7 @@ function WorkflowDesignerContent() {
 
                     <div style={{ marginBottom: '20px' }}>
                         <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>Library</h3>
-                        <p style={{ fontSize: '11px', color: '#666' }}>Drag & drop tasks or workflows.</p>
+                        <p style={{ fontSize: '11px', color: '#666' }}>Drag & Drop tasks or workflows.</p>
                     </div>
 
                     <div style={{ marginBottom: '16px' }}>
@@ -1503,93 +1522,115 @@ function WorkflowDesignerContent() {
                         </div>
                     </div>
 
-                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                    <div style={{ flex: 1, overflowY: 'auto' }} className="space-y-1">
                         {isLoadingTasks || isLoadingWorkflows ? (
-                            <div style={{ color: '#999', fontSize: '12px' }}>Loading library...</div>
+                            <div style={{ color: '#999', fontSize: '12px', padding: '20px', textAlign: 'center' }}>Loading library...</div>
                         ) : (
-                            Object.entries(groupedLibraryItems).sort(([a], [b]) => a.includes('Tasks') ? -1 : b.includes('Tasks') ? 1 : a.localeCompare(b)).map(([groupName, items]: [string, any]) => (
-                                <div key={groupName} style={{ marginBottom: '24px' }}>
-                                    <div 
-                                        onClick={() => setExpandedFolders(prev => ({ ...prev, [groupName]: !prev[groupName] }))}
-                                        style={{ 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            justifyContent: 'space-between',
-                                            cursor: 'pointer',
-                                            padding: '8px 0',
-                                            borderBottom: '1px solid #f0f0f0',
-                                            marginBottom: '12px'
-                                        }}
-                                    >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '14px' }}>{groupName === 'Workflows' ? '⚡' : groupName.includes('Tasks') ? '🌐' : '📁'}</span>
-                                            <span style={{ fontSize: '12px', fontWeight: 900, color: '#333', textTransform: 'uppercase', letterSpacing: '1px' }}>{groupName}</span>
-                                        </div>
-                                        <span style={{ color: '#ccc', fontSize: '10px' }}>{expandedFolders[groupName] ? '▼' : '▶'}</span>
-                                    </div>
-                                    
-                                    {(expandedFolders[groupName] || searchQuery.length > 0) && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                            {items.map((item: any) => {
-                                                const selected = isTaskInWorkflow(item.id);
-                                                const isWf = item.itemType === 'WORKFLOW';
-                                                return (
-                                                    <div
-                                                        key={item.id}
-                                                        draggable
-                                                        onDragStart={(event) => onDragStart(event, item)}
-                                                        style={{
-                                                            padding: '12px',
-                                                            background: selected ? (isWf ? '#eff6ff' : '#f0f7ff') : '#fafafa',
-                                                            border: `1px solid ${selected ? (isWf ? '#3b82f6' : '#1976D2') : '#eee'}`,
-                                                            borderRadius: '10px',
-                                                            cursor: 'grab',
-                                                            fontSize: '13px',
-                                                            color: '#333',
-                                                            fontWeight: '600',
-                                                            transition: 'all 0.2s',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '10px'
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            if (!selected) {
-                                                                e.currentTarget.style.background = '#f9fafb';
-                                                                e.currentTarget.style.transform = 'translateX(4px)';
-                                                            }
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            if (!selected) {
-                                                                e.currentTarget.style.background = '#fafafa';
-                                                                e.currentTarget.style.transform = 'translateX(0)';
-                                                            }
-                                                        }}
-                                                    >
-                                                        <div style={{ 
-                                                            width: '20px', 
-                                                            height: '20px', 
-                                                            borderRadius: '4px', 
-                                                            background: isWf ? '#3b82f6' : (item.command?.method === 'POST' ? '#1976D2' : item.command?.method === 'DELETE' ? '#dc2626' : '#22c55e'),
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            color: 'white'
-                                                        }}>
-                                                            {getEffectiveIcon(item) ? (
-                                                                <img src={getEffectiveIcon(item)!} style={{ width: '14px', height: '14px', objectFit: 'contain' }} alt="icon" />
-                                                            ) : (
-                                                                isWf ? <GitBranch size={12} /> : <Box size={12} />
-                                                            )}
-                                                        </div>
-                                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                                                        {selected && <Check size={12} color={isWf ? '#3b82f6' : "#1976D2"} strokeWidth={3} />}
+                            Object.entries(groupedLibraryItems).map(([type, folderGroups]) => {
+                                const hasItems = Object.values(folderGroups).some(items => items.length > 0);
+                                if (!hasItems && searchQuery) return null;
+                                const isTasks = type === 'Tasks';
+                                const key = type.toLowerCase();
+                                
+                                return (
+                                    <div key={type} className="mb-2">
+                                        <button 
+                                            onClick={() => setExpandedFolders(prev => ({ ...prev, [key]: !prev[key] }))}
+                                            style={{ 
+                                                width: '100%',
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: '8px',
+                                                padding: '8px',
+                                                borderRadius: '8px'
+                                            }}
+                                            className="hover:bg-gray-50 transition-colors group"
+                                        >
+                                            <ChevronRight size={14} className={`transition-transform text-gray-400 group-hover:text-gray-600 ${(expandedFolders[key] || searchQuery) ? 'rotate-90' : ''}`} />
+                                            {isTasks ? <Box size={14} className="text-blue-500"/> : <GitBranch size={14} className="text-indigo-600" />}
+                                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#333' }}>{type}</span>
+                                        </button>
+
+                                        {(expandedFolders[key] || searchQuery) && (
+                                            <div className="ml-4 mt-1 border-l border-gray-100 pl-2 space-y-1">
+                                                {Object.entries(folderGroups).map(([folderName, items]) => (
+                                                    <div key={folderName} className="mb-2">
+                                                        <button 
+                                                            onClick={() => setExpandedSubFolders(prev => ({ ...prev, [`${key}-${folderName}`]: !prev[`${key}-${folderName}`] }))}
+                                                            style={{ 
+                                                                width: '100%',
+                                                                display: 'flex', 
+                                                                alignItems: 'center', 
+                                                                gap: '6px',
+                                                                padding: '6px 8px',
+                                                                borderRadius: '6px'
+                                                            }}
+                                                            className="hover:bg-gray-50 transition-colors group/sub"
+                                                        >
+                                                            <ChevronRight size={12} className={`transition-transform text-gray-400 group-hover/sub:text-gray-600 ${(expandedSubFolders[`${key}-${folderName}`] || searchQuery) ? 'rotate-90' : ''}`} />
+                                                            <Folder size={12} style={{ color: '#555' }} />
+                                                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#333' }}>{folderName}</span>
+                                                        </button>
+
+                                                        {(expandedSubFolders[`${key}-${folderName}`] || searchQuery) && (
+                                                            <div className="ml-5 mt-1 space-y-1 border-l border-gray-50 pl-2">
+                                                                {items.map((item: any) => {
+                                                                    const selected = isTaskInWorkflow(item.id);
+                                                                    const isWf = item.itemType === 'WORKFLOW';
+                                                                    const IconUrl = getEffectiveIcon(item);
+
+                                                                    return (
+                                                                        <div
+                                                                            key={item.id}
+                                                                            draggable
+                                                                            onDragStart={(event) => onDragStart(event, item)}
+                                                                            style={{
+                                                                                padding: '8px 12px',
+                                                                                background: selected ? (isWf ? '#eff6ff' : '#f0f7ff') : 'white',
+                                                                                border: `1px solid ${selected ? (isWf ? '#3b82f6' : '#1976D2') : '#f3f4f6'}`,
+                                                                                borderRadius: '10px',
+                                                                                cursor: 'grab',
+                                                                                fontSize: '12px',
+                                                                                color: '#333',
+                                                                                fontWeight: '600',
+                                                                                transition: 'all 0.2s',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '10px',
+                                                                                boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                                                            }}
+                                                                            className="hover:border-blue-200 hover:shadow-sm"
+                                                                        >
+                                                                            <div style={{ 
+                                                                                width: '20px', 
+                                                                                height: '20px', 
+                                                                                borderRadius: '6px', 
+                                                                                background: isWf ? '#f0f4ff' : '#f9fafb',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'center',
+                                                                                border: '1px solid #f3f4f6'
+                                                                            }}>
+                                                                                {IconUrl ? (
+                                                                                    <img src={IconUrl} style={{ width: '12px', height: '12px', objectFit: 'contain' }} alt="icon" />
+                                                                                ) : (
+                                                                                    isWf ? <Layers size={10} className="text-blue-500" /> : <Box size={10} className="text-gray-400" />
+                                                                                )}
+                                                                            </div>
+                                                                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                                                                            {selected && <Check size={12} className="text-blue-500" strokeWidth={3} />}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            ))
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })
                         )}
                     </div>
                 </div>
@@ -1605,6 +1646,7 @@ function WorkflowDesignerContent() {
                     setEdges={setEdges}
                     setIsDirty={setIsDirty}
                     reactFlowWrapper={reactFlowWrapper}
+                    disableKeyboardActions={!!editingNode || isAdminPanelOpen}
                 />
             </div>
 

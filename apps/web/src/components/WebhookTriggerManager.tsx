@@ -140,6 +140,11 @@ export function WebhookTriggerManager({ workflowId, availableVarNames = [], onDi
     };
 
     const handleAddMapping = (tokenId: string) => {
+        if (!availableVarNames || availableVarNames.length === 0) {
+            showToast("Cannot add mapping: This workflow has no Input Variables defined. Add variables in the 'Meta & Environment' tab first.", "error");
+            return;
+        }
+
         setLocalTokens(prev => prev.map(t => {
             if (t.id !== tokenId) return t;
             const mapping = { ...(t.mapping || {}) };

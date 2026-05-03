@@ -239,7 +239,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 99999999, display: 'flex', justifyContent: 'flex-end' }}>
       <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)' }} onClick={handleBackdropClick} />
-      <div className="relative w-[800px] h-full bg-slate-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 z-10 font-sans">
+      <div className="relative w-[900px] h-full bg-slate-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 z-10 font-sans">
         
         {/* Header */}
         <div className="px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center shrink-0">
@@ -315,6 +315,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                                 onValueChange={val => { if (!readOnly) { setInputVariable(val); setDirty(true); } }}
                                 placeholder="{{global.myVar}}"
                                 disabled={readOnly}
+                                availableVars={variables}
                             />
                             {!readOnly && (
                                 <button 
@@ -368,6 +369,7 @@ export function VariableTransformerDrawer({ open, name, initial, variables = [],
                             isTextarea={true}
                             disabled={readOnly}
                             placeholder={tab === 'advanced' ? "mappings:\n  - name: id\n    expr: {{global.prefix}}-{{uuid}}" : "Expression..."}
+                            availableVars={variables}
                         />
                     ) : (
                         <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-200 text-gray-400 text-xs text-center italic">

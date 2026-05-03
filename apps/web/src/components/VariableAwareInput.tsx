@@ -4,11 +4,12 @@ import { globalVarsApi } from '../api/globalVars';
 import { ActionPicker } from './ActionPicker';
 import { 
     X, Search, Calculator, Type, Hash, Clock, 
-    Code, List, Settings, ChevronRight, Zap, Trash2, Check, Edit3 
+    Code, List, Settings, ChevronRight, Zap, Trash2, Check, Edit3, ChevronDown, ChevronUp 
 } from 'lucide-react';
 
 interface VariableAwareInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>, 'onChange'> {
     isTextarea?: boolean;
+    expandable?: boolean;
     onValueChange: (val: string) => void;
     availableVars?: (string | { name: string, taskName: string, value?: any })[];
     onInsertClick?: () => void;
@@ -23,11 +24,12 @@ interface Region {
     isImplicit: boolean;
 }
 
-export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ value, onValueChange, placeholder, isTextarea = false, availableVars, onInsertClick, mode = 'standard', ...props }, ref) => {
+export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ value, onValueChange, placeholder, isTextarea = false, expandable = false, availableVars, onInsertClick, mode = 'standard', ...props }, ref) => {
     const { data: globalVars } = useQuery({ queryKey: ['globalVars'], queryFn: globalVarsApi.getAll });
     const [tooltip, setTooltip] = useState<{ text: string, x: number, y: number } | null>(null);
     const [actionPicker, setActionPicker] = useState<{ x: number, y: number, regionIdx: number } | null>(null);
     const [editingAction, setEditingAction] = useState<{ regionIdx: number, actionIdx: number, value: string, rect: DOMRect } | null>(null);
+    const [isExpanded, setIsExpanded] = useState(false);
     
     const containerRef = useRef<HTMLDivElement>(null);
     const mirrorRef = useRef<HTMLDivElement>(null);
@@ -166,9 +168,7 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         const nextValue = strValue.substring(0, region.start) + newFull + strValue.substring(region.end);
         
         onValueChange(nextValue);
-        if (isDelete || (!newValue.includes(':') && editingAction.actionIdx !== -1)) {
-            setEditingAction(null);
-        }
+        setEditingAction(null);
     };
 
     const renderHighlights = () => {
@@ -187,21 +187,53 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
             const baseVar = parts[0];
             const actions = parts.slice(1);
 
-            const isGlobal = baseVar.startsWith('global.');
+            const isMacro = ['now', 'epoch', 'uuid', 'guid', 'today', 'yesterday', 'tomorrow', 'random', 'env'].includes(baseVar);
+            const isGlobal = baseVar.startsWith('global.') || isMacro;
             const isWorkflow = baseVar.startsWith('workflow.');
             const isLocal = baseVar.startsWith('local.');
             
             let isAvailable = false;
-            if (availableVars && !isGlobal && !isWorkflow && !isLocal) {
+            let varDetails: any = null;
+            if (availableVars) {
+                const cleanBase = baseVar.replace(/^global\./, '');
+                const possibleNames = [baseVar, cleanBase, `global.${baseVar}`];
+                
                 isAvailable = availableVars.some(v => {
-                    if (typeof v === 'string') return v === baseVar;
-                    return v.name === baseVar;
+                    const vName = typeof v === 'string' ? v : v.name;
+                    return possibleNames.includes(vName);
                 });
+                
+                varDetails = availableVars.find(v => {
+                    const vName = typeof v === 'string' ? v : v.name;
+                    return possibleNames.includes(vName);
+                }) as any;
             }
 
             let bgColor = '#f3f4f6'; 
             let textColor = '#1E40AF'; 
             let borderColor = '#d1d5db';
+            
+            // Tooltip resolution logic
+            let tooltip = `Variable: ${baseVar}`;
+            if (varDetails) {
+                if (varDetails.taskName) tooltip += `\nSource: ${varDetails.taskName}`;
+                if (varDetails.value !== undefined) tooltip += `\nValue Preview: ${String(varDetails.value)}`;
+            } else if (isGlobal) {
+                // Resolve macros for tooltip
+                if (baseVar === 'now') tooltip += `\nValue: ${new Date().toISOString()}`;
+                else if (baseVar === 'epoch') tooltip += `\nValue: ${Math.floor(Date.now() / 1000)}`;
+                else if (baseVar === 'uuid') tooltip += '\nValue: [Dynamic UUID]';
+                else {
+                    const cleanName = baseVar.replace(/^global\./, '');
+                    const gVar = globalVars?.find((v: any) => v.name === cleanName || v.name === baseVar);
+                    if (gVar) {
+                        tooltip += `\nValue Preview: ${gVar.isSecret ? '[Secret Value]' : String(gVar.value)}`;
+                        if (gVar.description) tooltip += `\nDescription: ${gVar.description}`;
+                    } else {
+                        tooltip += `\nGlobal Identifier`;
+                    }
+                }
+            }
 
             if (region.isImplicit) {
                 bgColor = '#F1F5F9'; textColor = '#475569'; borderColor = '#E2E8F0';
@@ -213,78 +245,62 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                 bgColor = '#F3E8FF'; textColor = '#6B21A8'; borderColor = '#E9D5FF';
             }
 
-            // TRANSPARENT ANCHOR: Forced 1:1 mapping (scaled up for visibility)
+            // GHOST TEXT STRATEGY:
+            // We render the raw variable text (e.g. {{global.var}}) as invisible text in the document flow.
+            // This 'Anchor' carved out the EXACT space needed for the variable.
+            // Then we overlay the visual Chip (mark) absolutely on top of it.
             const fullRawText = strValue.substring(region.start, region.end);
-            const charCount = fullRawText.length;
-            const totalWidth = charCount * 8.423;
-
             result.push(
                 <span 
                     key={`var-group-${idx}`} 
                     className="relative inline-block"
                     style={{ 
-                        pointerEvents: 'auto', 
-                        width: `${totalWidth}px`,
-                        height: '28px',
-                        verticalAlign: 'middle'
+                        pointerEvents: 'auto'
                     }}
                 >
-                    {/* The Anchor: Strictly forced to match textarea font metrics */}
+                    {/* The Anchor: Invisible but provides exact width */}
                     <span 
-                        className="opacity-0 whitespace-pre absolute inset-0 select-none"
+                        className="opacity-0 whitespace-pre select-none pointer-events-none"
                         style={{ 
-                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                             fontSize: '14px',
-                            letterSpacing: 'normal'
+                            letterSpacing: 'normal',
+                            zIndex: 0
                         }}
                     >
                         {fullRawText}
                     </span>
 
-                    {/* The Visual Chip Layer: Now scaled up to match text size */}
-                    <div className="absolute inset-0 flex items-center overflow-visible pointer-events-none">
-                        <div className="flex items-center pointer-events-auto h-full w-full">
-                            <mark 
-                                data-region-idx={idx}
-                                data-action-idx={-1}
-                                data-variable-expr={baseVar}
-                                className="hover:shadow-md hover:z-10 transition-all group/chip flex items-center gap-1.5 whitespace-nowrap"
-                                style={{ 
-                                    backgroundColor: bgColor, color: textColor, padding: '0 8px', margin: '0 1px',
-                                    borderRadius: '6px', border: `1px solid ${borderColor}`,
-                                    fontWeight: '700', fontSize: '13px', cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', gap: '4px',
-                                    height: '24px'
-                                }}
-                            >
-                                {region.isImplicit && <Code size={12} className="opacity-50" />}
-                                {baseVar}
-                            </mark>
-
-                            {actions.map((action, aidx) => {
-                                const [name, ...params] = action.split(':');
-                                const paramString = params.join(':').trim();
-                                return (
-                                    <React.Fragment key={aidx}>
-                                        <ChevronRight size={12} className="text-gray-300 mx-0.5" />
-                                        <mark 
-                                            data-region-idx={idx}
-                                            data-action-idx={aidx}
-                                            data-variable-expr={action}
-                                            className="hover:shadow-md hover:z-10 transition-all group/chip whitespace-nowrap"
-                                            style={{ 
-                                                backgroundColor: '#f8fafc', color: '#475569', padding: '0 8px', margin: '0 1px',
-                                                borderRadius: '6px', border: '1px solid #e2e8f0',
-                                                fontWeight: '700', fontSize: '13px', cursor: 'pointer',
-                                                height: '24px'
-                                            }}
-                                        >
-                                            {name.trim()}
-                                            {paramString && <span className="ml-1 text-[11px] text-blue-500 font-mono font-black">{paramString}</span>}
-                                        </mark>
-                                    </React.Fragment>
-                                );
-                            })}
+                    {/* The Visual Chip Layer: Scaled perfectly to 100% of Anchor Width */}
+                    <div className="absolute inset-0 flex items-center pointer-events-none" style={{ zIndex: 1, padding: '0 2px' }}>
+                        <div 
+                             className="pointer-events-auto flex items-center justify-center h-[24px] w-full shadow-sm transition-all group/chip relative overflow-hidden"
+                             style={{ 
+                                 backgroundColor: bgColor, color: textColor,
+                                 borderRadius: '6px', border: `1px solid ${borderColor}`,
+                                 cursor: 'pointer'
+                             }}
+                            data-region-idx={idx}
+                            data-action-idx={-1}
+                            title={tooltip}
+                        >
+                            <div className="flex items-center gap-1 font-bold px-2 w-full justify-center overflow-hidden">
+                                {region.isImplicit && <Code size={12} className="opacity-50 shrink-0" />}
+                                <span className="truncate text-[13px] whitespace-nowrap">{baseVar}</span>
+                                {actions.map((action, aidx) => {
+                                    const [name, ...params] = action.split(':');
+                                    const paramString = params.join(':').trim();
+                                    return (
+                                        <React.Fragment key={aidx}>
+                                            <ChevronRight size={12} className="opacity-40 shrink-0" />
+                                            <span className="truncate text-[13px] whitespace-nowrap">
+                                                {name.trim()}
+                                                {paramString && <span className="ml-1 text-[11px] opacity-70 font-mono font-black">{paramString}</span>}
+                                            </span>
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                 </span>
@@ -305,13 +321,13 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
         }
     };
 
-    const Component = isTextarea ? 'textarea' : 'input';
+    const Component = (isTextarea || isExpanded) ? 'textarea' : 'input';
 
     const baseStyles: React.CSSProperties = {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
         fontSize: '14px',
         lineHeight: '1.5rem',
-        padding: isTextarea ? '12px' : '12px 16px',
+        padding: (isTextarea || isExpanded) ? '12px' : '12px 16px',
         width: '100%',
         margin: 0,
         boxSizing: 'border-box',
@@ -328,6 +344,12 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                     setTooltip(null);
                     return;
                 }
+                const span = findSpanUnderMouse(e.clientX, e.clientY) as HTMLElement;
+                if (span && span.title) {
+                    setTooltip({ text: span.title, x: e.clientX, y: e.clientY });
+                } else {
+                    setTooltip(null);
+                }
             }}
             onMouseLeave={() => setTooltip(null)}
             onClick={handleClick}
@@ -338,7 +360,7 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                     className="absolute inset-0 pointer-events-none scrollbar-hide"
                     style={{ 
                         ...baseStyles, color: '#374151', zIndex: 0,
-                        overflowY: isTextarea ? 'auto' : 'hidden', overflowX: 'hidden'
+                        overflowY: (isTextarea || isExpanded) ? 'auto' : 'hidden', overflowX: 'hidden'
                     }}
                 >
                     {renderHighlights()}
@@ -357,27 +379,38 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                         ...baseStyles, position: 'relative', zIndex: 1,
                         color: 'transparent', WebkitTextFillColor: 'transparent',
                         background: 'transparent', caretColor: '#111827',
-                        minHeight: isTextarea ? (props.style?.minHeight || '120px') : (props.style?.minHeight || '46px'),
-                        height: props.style?.height || (isTextarea ? 'auto' : '46px'),
-                        resize: isTextarea ? 'vertical' : 'none',
+                        minHeight: (isTextarea || isExpanded) ? (props.style?.minHeight || '120px') : (props.style?.minHeight || '46px'),
+                        height: props.style?.height || ((isTextarea || isExpanded) ? '120px' : '46px'),
+                        resize: (isTextarea || isExpanded) ? 'vertical' : 'none',
                         ...props.style
                     }}
                 />
             </div>
             
-            <div className="px-2 shrink-0 border-l border-gray-100 flex gap-1 h-full items-center bg-gray-50/50">
+            <div className="px-1 shrink-0 border-l border-gray-100 flex flex-col justify-center items-center h-full bg-gray-50/50">
                 <button 
                     onClick={(e) => { e.stopPropagation(); onInsertClick?.(); }}
-                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-md transition-all group"
+                    className="p-0.5 text-blue-500 hover:bg-blue-50 rounded transition-all group"
+                    title="Insert Variable / Action"
                 >
-                    <Zap size={16} className="group-hover:rotate-90 transition-transform fill-current" />
+                    <Zap size={12} className="group-hover:rotate-90 transition-transform fill-current" />
                 </button>
+                {expandable && (
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                        className={`p-0.5 rounded transition-all ${isExpanded ? 'bg-blue-100 text-blue-600' : 'text-slate-400 hover:text-blue-500 hover:bg-blue-50'}`}
+                        title={isExpanded ? "Collapse Textarea" : "Expand Textarea"}
+                    >
+                        {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+                )}
             </div>
 
             {/* THE ACTION HUB - The new interactive portal */}
             {editingAction && (
                 <div 
                     className="fixed z-[2000000] animate-in fade-in zoom-in duration-200"
+                    onClick={(e) => e.stopPropagation()}
                     style={{ 
                         left: editingAction.rect.left + (editingAction.rect.width / 2),
                         top: editingAction.rect.top - 12,
@@ -444,6 +477,19 @@ export const VariableAwareInput = forwardRef<any, VariableAwareInputProps>(({ va
                 .scrollbar-hide::-webkit-scrollbar { display: none; }
                 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
             `}</style>
+            {tooltip && (
+                <div 
+                    className="fixed z-[3000000] pointer-events-none"
+                    style={{ 
+                        left: tooltip.x + 12,
+                        top: tooltip.y + 12,
+                    }}
+                >
+                    <div className="bg-slate-900/90 backdrop-blur text-white text-xs px-3 py-2 rounded-lg shadow-2xl border border-white/10 whitespace-pre font-mono">
+                        {tooltip.text}
+                    </div>
+                </div>
+            )}
         </div>
     );
 });

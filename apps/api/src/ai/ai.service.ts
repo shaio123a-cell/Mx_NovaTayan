@@ -96,7 +96,7 @@ A Restmon Task generation response MUST have the following JSON structure:
            "method": "GET|POST|PUT|DELETE|PATCH",
            "url": "https://api.example.com/item/{{input_id}}",
            "headers": { "Authorization": "Bearer {{api_key}}", "Content-Type": "application/json" },
-           "body": "Optional request payload as stringified JSON if the method requires it. Use {{variable}} syntax for variable insertions. NEVER put actual values."
+           "body": "Optional request payload as stringified JSON. Use {{var}} syntax for insertions. You can use modifiers (e.g., {{var | trim | upper}}). Context actions include: String (trim, upper, lower, mask: 4, countMatches: 'foo'), Math (sum, avg, round, floor, ceil, abs, math: '* 1.5'), Arrays (length, first, last, join: ', '), Converters (base64Encode, md5). Available global generators: {{now}}, {{epoch}}, {{now-5m}}, {{uuid}}, {{random_hex}}. NEVER put actual values."
        },
        "variableExtraction": [
             { 

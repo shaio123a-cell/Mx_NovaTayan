@@ -45,11 +45,13 @@ Status Description :
 
 ## Variables - Actions Picker and Functios 
 ### Caclulator
-Status : New 
+Status : Done 
 Date Added : 28-April-2026
 Last Updated : 
 Status Description : 
 - Added to backlog 
+- Done - Added to variabe picker - actions and operations (e.g. sum, round, count ...)
+- Also added the visual representation of the operations in the variable transformer 
 
 
 ## Workflow Utility Box
@@ -59,7 +61,8 @@ Last Updated :
 Status Description : 
 - MD with list of utilities created - 
 
-### If Then Else Utility - V1.0 Done
+### If Then Else Utility - 
+#### V1.0 Done
 - 16-April-2026 -  Designed  - MD file created  
 - 20-April-2026 - Implementation Started - In Progress
 - 21-April-2026 - V1.0 - DONE
