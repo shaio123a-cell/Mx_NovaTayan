@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkflowDto, UpdateWorkflowDto, CreateFolderDto, UpdateFolderDto } from './dto/workflow.dto';
 import { CreateBindingDto, UpdateBindingDto } from './dto/binding.dto';
@@ -46,7 +46,7 @@ export class WorkflowsService {
                 edges: data.edges || [],
                 icon: finalIcon,
                 tags: workflowTags,
-                enabled: data.enabled ?? false,
+                enabled: data.enabled ?? true,
                 inputVariables: data.inputVariables || {},
                 outputVariables: data.outputVariables || {},
                 scheduling: data.scheduling,
@@ -66,9 +66,16 @@ export class WorkflowsService {
                 { createdAt: 'desc' }
             ],
             include: {
+                bindings: {
+                    include: {
+                        schedule: true,
+                        calendar: { include: { rules: true } }
+                    }
+                },
+                triggerTokens: true,
                 executions: {
                     orderBy: { startedAt: 'desc' },
-                    take: 10,
+                    take: 20,
                     select: {
                         id: true,
                         status: true,
@@ -318,7 +325,11 @@ export class WorkflowsService {
         this.logger.log(`[Trace] Raw Edges Data: ${JSON.stringify(edges)}`);
         this.logger.log(`[Trace] Workflow nodes length: ${nodes.length}, edges length: ${edges.length}`);
 
-        const targetNodeIds = new Set(edges.map((e: any) => e.target));
+        const targetNodeIds = new Set(
+            edges
+                .filter((e: any) => nodes.some((n: any) => n.id === e.source)) // Resilience: Ignore edges from deleted sources
+                .map((e: any) => e.target)
+        );
         const startNodes = nodes.filter((n: any) => !targetNodeIds.has(n.id));
         
         this.logger.log(`[Trace] Identified ${startNodes.length} start nodes: ${startNodes.map(n => n.id).join(', ')}`);
@@ -369,9 +380,16 @@ export class WorkflowsService {
 
                         const { workflowVars } = await this.workerService.gatherWorkflowContext(childExecution.id);
 
+                        let mcpUrl = undefined;
+                        if ((node as any).taskType === 'MCP_CLIENT' && node.mcpServerId) {
+                            const setting = await this.prisma.systemSetting.findUnique({ where: { key: 'MCP_SERVERS_CONFIG' } });
+                            const servers = setting?.value ? JSON.parse(setting.value) : [];
+                            mcpUrl = servers.find((s: any) => s.id === node.mcpServerId)?.url;
+                        }
+
                         const taskExec = await this.prisma.taskExecution.create({
                             data: {
-                                taskId: (isUtility || isNested) ? null : node.taskId,
+                                taskId: (isUtility || isNested || (node as any).taskType === 'MCP_CLIENT') ? null : node.taskId,
                                 nodeId: node.id,
                                 workflowExecutionId: childExecution.id,
                                 status: isNested ? 'RUNNING' : 'PENDING',
@@ -386,6 +404,10 @@ export class WorkflowsService {
                                     sanityChecks: node.sanityChecks || [],
                                     authorization: node.authorization,
                                     inputMapping: node.inputMapping,
+                                    mcpServerId: node.mcpServerId,
+                                    mcpToolName: node.mcpToolName,
+                                    mcpParameters: node.mcpParameters,
+                                    mcpUrl,
                                     workflowVars
                                 }
                             },
@@ -456,9 +478,16 @@ export class WorkflowsService {
                                   (node as any).taskId === 'util-vars';
                 const isNested = (node as any).taskType === 'WORKFLOW';
 
+                let mcpUrl = undefined;
+                if ((node as any).taskType === 'MCP_CLIENT' && node.mcpServerId) {
+                    const setting = await this.prisma.systemSetting.findUnique({ where: { key: 'MCP_SERVERS_CONFIG' } });
+                    const servers = setting?.value ? JSON.parse(setting.value) : [];
+                    mcpUrl = servers.find((s: any) => s.id === node.mcpServerId)?.url;
+                }
+
                 const taskExec = await this.prisma.taskExecution.create({
                     data: {
-                        taskId: (isUtility || isNested) ? null : node.taskId,
+                        taskId: (isUtility || isNested || (node as any).taskType === 'MCP_CLIENT') ? null : node.taskId,
                         nodeId: node.id,
                         workflowExecutionId: execution.id,
                         status: isNested ? 'RUNNING' : initialStatus,
@@ -474,6 +503,10 @@ export class WorkflowsService {
                             sanityChecks: node.sanityChecks || [],
                             authorization: node.authorization,
                             inputMapping: node.inputMapping,
+                            mcpServerId: node.mcpServerId,
+                            mcpToolName: node.mcpToolName,
+                            mcpParameters: node.mcpParameters,
+                            mcpUrl,
                             workflowVars
                         }
                     },
@@ -705,6 +738,10 @@ export class WorkflowsService {
             throw new NotFoundException(`Invalid or disabled trigger token: ${token}`);
         }
 
+        if (!tokenRecord.workflow?.enabled) {
+            throw new ForbiddenException(`The workflow associated with this token is currently disabled.`);
+        }
+
         if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) {
             throw new Error(`Trigger token has expired`);
         }
@@ -907,5 +944,42 @@ export class WorkflowsService {
         return this.prisma.workflowGroup.delete({
             where: { id }
         });
+    }
+
+    async getFuturePredictions(workflowId: string, count: number = 30) {
+        const workflow = await this.prisma.workflow.findUnique({
+            where: { id: workflowId },
+            include: {
+                bindings: {
+                    where: { state: 'ACTIVE' },
+                    include: {
+                        schedule: true,
+                        calendar: { include: { rules: true } }
+                    }
+                }
+            }
+        });
+
+        if (!workflow) throw new NotFoundException('Workflow not found');
+        if (!workflow.enabled) return [];
+
+        const { DateUtils } = await import('../scheduler/utils/date-utils');
+
+        const allPredictions: Date[] = [];
+        for (const binding of workflow.bindings) {
+            if (binding.schedule.state !== 'ACTIVE' || !binding.schedule.enabled) continue;
+            
+            const predictions = DateUtils.getPredictedFireTimes(
+                binding.schedule,
+                binding.calendar ? [binding.calendar] : [],
+                count
+            );
+            allPredictions.push(...predictions);
+        }
+
+        // Sort and limit to the overall next N
+        return allPredictions
+            .sort((a, b) => a.getTime() - b.getTime())
+            .slice(0, count);
     }
 }

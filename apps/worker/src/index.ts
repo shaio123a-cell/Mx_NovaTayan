@@ -101,6 +101,7 @@ async function executeTask(data: any) {
         logger.info(`🔄 Output mutation enabled for task: ${taskName}`);
     }
 
+    let input: any = inputObj;
     try {
         // Mark as running
         logger.info(`📡 Marking execution ${id} as started...`);
@@ -108,15 +109,22 @@ async function executeTask(data: any) {
 
         // Create Variable Engine Context
         logger.info(`🏗️ Creating variable engine context for ${taskName}...`);
-        const workflowVars = data.workflowVars || {};
-        const availableKeys = Object.keys(workflowVars);
-        logger.info(`📦 Workflow Context: ${availableKeys.length} variables available: [${availableKeys.join(', ')}]`);
+        const workflowVars = inputObj.workflowVars || data.workflowVars || {};
+        const globalVars = inputObj.globalVars || data.globalVars || {};
+        const macros = { ...(data.macros || {}), ...(inputObj.macros || {}) };
+        
+        const availableWorkflowKeys = Object.keys(workflowVars);
+        const availableGlobalKeys = Object.keys(globalVars);
+        logger.info(`📦 Context Stats: Workflow(${availableWorkflowKeys.length}), Global(${availableGlobalKeys.length}), Macros(${Object.keys(macros).length})`);
+        if (availableGlobalKeys.length > 0) {
+            logger.info(`🌎 Global keys available: [${availableGlobalKeys.slice(0, 5).join(', ')}${availableGlobalKeys.length > 5 ? '...' : ''}]`);
+        }
         
         const varContext: VariableContext = {
-            global: data.globalVars || {},
+            global: globalVars,
             workflow: workflowVars,
             macros: {
-                ...data.macros,
+                ...macros,
                 "task.name": taskName,
                 "task.id": task?.id || execution.nodeId,
             },
@@ -127,8 +135,9 @@ async function executeTask(data: any) {
         };
         const engine = new VariableEngine(varContext);
 
+        input = { ...inputObj }; // Initialize with original input to preserve metadata on failure
+
         let response: any = { status: 200, data: data.workflowVars || {}, headers: {} };
-        let input: any = null;
 
         if (!isUtility) {
             // Priority: Node Overrides (inputObj) > Library Defaults (command)
@@ -158,16 +167,61 @@ async function executeTask(data: any) {
 
             logger.info(`🔍 Resolved URL: ${resolvedUrl}`);
 
-            input = {
-                method: finalMethod,
-                url: resolvedUrl,
-                headers: { ...resolvedHeaders },
-                timeout: finalTimeout,
-                // Preserve definitions for inspector
-                variableExtraction: inputObj.variableExtraction,
-                sanityChecks: inputObj.sanityChecks,
-                authorization: inputObj.authorization
-            };
+            if (inputObj.taskType === 'MCP_CLIENT') {
+                const nodeUrl = inputObj.mcpUrl;
+                if (!nodeUrl) throw new Error('MCP Server URL is missing');
+                
+                const rawParams = inputObj.mcpParameters || '{}';
+                const rawParamsStr = typeof rawParams === 'string' ? rawParams : JSON.stringify(rawParams);
+                
+                logger.info(`🧠 MCP Context Size: ${Object.keys(workflowVars).length} variables`);
+                if (rawParamsStr.includes('{{')) {
+                    const matches = rawParamsStr.match(/{{\s*(.+?)\s*}}/g) || [];
+                    matches.forEach(m => {
+                        const varName = m.replace(/{{\s*|\s*}}/g, '').split('|')[0].trim();
+                        logger.info(`🧠 Requesting resolution for: ${varName}. Available in context? ${workflowVars.hasOwnProperty(varName)}`);
+                    });
+                }
+
+                const resolvedParams = engine.resolve(rawParamsStr);
+                logger.info(`🧠 MCP Resolved Params string: ${resolvedParams}`);
+                
+                let parsedParams = {};
+                try { parsedParams = JSON.parse(resolvedParams); } catch(e: any) { 
+                    logger.error(`🧠 Failed to parse resolved JSON: ${e.message}`);
+                    parsedParams = {}; 
+                }
+
+                // Crucially update inputObj so orchestration metadata is updated
+                inputObj.mcpParameters = parsedParams;
+
+                input = {
+                    ...inputObj, // Preserve serverId, toolName etc for WFI
+                    method: 'POST',
+                    url: nodeUrl,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: {
+                        jsonrpc: '2.0',
+                        id: 'call-' + Date.now(),
+                        method: 'tools/call',
+                        params: { 
+                            name: inputObj.mcpToolName, 
+                            arguments: parsedParams 
+                        }
+                    },
+                    timeout: finalTimeout
+                };
+            } else {
+                input = {
+                    method: finalMethod,
+                    url: resolvedUrl,
+                    headers: { ...resolvedHeaders },
+                    timeout: finalTimeout,
+                    variableExtraction: inputObj.variableExtraction,
+                    sanityChecks: inputObj.sanityChecks,
+                    authorization: inputObj.authorization
+                };
+            }
 
             // Handle authorization
             if (authorization && authorization.type !== 'none') {
@@ -234,17 +288,20 @@ async function executeTask(data: any) {
             }
 
             // Only attach data for relevant methods or if body is explicitly provided
-            if (['POST', 'PUT', 'PATCH'].includes(input.method) || (resolvedBody !== undefined && resolvedBody !== null)) {
-                input.data = resolvedBody;
-                
-                // Auto-detect Content-Type if missing
-                const hasContentType = Object.keys(input.headers).some(h => h.toLowerCase() === 'content-type');
-                if (!hasContentType && typeof resolvedBody === 'string' && resolvedBody.trim().length > 0) {
-                    const trimmed = resolvedBody.trim();
-                    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-                        input.headers['Content-Type'] = 'application/json';
-                    } else {
-                        input.headers['Content-Type'] = 'text/plain';
+            // Skip this for MCP_CLIENT to preserve the jsonrpc payload
+            if (inputObj.taskType !== 'MCP_CLIENT') {
+                if (['POST', 'PUT', 'PATCH'].includes(input.method) || (resolvedBody !== undefined && resolvedBody !== null)) {
+                    input.data = resolvedBody;
+                    
+                    // Auto-detect Content-Type if missing
+                    const hasContentType = Object.keys(input.headers).some(h => h.toLowerCase() === 'content-type');
+                    if (!hasContentType && typeof resolvedBody === 'string' && resolvedBody.trim().length > 0) {
+                        const trimmed = resolvedBody.trim();
+                        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                            input.headers['Content-Type'] = 'application/json';
+                        } else {
+                            input.headers['Content-Type'] = 'text/plain';
+                        }
                     }
                 }
             }
@@ -261,6 +318,27 @@ async function executeTask(data: any) {
             });
 
             logger.info(`📥 Task Response Status: ${response.status}`);
+            
+            if (inputObj.taskType === 'MCP_CLIENT') {
+                if (response.data?.error) {
+                    logger.error(`❌ MCP Server returned JSON-RPC Error: ${response.data.error.message || 'Unknown MCP Error'}`);
+                    response.status = 500;
+                } else if (response.data?.result?.content) {
+                    // Extract inner content to make variable extraction easier
+                    const textContents = response.data.result.content.filter((c: any) => c.type === 'text').map((c: any) => c.text);
+                    if (textContents.length === 1) {
+                        try {
+                            // If the tool returned JSON text, parse it directly to root
+                            response.data = JSON.parse(textContents[0]);
+                        } catch {
+                            response.data = textContents[0];
+                        }
+                    } else {
+                        response.data = response.data.result.content;
+                    }
+                }
+            }
+
             if (response.status >= 400) {
                 logger.warn(`❌ Response Body: ${typeof response.data === 'string' ? response.data : JSON.stringify(response.data)}`);
             }
@@ -306,6 +384,29 @@ async function executeTask(data: any) {
         }
 
         logger.info(`✅ Task ${taskName} completed with status ${response.status}`);
+        
+        // --- SANITY CHECKS ---
+        const sanityChecks = inputObj.sanityChecks || [];
+        const sanityResults = [];
+        if (sanityChecks.length > 0) {
+            logger.info(`🔍 Running ${sanityChecks.length} sanity checks...`);
+            for (const check of sanityChecks) {
+                const { name, condition, valueMode, expr } = check;
+                try {
+                    const { evalExpr } = await import('../../../packages/shared-xform/xform_selectors_json');
+                    const isPassed = !!evalExpr(response.data, expr || '');
+                    sanityResults.push({ name, passed: isPassed });
+                    if (!isPassed) {
+                        logger.warn(`⚠️ Sanity check failed: ${name}`);
+                    } else {
+                        logger.info(`✅ Sanity check passed: ${name}`);
+                    }
+                } catch (checkErr: any) {
+                    logger.error(`❌ Sanity check error (${name}): ${checkErr.message}`);
+                    sanityResults.push({ name, passed: false, error: checkErr.message });
+                }
+            }
+        }
 
         // Update context with Current task results for variable evaluation
         varContext.macros = {
@@ -571,7 +672,8 @@ async function executeTask(data: any) {
                 variables: finalKeys.length ? computedVars : undefined,
                 variableInputs: Object.keys(variableInputs).length ? variableInputs : undefined,
                 variableErrors: Object.keys(variableErrors).length ? variableErrors : undefined,
-                variableScopes: Object.keys(varScopes).length ? varScopes : undefined
+                variableScopes: Object.keys(varScopes).length ? varScopes : undefined,
+                sanityResults: sanityResults || []
             }
         });
     } catch (error: any) {
@@ -579,7 +681,8 @@ async function executeTask(data: any) {
 
         // Complete with error
         await axios.post(`${API_URL}/worker/executions/${id}/complete`, {
-            error: error.message
+            error: error.message,
+            input: input // Send back what we reached (including resolved vars if we got that far)
         });
     }
 }

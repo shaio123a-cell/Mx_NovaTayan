@@ -164,7 +164,12 @@ export class WorkflowsController {
     }
 
     @Delete('folders/:id')
-    deleteFolder(@Param('id') id: string) {
+    removeFolder(@Param('id') id: string) {
         return this.workflowsService.deleteFolder(id);
+    }
+
+    @Get(':id/predict-future')
+    predictFuture(@Param('id') id: string, @Query('count') count: number) {
+        return this.workflowsService.getFuturePredictions(id, count || 30);
     }
 }

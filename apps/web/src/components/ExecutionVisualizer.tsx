@@ -14,7 +14,7 @@ import ReactFlow, {
     useEdgesState,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap, Layers, GitBranch } from 'lucide-react'
+import { Terminal, Clock, AlertTriangle, UserX, CheckCircle, Play, MoreVertical, Settings, Eye, AlertCircle, Zap, Layers, GitBranch, Shield, RefreshCcw, Sparkles } from 'lucide-react'
 
 /**
  * Node color mapping based on status
@@ -31,6 +31,7 @@ const getStatusStyles = (status: string) => {
         case 'NO_WORKER_FOUND': return { bg: '#1c1d21', border: '#464c54', icon: <UserX size={14} className="text-gray-400" /> };
         case 'RUNNING': return { bg: '#1e3a8a', border: '#3b82f6', icon: <Play size={14} className="text-blue-400 animate-pulse" /> };
         case 'PENDING': return { bg: '#2e1907', border: '#eab308', icon: <Clock size={14} className="text-yellow-600" /> };
+        case 'BYPASSED': return { bg: '#1c1d21', border: '#464c54', icon: <UserX size={14} className="text-gray-500 opacity-50" /> };
         default: return { bg: '#111217', border: '#202226', icon: <Terminal size={14} className="text-gray-400" /> };
     }
 }
@@ -41,11 +42,13 @@ function ExecutionNode({ data }: any) {
     const { bg, border, icon } = getStatusStyles(data.status);
     
     const isIfNode = data.taskType === 'IF';
+    const isMcp = data.taskType === 'MCP_CLIENT';
     
     const renderIcon = () => {
         if (isIfNode) return <GitBranch size={14} className="text-amber-400" />;
         if (isUtility) return <Zap size={14} className="text-yellow-400" fill="currentColor" />;
         if (isWorkflow) return <Layers size={14} className="text-white" />;
+        if (isMcp) return <Sparkles size={14} className="text-fuchsia-400" />;
         return icon;
     };
 
@@ -58,7 +61,8 @@ function ExecutionNode({ data }: any) {
                 width: isIfNode ? '120px' : 'auto',
                 height: isIfNode ? '120px' : 'auto',
                 position: 'relative',
-                opacity: data.status ? 1 : 0.5,
+                opacity: data.status === 'BYPASSED' ? 0.3 : (data.status ? 1 : 0.5),
+                filter: data.status === 'BYPASSED' ? 'grayscale(1)' : 'none',
                 transition: 'all 0.2s',
                 transform: isEditing ? 'scale(1.05)' : 'scale(1)',
                 zIndex: isEditing ? 50 : 1,
@@ -74,13 +78,15 @@ function ExecutionNode({ data }: any) {
             <div style={{
                 position: 'absolute',
                 inset: 0,
-                background: isIfNode ? '#f59e0b' : (isWorkflow ? '#32a895' : (isUtility ? (isEditing ? '#f05a28' : '#ffcc00') : (isEditing ? '#f05a28' : border))),
+                background: isIfNode ? '#f59e0b' : (isMcp ? (isEditing ? '#f05a28' : '#d946ef') : (isWorkflow ? '#32a895' : (isUtility ? (isEditing ? '#f05a28' : '#ffcc00') : (isEditing ? '#f05a28' : border)))),
                 clipPath: isIfNode
                     ? 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'
-                    : (isUtility 
-                        ? 'none' 
-                        : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none')),
-                borderRadius: isIfNode ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '12px')),
+                    : (isMcp 
+                        ? 'polygon(15px 0%, 100% 0%, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0% 100%, 0% 15px)'
+                        : (isUtility 
+                            ? 'none' 
+                            : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'))),
+                borderRadius: (isIfNode || isMcp) ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '12px')),
                 zIndex: 0
             }} />
             
@@ -88,13 +94,15 @@ function ExecutionNode({ data }: any) {
             <div style={{
                 position: 'absolute',
                 inset: '1.5px', // Border width
-                background: isIfNode ? '#111217' : (isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg)),
+                background: isIfNode ? '#111217' : (isMcp ? 'linear-gradient(135deg, #4a044e 0%, #111217 100%)' : (isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : bg))),
                 clipPath: isIfNode
                     ? 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'
-                    : (isUtility 
-                        ? 'none' 
-                        : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none')),
-                borderRadius: isIfNode ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '11px')),
+                    : (isMcp 
+                        ? 'polygon(15px 0%, 100% 0%, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0% 100%, 0% 15px)'
+                        : (isUtility 
+                            ? 'none' 
+                            : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'))),
+                borderRadius: (isIfNode || isMcp) ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '11px')),
                 zIndex: 1
             }} />
             
@@ -146,11 +154,20 @@ function ExecutionNode({ data }: any) {
                         <div style={{ 
                             fontSize: '9px', 
                             fontWeight: 'bold', 
-                            color: isWorkflow ? '#fff' : (isIfNode ? (data.status === 'BRANCHED' ? '#ef4444' : '#f59e0b') : border), 
+                            color: data.isRetrying ? '#f59e0b' : (isMcp ? '#d946ef' : (isWorkflow ? '#fff' : (isIfNode ? (data.status === 'BRANCHED' ? '#ef4444' : '#f59e0b') : border))), 
                             textTransform: 'uppercase', 
-                            letterSpacing: '0.05em' 
+                            letterSpacing: '0.05em',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
                         }}>
-                            {data.status === 'BRANCHED' ? (data.branchResult || 'BRANCHED') : (data.status || 'NOT REACHED')}
+                            {data.isRetrying && <RefreshCcw size={8} className="animate-spin" />}
+                            {data.isRetrying ? 'Retrying...' : (data.status === 'BRANCHED' ? (data.branchResult || 'BRANCHED') : (data.status || 'NOT REACHED'))}
+                            {!data.isRetrying && data.retryAttempt > 0 && (
+                                <span className="opacity-60">
+                                    [{data.retryAttempt} of {data.maxAttempts || 1}]
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -158,9 +175,9 @@ function ExecutionNode({ data }: any) {
                 {!isIfNode && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
                         <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontFamily: 'monospace' }}>
-                            {!isUtility && !isWorkflow && data.httpStatus ? (
+                            {!isUtility && !isWorkflow && !isMcp && data.httpStatus ? (
                                 <span style={{ color: data.httpStatus < 300 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>HTTP {data.httpStatus}</span>
-                            ) : (isUtility ? <span style={{ color: '#ffcc00', fontWeight: 'bold', fontSize: '10px' }}>⚡ VMA LOGIC</span> : (isWorkflow ? <span style={{ color: '#fff', fontWeight: 'bold' }}>NESTED WF</span> : '---'))}
+                            ) : (isUtility ? <span style={{ color: '#ffcc00', fontWeight: 'bold', fontSize: '10px' }}>⚡ VMA LOGIC</span> : (isWorkflow ? <span style={{ color: '#fff', fontWeight: 'bold' }}>NESTED WF</span> : (isMcp ? <span style={{ color: '#d946ef', fontWeight: 'bold', fontSize: '10px' }}>✨ AI TOOL</span> : '---')))}
                         </div>
                         {data.duration && (
                             <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -262,8 +279,134 @@ function ExecutionEdge({
     );
 }
 
+function TryZoneExecutionNode({ data }: any) {
+    const { bg, border } = getStatusStyles(data.status);
+    
+    const isRunning = data.status === 'RUNNING';
+    const isSuccess = data.status === 'SUCCESS';
+    const isFailed = data.status === 'FAILED';
+    const isPending = data.status === 'PENDING';
+
+    const getZoneBackground = () => {
+        if (isRunning) return 'rgba(59, 130, 246, 0.08)';
+        if (isSuccess) return 'rgba(16, 185, 129, 0.04)';
+        if (isFailed) return 'rgba(239, 68, 68, 0.04)';
+        return 'rgba(255, 255, 255, 0.02)';
+    };
+
+    const getZoneBorder = () => {
+        if (isRunning) return '#3b82f6';
+        if (isSuccess) return '#10b981';
+        if (isFailed) return '#ef4444';
+        return '#464c54';
+    };
+
+    return (
+        <div 
+            style={{ 
+                width: '100%', 
+                height: '100%', 
+                background: getZoneBackground(),
+                border: `2px dashed ${getZoneBorder()}`,
+                borderRadius: '24px',
+                position: 'relative',
+                pointerEvents: 'none',
+                transition: 'all 0.5s ease-in-out',
+                ...(isRunning && {
+                    animation: 'pulse-blue 4s infinite alternate'
+                })
+            }}
+        >
+            {isRunning && (
+                <style>
+                    {`
+                    @keyframes pulse-blue {
+                        0% { background-color: rgba(59, 130, 246, 0.05); }
+                        100% { background-color: rgba(59, 130, 246, 0.15); }
+                    }
+                    `}
+                </style>
+            )}
+            <div 
+                style={{
+                    position: 'absolute',
+                    top: '-24px',
+                    left: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '2px 14px',
+                    background: getZoneBorder(),
+                    color: 'white',
+                    fontSize: '10px',
+                    fontWeight: '900',
+                    textTransform: 'uppercase',
+                    borderRadius: '8px 8px 0 0',
+                    pointerEvents: 'all',
+                    boxShadow: '0 -4px 10px rgba(0,0,0,0.1)'
+                }}
+            >
+                <Zap size={10} fill="white" />
+                <span>{data.label || 'Try Block'}</span>
+                {data.retryAttempt > 0 && (
+                    <div style={{ marginLeft: '8px', background: '#f59e0b', color: '#451a03', padding: '0 8px', borderRadius: '4px', fontSize: '8px', fontWeight: '900' }}>
+                        RETRY {data.retryAttempt} OF {data.maxAttempts || 1}
+                    </div>
+                )}
+                <div style={{ marginLeft: '8px', opacity: 0.8, fontSize: '9px', fontWeight: 'bold' }}>{data.status || 'READY'}</div>
+            </div>
+
+            <div 
+                onClick={(e) => { e.stopPropagation(); data.onInspect(data.id); }}
+                style={{ position: 'absolute', top: '8px', right: '8px', pointerEvents: 'all', cursor: 'pointer', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', padding: '4px' }}
+            >
+                <Eye size={12} className="text-white" />
+            </div>
+
+            <Handle type="source" position={Position.Bottom} id="catch" style={{ background: '#ef4444', bottom: '-6px' }} />
+        </div>
+    );
+}
+
+function CatchExecutionNode({ data }: any) {
+    const { bg, border } = getStatusStyles(data.status);
+    return (
+        <div style={{
+            minWidth: '140px',
+            background: bg,
+            border: `1px solid ${border}`,
+            borderRadius: '12px',
+            padding: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.05)',
+            position: 'relative'
+        }}>
+            <div style={{
+                width: '32px', height: '32px', background: '#ef4444', borderRadius: '8px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'
+            }}>
+                <Shield size={18} fill="currentColor" fillOpacity={0.8} />
+            </div>
+            
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '9px', fontWeight: '900', color: '#ef4444', textTransform: 'uppercase' }}>CATCH</div>
+                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {data.label}
+                </div>
+            </div>
+            
+            <Handle type="target" position={Position.Top} style={{ background: '#ef4444' }} />
+            <Handle type="source" position={Position.Right} style={{ background: '#3b82f6' }} />
+        </div>
+    );
+}
+
 const nodeTypes = {
-    executionNode: ExecutionNode
+    executionNode: ExecutionNode,
+    tryZoneExecutionNode: TryZoneExecutionNode,
+    catchExecutionNode: CatchExecutionNode
 };
 
 const edgeTypes = {
@@ -285,29 +428,71 @@ export function ExecutionVisualizer({ workflow, taskExecutions, editingTaskId, o
     useEffect(() => {
         const rawNodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
         setNodes(currNodes => rawNodes.map((n: any) => {
-            const record = taskExecutions.find(r => r.nodeId === n.id);
+            // FIND LATEST RECORD (in case of retries)
+            const records = (taskExecutions || []).filter(r => r.nodeId === n.id);
+            const record = records.length > 0 ? records[records.length - 1] : null;
+
             const existingNode = currNodes.find(node => node.id === n.id);
+            
+            const isTry = n.taskType === 'TRY_ZONE';
+            const isCatch = n.taskType === 'CATCH';
+            
             return {
                 id: n.id,
-                type: 'executionNode',
+                type: isTry ? 'tryZoneExecutionNode' : (isCatch ? 'catchExecutionNode' : 'executionNode'),
                 position: existingNode?.position || n.position || { x: 0, y: 0 },
-                width: existingNode?.width,
-                height: existingNode?.height,
-                className: 'n8n-node-transparent',
-                style: { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' },
+                parentNode: n.parentNode,
+                extent: n.extent,
+                width: n.width || existingNode?.width,
+                height: n.height || existingNode?.height,
+                style: isTry 
+                    ? { width: n.width || 400, height: n.height || 250, zIndex: -1 } 
+                    : { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' },
                 data: {
                     id: n.id,
                     taskId: n.taskId,
-                    label: n.label || n.name || 'Task',
+                    label: n.label || n.name || (isTry ? 'Try Block' : 'Task'),
                     taskType: n.taskType || record?.input?.taskType || 'HTTP',
-                    status: record?.status,
                     duration: record?.duration,
                     httpStatus: record?.result?.status,
                     branchResult: record?.result?.branchResult,
                     failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
                     isEditing: editingTaskId === n.taskId,
                     onInspect: onInspect || (() => {}),
-                    onEditTask: onEditTask || (() => {})
+                    onEditTask: onEditTask || (() => {}),
+                    // Derive Try Zone state from members
+                    status: isTry ? (() => {
+                        const memberIds = n.memberNodeIds || [];
+                        // Get only the LATEST execution for each member node
+                        const latestMemberRecords = memberIds.map((mid: string) => {
+                            const recs = taskExecutions.filter(r => r.nodeId === mid);
+                            return recs.length > 0 ? recs[recs.length - 1] : null;
+                        }).filter((r: any) => r !== null);
+
+                        if (latestMemberRecords.some((r: any) => r.status === 'FAILED' || r.status === 'TIMEOUT' || r.status === 'NO_WORKER_FOUND')) return 'FAILED';
+                        if (latestMemberRecords.length > 0 && latestMemberRecords.every((r: any) => r.status === 'SUCCESS' || r.status === 'BYPASSED')) return 'SUCCESS';
+                        if (latestMemberRecords.some((r: any) => r.status === 'RUNNING' || r.status === 'PENDING')) return 'RUNNING';
+                        return 'PENDING';
+                    })() : record?.status,
+                    retryAttempt: isTry ? (() => {
+                        const memberIds = n.memberNodeIds || [];
+                        const memberRecords = taskExecutions.filter(r => memberIds.includes(r.nodeId));
+                        return Math.max(0, ...memberRecords.map(r => {
+                            const input = typeof r.input === 'string' ? JSON.parse(r.input) : r.input;
+                            return (input as any)?.retryAttempt || 0;
+                        }));
+                    })() : (() => {
+                        const input = typeof record?.input === 'string' ? JSON.parse(record.input) : record?.input;
+                        return (input as any)?.retryAttempt || 0;
+                    })(),
+                    maxAttempts: isTry ? (n.retryPolicy?.maxAttempts || n.data?.retryPolicy?.maxAttempts || 0) : (() => {
+                        const parent = rawNodes.find((pn: any) => pn.id === n.parentNode);
+                        return parent?.retryPolicy?.maxAttempts || parent?.data?.retryPolicy?.maxAttempts || 0;
+                    })(),
+                    isRetrying: !isTry && record?.status === 'PENDING' && (() => {
+                        const input = typeof record?.input === 'string' ? JSON.parse(record.input) : record?.input;
+                        return (input as any)?.retryAttempt > 0;
+                    })()
                 }
             } as Node;
         }));

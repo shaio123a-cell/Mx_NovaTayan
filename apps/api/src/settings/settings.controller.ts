@@ -10,6 +10,11 @@ export class SettingsController {
         return this.settingsService.findAll();
     }
 
+    @Get(':key')
+    findOne(@Param('key') key: string) {
+        return this.settingsService.getByKey(key);
+    }
+
     @Patch(':key')
     update(@Param('key') key: string, @Body('value') value: string) {
         return this.settingsService.update(key, value);

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react';
 
-export type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 interface ToastProps {
     message: string;
@@ -10,7 +10,7 @@ interface ToastProps {
     duration?: number;
 }
 
-export function Toast({ message, type, onClose, duration = 2000 }: ToastProps) {
+export function Toast({ message, type, onClose, duration = 3000 }: ToastProps) {
     useEffect(() => {
         const timer = setTimeout(() => {
             onClose();
@@ -39,7 +39,18 @@ export function Toast({ message, type, onClose, duration = 2000 }: ToastProps) {
                     icon: <Info size={20} className="text-white" />,
                     border: 'border-blue-400'
                 };
+            case 'warning' as any:
+                return {
+                    bg: 'bg-gradient-to-r from-amber-500 to-orange-600',
+                    icon: <AlertCircle size={20} className="text-white" />,
+                    border: 'border-amber-400'
+                };
         }
+        return {
+            bg: 'bg-gradient-to-r from-slate-500 to-slate-600',
+            icon: <Info size={20} className="text-white" />,
+            border: 'border-slate-400'
+        };
     };
 
     const styles = getStyles();

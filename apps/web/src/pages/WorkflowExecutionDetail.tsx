@@ -7,6 +7,7 @@ import { ExecutionVisualizer } from '../components/ExecutionVisualizer'
 import { TaskEditShelf } from '../components/TaskEditShelf'
 import VariableInspectorDrawer from '../components/VariableInspectorDrawer'
 import { 
+    Terminal,
     CheckCircle, 
     AlertCircle, 
     AlertTriangle, 
@@ -28,7 +29,8 @@ import {
     ChevronUp,
     GripVertical,
     ArrowUp,
-    ArrowDown
+    ArrowDown,
+    Shield
 } from 'lucide-react'
 
 function WorkflowExecutionDetail() {
@@ -347,29 +349,50 @@ function WorkflowExecutionDetail() {
                             taskExecutions={execution.taskExecutionRecords || []} 
                             editingTaskId={editingTaskId}
                             onNodeClick={(nodeId) => {
+                                const nodeDef = (stableWorkflow?.nodes as any[])?.find(n => n.id === nodeId);
                                 const record = execution.taskExecutionRecords.find((r: any) => r.nodeId === nodeId);
-                                if (record) {
-                                    const isUtil = record.input?.taskType === 'VARIABLE' || 
-                                                  record.input?.utility === true || 
-                                                  record.task?.taskType === 'VARIABLE' || 
-                                                  record.taskId === '00000000-0000-0000-0000-000000000001' ||
-                                                  record.taskId === 'util-vars' ||
-                                                  record.task?.id === '00000000-0000-0000-0000-000000000001' ||
-                                                  record.task?.name?.toLowerCase().includes('variable');
+                                
+                                if (record || nodeDef?.taskType === 'TRY_ZONE' || nodeDef?.taskType === 'CATCH') {
+                                    const isUtil = record?.input?.taskType === 'VARIABLE' || 
+                                                  record?.input?.utility === true || 
+                                                  record?.task?.taskType === 'VARIABLE' || 
+                                                  record?.taskId === '00000000-0000-0000-0000-000000000001' ||
+                                                  record?.taskId === 'util-vars' ||
+                                                  record?.task?.id === '00000000-0000-0000-0000-000000000001' ||
+                                                  record?.task?.name?.toLowerCase().includes('variable') ||
+                                                  nodeDef?.taskType === 'VARIABLE';
                                     
-                                    const isNested = record.input?.taskType === 'WORKFLOW' || 
-                                                   record.input?.nested === true ||
-                                                   record.task?.taskType === 'WORKFLOW' ||
-                                                   (stableWorkflow?.nodes as any[])?.find(n => n.id === nodeId)?.taskType === 'WORKFLOW';
+                                    const isNested = record?.input?.taskType === 'WORKFLOW' || 
+                                                   record?.input?.nested === true ||
+                                                   record?.task?.taskType === 'WORKFLOW' ||
+                                                   nodeDef?.taskType === 'WORKFLOW';
 
-                                    const isIf = record.input?.taskType === 'IF' || 
-                                               record.input?.ifNode === true ||
-                                               record.task?.taskType === 'IF' ||
-                                               (stableWorkflow?.nodes as any[])?.find(n => n.id === nodeId)?.taskType === 'IF';
+                                    const isIf = record?.input?.taskType === 'IF' || 
+                                               record?.input?.ifNode === true ||
+                                               record?.task?.taskType === 'IF' ||
+                                               nodeDef?.taskType === 'IF';
+
+                                    const isTry = nodeDef?.taskType === 'TRY_ZONE';
+                                    const isCatch = nodeDef?.taskType === 'CATCH';
+
+                                    // Synthesize a record for Try/Catch if missing
+                                    const effectiveRecord = record || {
+                                        id: `virt-${nodeId}`,
+                                        nodeId: nodeId,
+                                        status: isTry ? (() => {
+                                            const members = execution.taskExecutionRecords.filter((r: any) => nodeDef?.memberNodeIds?.includes(r.nodeId));
+                                            if (members.some((r: any) => r.status === 'FAILED' || r.status === 'TIMEOUT')) return 'FAILED';
+                                            if (members.length > 0 && members.every((r: any) => r.status === 'SUCCESS')) return 'SUCCESS';
+                                            if (members.some((r: any) => r.status === 'RUNNING')) return 'RUNNING';
+                                            return 'PENDING';
+                                        })() : (isCatch ? 'SUCCESS' : 'PENDING'),
+                                        task: { name: nodeDef?.label || (isTry ? 'Try Block' : 'Catch Handler') },
+                                        result: {}
+                                    };
 
                                     setSelectedTask({
-                                        ...record,
-                                        taskType: isIf ? 'IF' : (isUtil ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (record.task?.taskType || 'HTTP')))
+                                        ...effectiveRecord,
+                                        taskType: isTry ? 'TRY_ZONE' : (isCatch ? 'CATCH' : (isIf ? 'IF' : (isUtil ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (effectiveRecord.input?.taskType || effectiveRecord.task?.taskType || 'HTTP')))))
                                     });
                                     setInspectMode('task');
                                     setShowInspector(true);
@@ -498,23 +521,14 @@ function WorkflowExecutionDetail() {
                             {inspectMode === 'task' && (
                                 <button 
                                     onClick={() => {
-                                        if (selectedTask.taskType === 'VARIABLE') {
-                                            const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
-                                            setEditingNodeData({
-                                                id: selectedTask.nodeId,
-                                                label: nodeDef?.label || selectedTask.label || selectedTask.task?.name,
-                                                taskType: 'VARIABLE',
-                                                variableExtraction: nodeDef?.variableExtraction || selectedTask.input?.variableExtraction || selectedTask.task?.variableExtraction || { vars: {} }
-                                            });
-                                        } else {
-                                            setEditingTaskId(selectedTask.task?.id);
-                                            const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
-                                            setEditingNodeData({
-                                                id: selectedTask.nodeId,
-                                                label: nodeDef?.label || selectedTask.label || selectedTask.task?.name,
-                                                ...nodeDef
-                                            });
-                                        }
+                                        const nodeDef = (workflow?.nodes as any[])?.find((n: any) => n.id === selectedTask.nodeId);
+                                        setEditingTaskId(selectedTask.task?.id);
+                                        setEditingNodeData({
+                                            id: selectedTask.nodeId,
+                                            label: nodeDef?.label || selectedTask.label || selectedTask.task?.name,
+                                            ...nodeDef,
+                                            taskType: selectedTask.taskType || nodeDef?.taskType
+                                        });
                                         setShowInspector(false);
                                     }}
                                     className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-xs font-black uppercase tracking-tighter transition-all"
@@ -853,10 +867,11 @@ function WorkflowExecutionDetail() {
                                     <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${
                                         selectedTask.taskType === 'VARIABLE' ? 'bg-amber-50 text-amber-600 border-amber-200' : 
                                         selectedTask.taskType === 'WORKFLOW' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
+                                        selectedTask.taskType === 'MCP_CLIENT' ? 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-200' :
                                         selectedTask.taskType === 'IF' ? 'bg-rose-50 text-rose-600 border-rose-200' :
                                         'bg-sky-50 text-sky-600 border-sky-200'
                                     }`}>
-                                        {selectedTask.taskType} Engine Task
+                                        {selectedTask.taskType === 'MCP_CLIENT' ? 'MCP AI Tool' : `${selectedTask.taskType} Engine Task`}
                                     </span>
                                 </div>
 
@@ -932,7 +947,45 @@ function WorkflowExecutionDetail() {
                                     </section>
                                 )}
 
-                                {selectedTask.taskType === 'VARIABLE' && (
+                                {selectedTask.taskType === 'MCP_CLIENT' && (
+                                    <section>
+                                        <h4 className="text-[11px] font-black text-fuchsia-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                                            <Zap size={12} fill="currentColor" /> AI Tool Call Execution
+                                        </h4>
+                                        <div className="bg-fuchsia-50/30 border border-fuchsia-100 rounded-2xl p-6">
+                                            <p className="text-xs text-fuchsia-900/70 leading-relaxed font-medium mb-6">
+                                                This AI node evaluated dynamic variables and invoked a standard Model Context Protocol (MCP) tool.
+                                            </p>
+                                            
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                                <div className="bg-white p-3 rounded-xl border shadow-sm flex flex-col justify-center">
+                                                    <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-1 flex items-center gap-1.5"><Layers size={10}/> Targeted MCP Server</div>
+                                                    <div className="text-xs font-mono font-bold text-slate-700 truncate">{selectedTask.input?.mcpServerName || selectedTask.input?.mcpServerId || '---'}</div>
+                                                    {selectedTask.input?.mcpServerName && selectedTask.input?.mcpServerId && (
+                                                        <div className="text-[8px] text-slate-400 font-mono mt-0.5 opacity-60">ID: {selectedTask.input.mcpServerId}</div>
+                                                    )}
+                                                </div>
+                                                <div className="bg-gradient-to-r from-fuchsia-500 to-purple-600 p-3 rounded-xl border border-fuchsia-400 shadow-sm text-white flex flex-col justify-center">
+                                                    <div className="text-[9px] font-black uppercase tracking-widest opacity-80 mb-1 flex items-center gap-1.5"><Terminal size={10}/> Targeted Tool Name</div>
+                                                    <div className="text-[13px] font-mono font-bold truncate tracking-tight">{selectedTask.input?.mcpToolName || '---'}</div>
+                                                </div>
+                                            </div>
+
+                                            {selectedTask.input?.mcpParameters && (
+                                                <div className="bg-white border border-fuchsia-100 p-4 rounded-xl shadow-xs">
+                                                    <div className="text-[9px] font-black text-fuchsia-400 uppercase mb-3 flex items-center gap-1.5"><CheckCircle size={10}/> Resolved Parameters</div>
+                                                    <pre className="text-[11px] text-fuchsia-900/80 overflow-auto max-h-[300px] font-mono bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                                        {typeof selectedTask.input.mcpParameters === 'string' 
+                                                            ? selectedTask.input.mcpParameters 
+                                                            : JSON.stringify(selectedTask.input.mcpParameters, null, 2)}
+                                                    </pre>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </section>
+                                )}
+
+                                 {selectedTask.taskType === 'VARIABLE' && (
                                     <section>
                                         <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                                             <Zap size={12} className="text-amber-500" /> Variable Engine Context
@@ -952,6 +1005,125 @@ function WorkflowExecutionDetail() {
                                                 </div>
                                             </div>
                                         )}
+                                    </section>
+                                )}
+
+                                {selectedTask.taskType === 'TRY_ZONE' && (
+                                    <section className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                        <h4 className={`text-[11px] font-black uppercase tracking-[0.2em] mb-4 flex items-center gap-2 ${
+                                            selectedTask.status === 'FAILED' ? 'text-red-500' :
+                                            selectedTask.status === 'RUNNING' ? 'text-blue-500' :
+                                            'text-green-600'
+                                        }`}>
+                                            <Shield size={12} /> Resilience Trace
+                                        </h4>
+                                        <div className={`border rounded-2xl p-6 ${
+                                            selectedTask.status === 'FAILED' ? 'bg-red-50 border-red-100' :
+                                            selectedTask.status === 'RUNNING' ? 'bg-blue-50 border-blue-100' :
+                                            'bg-green-50 border-green-100'
+                                        }`}>
+                                            <div className="flex items-center justify-between mb-4">
+                                                <div>
+                                                    <div className={`text-[9px] font-black uppercase tracking-widest ${
+                                                        selectedTask.status === 'FAILED' ? 'text-red-700/60' :
+                                                        selectedTask.status === 'RUNNING' ? 'text-blue-700/60' :
+                                                        'text-green-700/60'
+                                                    }`}>Zone Status</div>
+                                                    <div className={`text-xl font-black ${
+                                                        selectedTask.status === 'FAILED' ? 'text-red-900' :
+                                                        selectedTask.status === 'RUNNING' ? 'text-blue-900' :
+                                                        'text-green-900'
+                                                    }`}>{selectedTask.status}</div>
+                                                </div>
+                                                {(() => {
+                                                    const nodeDef = (workflow?.nodes as any[])?.find(n => n.id === selectedTask.nodeId);
+                                                    const retryPolicy = nodeDef?.retryPolicy || {};
+                                                    const maxAttempts = parseInt(String(retryPolicy.maxAttempts || 0));
+                                                    
+                                                    const members = execution.taskExecutionRecords.filter((r: any) => nodeDef?.memberNodeIds?.includes(r.nodeId));
+                                                    const maxRetry = Math.max(0, ...members.map((r: any) => {
+                                                        const input = typeof r.input === 'string' ? JSON.parse(r.input) : r.input;
+                                                        return (input as any)?.retryAttempt || 0;
+                                                    }));
+                                                    
+                                                    // Count unique attempts that resulted in failure
+                                                    const failedAttempts = new Set(members.filter((r: any) => r.status === 'FAILED' || r.status === 'TIMEOUT').map((r: any) => {
+                                                        const input = typeof r.input === 'string' ? JSON.parse(r.input) : r.input;
+                                                        return (input as any)?.retryAttempt || 0;
+                                                    })).size;
+
+                                                    return (
+                                                        <div className="flex gap-3">
+                                                            <div className={`bg-white px-4 py-2 rounded-xl border shadow-sm text-center ${
+                                                                failedAttempts > 0 ? 'border-amber-200' : 'border-slate-100'
+                                                            }`}>
+                                                                <div className="text-[9px] font-black text-slate-400 uppercase">Attempt Progression</div>
+                                                                <div className={`text-lg font-black ${
+                                                                    failedAttempts > maxAttempts ? 'text-red-600' : 
+                                                                    failedAttempts > 0 ? 'text-amber-600' : 'text-slate-400'
+                                                                }`}>
+                                                                    {failedAttempts} <span className="text-[10px] text-slate-300">/ {maxAttempts + 1}</span>
+                                                                </div>
+                                                                <div className="text-[7px] font-bold text-slate-300 uppercase leading-none">(including initial)</div>
+                                                            </div>
+                                                            <div className={`bg-white px-4 py-2 rounded-xl border shadow-sm text-center ${
+                                                                selectedTask.status === 'FAILED' ? 'border-red-200' :
+                                                                selectedTask.status === 'RUNNING' ? 'border-blue-200' :
+                                                                'border-green-200'
+                                                            }`}>
+                                                                <div className="text-[9px] font-black text-slate-400 uppercase">Latest Retry Cycle</div>
+                                                                <div className={`text-lg font-black ${
+                                                                    selectedTask.status === 'FAILED' ? 'text-red-600' :
+                                                                    selectedTask.status === 'RUNNING' ? 'text-blue-600' :
+                                                                    'text-green-600'
+                                                                }`}>{maxRetry}</div>
+                                                                <div className="text-[7px] font-bold text-slate-300 uppercase leading-none">current index</div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </div>
+                                            <p className="text-xs text-green-800/70 leading-relaxed font-medium">
+                                                This zone monitors its member nodes for failures. If a failure occurs, it enforces the configured retry policy before escalating to the catch handler.
+                                            </p>
+                                        </div>
+
+                                        {(() => {
+                                            // Extract _error if it exists in any member node's result context
+                                            const nodeDef = (workflow?.nodes as any[])?.find(n => n.id === selectedTask.nodeId);
+                                            const members = execution.taskExecutionRecords.filter((r: any) => nodeDef?.memberNodeIds?.includes(r.nodeId));
+                                            const lastFailed = [...members].reverse().find(m => m.status === 'FAILED' || m.status === 'TIMEOUT' || m.result?.variables?._error);
+                                            const errorContext = lastFailed?.result?.variables?._error;
+
+                                            if (errorContext) {
+                                                return (
+                                                    <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                                                        <div className="text-[10px] font-black text-red-400 uppercase tracking-widest px-1">Caught Exception Context</div>
+                                                        <div className="bg-red-50 border border-red-100 rounded-2xl p-6 font-mono text-[11px] text-red-900 shadow-sm">
+                                                            <div className="flex items-center gap-2 mb-4 pb-2 border-b border-red-100">
+                                                                <AlertTriangle size={14} className="text-red-500" />
+                                                                <span className="font-black uppercase tracking-tight">Node: {lastFailed.task?.name || lastFailed.nodeId}</span>
+                                                            </div>
+                                                            <pre className="whitespace-pre-wrap break-all">{typeof errorContext === 'object' ? JSON.stringify(errorContext, null, 2) : String(errorContext)}</pre>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
+                                    </section>
+                                )}
+
+                                {selectedTask.taskType === 'CATCH' && (
+                                    <section>
+                                        <h4 className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                                            <Shield size={12} fill="currentColor" /> Exception Recovery
+                                        </h4>
+                                        <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 border-l-4 border-l-indigo-500">
+                                            <p className="text-xs text-indigo-900 font-medium leading-relaxed">
+                                                This node was activated following an unrecovered failure in the associated Try Zone. Use the variable context below to inspect the <span className="font-mono bg-white px-1 rounded shadow-sm text-indigo-600">_error</span> payload passed from the failed node.
+                                            </p>
+                                        </div>
                                     </section>
                                 )}
 
@@ -987,7 +1159,7 @@ function WorkflowExecutionDetail() {
                                     const isFirst = index === 0;
                                     const isLast = index === wfiSectionOrder.length - 1;
                                     
-                                    if (sectionId === 'response' && selectedTask.taskType === 'HTTP') {
+                                    if (sectionId === 'response' && (selectedTask.taskType === 'HTTP' || selectedTask.taskType === 'MCP_CLIENT')) {
                                         return (
                                             <section key="response" className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all">
                                                 <div 

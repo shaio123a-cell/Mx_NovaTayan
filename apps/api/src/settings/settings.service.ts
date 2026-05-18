@@ -11,6 +11,7 @@ export class SettingsService implements OnModuleInit {
             { key: 'SUCCESS_CODES_DEFAULT', value: '200-299', description: 'HTTP success status code ranges (e.g. 200, 201 or 200-299)' },
             { key: 'FAILURE_CODES_DEFAULT', value: '400-599', description: 'HTTP failure status code ranges (e.g. 400-599)' },
             { key: 'AI_LLM_PROVIDERS', value: '[]', description: 'JSON array of LLM provider connections defining the Copilot fallback chain (priority ordered).' },
+            { key: 'MCP_SERVERS_CONFIG', value: '[]', description: 'Central registry for Model Context Protocol (MCP) servers and capability buses.' },
         ];
 
         for (const d of defaults) {
@@ -28,9 +29,10 @@ export class SettingsService implements OnModuleInit {
     }
 
     async update(key: string, value: string) {
-        return this.prisma.systemSetting.update({
+        return this.prisma.systemSetting.upsert({
             where: { key },
-            data: { value },
+            update: { value },
+            create: { key, value, description: key.replace(/_/g, ' ') },
         });
     }
 

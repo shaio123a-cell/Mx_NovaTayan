@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { tasksApi } from '../api/tasks'
+import { tasksApi, mcpApi } from '../api/tasks'
+import { settingsApi } from '../api/settings'
 import { workflowsApi } from '../api/workflows'
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 // Output processing is now per-variable; top-level preview removed.
 import { VariableManager } from './VariableManager';
 import { X, AlertTriangle, Zap, ShieldCheck, Lock, Unlock, Clock, FileText, List, Key, Plus, Trash2, Link2, ExternalLink, Info, Folder, Layers, Library, ArrowRight, Tag, Settings, Globe, ChevronDown, ChevronUp, Grid, HardDrive, Box, Activity, Sparkles, Loader2, GitBranch } from 'lucide-react'
@@ -208,9 +209,43 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
     const isNestedWorkflow = nodeData?.taskType === 'WORKFLOW'
     const isIfNode = nodeData?.taskType === 'IF' || taskId === 'util-if'
     const isUtility = nodeData?.taskType === 'VARIABLE' || taskId === '00000000-0000-0000-0000-000000000001' || taskId === 'util-vars'
+    const isMcpNode = nodeData?.type === 'mcp_client' || nodeData?.taskType === 'MCP_CLIENT' || (nodeData && nodeData.id?.startsWith('mcp-'));
+    const isTryZone = nodeData?.taskType === 'TRY_ZONE'
+    const isCatchNode = nodeData?.taskType === 'CATCH'
     const [openAccordions, setOpenAccordions] = useState<Record<string, boolean>>({ headers: true, payload: true, meta: false });
     const toggleAccordion = (key: string) => setOpenAccordions(prev => ({ ...prev, [key]: !prev[key] }));
     const initializedRef = React.useRef<string | null>(null);
+
+    // MCP State
+    const [mcpServerId, setMcpServerId] = useState('');
+    const [mcpToolName, setMcpToolName] = useState('');
+    const [mcpParameters, setMcpParameters] = useState('{}');
+    const [isLoadingMcpTools, setIsLoadingMcpTools] = useState(false);
+    const [availableMcpTools, setAvailableMcpTools] = useState<any[]>([]);
+
+    const { data: mcpServers = [] } = useQuery({
+        queryKey: ['mcp_servers'],
+        queryFn: async () => {
+            const res = await settingsApi.getByKey('MCP_SERVERS_CONFIG');
+            if (res?.value) return JSON.parse(res.value);
+            return [];
+        }
+    });
+
+    useEffect(() => {
+        if (!mcpServerId) {
+            setAvailableMcpTools([]);
+            return;
+        }
+        const server = mcpServers.find((s: any) => s.id === mcpServerId);
+        if (!server) return;
+        
+        setIsLoadingMcpTools(true);
+        mcpApi.listMcpTools(server.url)
+            .then(res => setAvailableMcpTools(res.tools || []))
+            .catch(() => showToast('Failed to fetch tools from MCP server.', 'error'))
+            .finally(() => setIsLoadingMcpTools(false));
+    }, [mcpServerId, mcpServers]);
 
     // IF Node State
     const [conditionGroups, setConditionGroups] = useState<any[]>(nodeData?.conditionGroups || [{ 
@@ -220,6 +255,17 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
 
     // Nested Workflow State
     const [inputMapping, setInputMapping] = useState<Record<string, any>>({})
+
+    // Try Zone / Catch State
+    const [retryPolicy, setRetryPolicy] = useState<any>(nodeData?.retryPolicy || {
+        maxAttempts: 3,
+        initialDelaySeconds: 5,
+        backoffType: 'fixed',
+        retryOnStatuses: ['FAILED', 'TIMEOUT']
+    });
+    const [catchConfig, setCatchConfig] = useState<any>(nodeData?.catchConfig || {
+        propagateError: true
+    });
 
     // Form State
     const [name, setName] = useState('')
@@ -285,13 +331,39 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
         try {
             let safeHeaders = {};
             try { safeHeaders = JSON.parse(headers); } catch {}
+
+            // Pre-fetch tools for ALL registered MCP servers so the AI always
+            // has the full toolset — even on a fresh node with no server selected
+            let allServerTools: { serverId: string; serverName: string; serverUrl: string; tools: any[] }[] = [];
+            if (isMcpNode && mcpServers.length > 0) {
+                allServerTools = await Promise.all(
+                    mcpServers.map(async (s: any) => {
+                        try {
+                            const res = await mcpApi.listMcpTools(s.url);
+                            return { serverId: s.id, serverName: s.name, serverUrl: s.url, tools: res.tools || [] };
+                        } catch {
+                            return { serverId: s.id, serverName: s.name, serverUrl: s.url, tools: [] };
+                        }
+                    })
+                );
+            }
             
             const response = await fetch('/api/ai/generate-task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     documentation: userMessage,
-                    currentState: { name, description, command: { method, url, headers: safeHeaders, body } },
+                    currentState: { 
+                        name, description, 
+                        isMcpNode,
+                        command: { method, url, headers: safeHeaders, body },
+                        mcpMetadata: isMcpNode ? {
+                            registeredServers: allServerTools.length > 0
+                                ? allServerTools.map(s => ({ id: s.serverId, name: s.serverName, url: s.serverUrl, availableTools: s.tools }))
+                                : mcpServers.map((s: any) => ({ id: s.id, name: s.name, url: s.url, availableTools: [] })),
+                            currentServerId: mcpServerId || 'auto-select',
+                        } : undefined
+                    },
                     chatHistory: chatHistory 
                 })
             });
@@ -315,7 +387,13 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                  setHeadersOverride(true);
                  setHeaders(JSON.stringify(rawH, null, 2));
             }
-            if (data.variableExtraction) {
+             if (responseData.mcp_config) {
+                  const mcp = responseData.mcp_config;
+                  if (mcp.serverId) setMcpServerId(mcp.serverId);
+                  if (mcp.toolName) setMcpToolName(mcp.toolName);
+                  if (mcp.parameters) setMcpParameters(JSON.stringify(mcp.parameters, null, 4));
+             }
+             if (data.variableExtraction) {
                  const newVars: Record<string, any> = { ...outputVars };
                  data.variableExtraction.forEach((ve: any) => {
                      newVars[ve.variableName] = { 
@@ -395,10 +473,10 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
         const targetData = isNestedWorkflow ? childWorkflow : task;
         const currentSessionId = nodeData?.id || taskId;
 
-        if (!targetData && !isUtility && !isIfNode) {
+        if (!targetData && !isUtility && !isIfNode && !isMcpNode && !isTryZone && !isCatchNode) {
             initializedRef.current = null;
             // Set folder if creating new
-            if (!taskId && !nodeData && folderId && !isIfNode) {
+            if (!taskId && !nodeData && folderId && !isIfNode && !isMcpNode && !isTryZone && !isCatchNode) {
                 setTargetFolderId(folderId);
             }
             return;
@@ -421,6 +499,33 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
             setName(nodeData.label || 'Variables Manipulation')
             setDescription(nodeData.description || '')
             setOutputVars(nodeData.variableExtraction?.vars || {})
+            setInheritedVars({});
+            setInheritedSanityChecks([]);
+        } else if (isMcpNode && nodeData) {
+            setName(nodeData.label || 'MCP Action')
+            setDescription(nodeData.description || '')
+            setMcpServerId(nodeData.mcpServerId || '')
+            setMcpToolName(nodeData.mcpToolName || '')
+            setMcpParameters(nodeData.mcpParameters ? (typeof nodeData.mcpParameters === 'string' ? nodeData.mcpParameters : JSON.stringify(nodeData.mcpParameters, null, 2)) : '{}')
+            setInheritedVars({});
+            setInheritedSanityChecks([]);
+        } else if (isTryZone && nodeData) {
+            setName(nodeData.label || 'Try Block')
+            setDescription(nodeData.description || '')
+            setRetryPolicy(nodeData.retryPolicy || {
+                maxAttempts: 3,
+                initialDelaySeconds: 5,
+                backoffType: 'fixed',
+                retryOnStatuses: ['FAILED', 'TIMEOUT']
+            });
+            setInheritedVars({});
+            setInheritedSanityChecks([]);
+        } else if (isCatchNode && nodeData) {
+            setName(nodeData.label || 'Catch Handler')
+            setDescription(nodeData.description || '')
+            setCatchConfig(nodeData.catchConfig || {
+                propagateError: true
+            });
             setInheritedVars({});
             setInheritedSanityChecks([]);
         } else if (isNestedWorkflow && childWorkflow) {
@@ -565,7 +670,7 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                     ...nodeData,
                     label: name,
                     taskId,
-                    taskType: isIfNode ? 'IF' : (isNestedWorkflow ? 'WORKFLOW' : (isUtility ? 'VARIABLE' : (task?.taskType || 'HTTP'))),
+                    taskType: isIfNode ? 'IF' : (isNestedWorkflow ? 'WORKFLOW' : (isUtility ? 'VARIABLE' : (isMcpNode ? 'MCP_CLIENT' : (isTryZone ? 'TRY_ZONE' : (isCatchNode ? 'CATCH' : (task?.taskType || 'HTTP')))))),
                     inputMapping: isNestedWorkflow ? inputMapping : undefined,
                     variableExtraction: { vars: outputVars },
                     sanityChecks,
@@ -576,9 +681,14 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                     body: bodyOverride ? body : undefined,
                     headers: headersOverride ? finalHeaders : undefined,
                     targetTags: overlayTags.length > 0 ? overlayTags : undefined,
-                    conditionGroups: isIfNode ? conditionGroups : undefined
+                    conditionGroups: isIfNode ? conditionGroups : undefined,
+                    retryPolicy: isTryZone ? retryPolicy : undefined,
+                    catchConfig: isCatchNode ? catchConfig : undefined,
+                    mcpServerId: isMcpNode ? mcpServerId : undefined,
+                    mcpToolName: isMcpNode ? mcpToolName : undefined,
+                    mcpParameters: isMcpNode ? mcpParameters : undefined
                 });
-                showToast(isIfNode ? 'Branch logic saved!' : (isUtility ? 'Variables saved successfully!' : 'Workflow node updated!'), 'success');
+                showToast(isIfNode ? 'Branch logic saved!' : (isUtility ? 'Variables saved successfully!' : (isTryZone ? 'Retry policy saved!' : (isCatchNode ? 'Catch logic saved!' : 'Workflow node updated!'))), 'success');
                 onClose();
                 return;
             }
@@ -769,12 +879,15 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                 )}
 
                 <div style={{ display: 'flex', padding: '0 32px', borderBottom: '1px solid #eee', marginTop: '16px' }}>
-                    {!isUtility && !isNestedWorkflow && !isIfNode && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
+                    {!isUtility && !isNestedWorkflow && !isIfNode && !isTryZone && !isCatchNode && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Properties" />}
                     {isIfNode && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Branching Logic" />}
-                    {!isUtility && !isNestedWorkflow && !isIfNode && <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />}
-                    {!isUtility && !isNestedWorkflow && !isIfNode && <TabButton active={activeTab === 'auth'} onClick={() => setActiveTab('auth')} label="Authorization" />}
+                    {isTryZone && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Resilience Policy" />}
+                    {isCatchNode && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Error Handling" />}
+                    
+                    {!isUtility && !isNestedWorkflow && !isIfNode && !isTryZone && !isCatchNode && <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} label="Validation" />}
+                    {!isUtility && !isNestedWorkflow && !isIfNode && !isTryZone && !isCatchNode && <TabButton active={activeTab === 'auth'} onClick={() => setActiveTab('auth')} label="Authorization" />}
                     {isNestedWorkflow && <TabButton active={activeTab === 'details'} onClick={() => setActiveTab('details')} label="Input Mapping" />}
-                    {!isIfNode && (
+                    {!isIfNode && !isTryZone && !isCatchNode && (
                         <TabButton 
                             active={activeTab === 'output'} 
                             onClick={() => setActiveTab('output')} 
@@ -909,7 +1022,182 @@ export function TaskEditShelf({ taskId, folderId, nodeData, availableUpstreamVar
                                 </div>
                             )}
 
-                            {!isNestedWorkflow && !isIfNode && (
+                            {isMcpNode && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                        <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                                            <div className="flex items-center gap-2"><Activity size={16} className="text-blue-500" /><span className="text-[12px] font-black uppercase tracking-widest text-slate-700">Capability Protocol (MCP)</span></div>
+                                        </div>
+                                        <div className="p-8 space-y-8">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                <div className="space-y-4">
+                                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Target Registry</label>
+                                                    <select className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold shadow-sm focus:border-blue-400 outline-none" value={mcpServerId} onChange={(e) => setMcpServerId(e.target.value)}>
+                                                        <option value="">-- Select Registered Server --</option>
+                                                        {mcpServers.map((s: any) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                                                    </select>
+                                                </div>
+                                                <div className="space-y-4">
+                                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Exposed Tool</label>
+                                                    <div className="relative group">
+                                                        <select disabled={!mcpServerId || isLoadingMcpTools} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold shadow-sm focus:border-blue-400 outline-none disabled:bg-slate-50 disabled:text-slate-300" value={mcpToolName} onChange={(e) => setMcpToolName(e.target.value)}>
+                                                            <option value="">{isLoadingMcpTools ? 'Fetching capabilities...' : '-- Select Capability --'}</option>
+                                                            {availableMcpTools.map((t: any) => (<option key={t.name} value={t.name}>{t.name}</option>))}
+                                                        </select>
+                                                        <div className="absolute right-4 top-1/2 -translate-y-1/2">{isLoadingMcpTools ? <Loader2 size={14} className="text-blue-500 animate-spin" /> : <ChevronDown size={14} className="text-slate-400" />}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-4 pt-6 border-t border-slate-100">
+                                                <div className="flex justify-end mb-3">
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            try {
+                                                                const parsed = JSON.parse(mcpParameters);
+                                                                setMcpParameters(JSON.stringify(parsed, null, 4));
+                                                            } catch(err) {
+                                                                showToast('Invalid JSON. Cannot beautify.', 'error');
+                                                            }
+                                                        }}
+                                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all bg-blue-50 text-blue-600 hover:bg-blue-100 active:scale-95 cursor-pointer`}
+                                                    >
+                                                        <Sparkles size={12} /> Format JSON
+                                                    </button>
+                                                </div>
+                                                <MaterialTextArea 
+                                                    label="Input Parameters (JSON)" 
+                                                    value={mcpParameters} 
+                                                    onChange={setMcpParameters} 
+                                                    height="250px" 
+                                                    mono 
+                                                    enableVariables 
+                                                    onRequestVariable={openVarPicker}
+                                                    availableVars={availableUpstreamVars}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {isTryZone && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                                        <Clock size={18} className="text-blue-500" />
+                                        <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                            RESILIENCE & RETRY POLICY
+                                        </h4>
+                                    </div>
+
+                                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-8">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                            <MaterialInput 
+                                                label="Maximum Execution Attempts" 
+                                                type="number"
+                                                value={retryPolicy.maxAttempts} 
+                                                onChange={(val) => setRetryPolicy({ ...retryPolicy, maxAttempts: parseInt(val) || 0 })}
+                                            />
+                                            <MaterialInput 
+                                                label="Initial Delay (Seconds)" 
+                                                type="number"
+                                                value={retryPolicy.initialDelaySeconds} 
+                                                onChange={(val) => setRetryPolicy({ ...retryPolicy, initialDelaySeconds: parseInt(val) || 0 })}
+                                            />
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                            <div className="space-y-4">
+                                                <MaterialSelect 
+                                                    label="Backoff Strategy"
+                                                    value={retryPolicy.backoffType}
+                                                    onChange={(val) => setRetryPolicy({ ...retryPolicy, backoffType: val })}
+                                                    options={['none', 'fixed', 'exponential']}
+                                                />
+                                                <div className="px-2">
+                                                    <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                                                        <Info size={10} />
+                                                        <span className="text-[9px] font-black uppercase tracking-tighter">Strategy Details</span>
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-500 font-medium leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100 italic">
+                                                        {retryPolicy.backoffType === 'none' && (
+                                                            <><strong>NONE:</strong> Retries execute immediately with 0 delay. <br/><em>Example: Re-run node as soon as failure occurs.</em></>
+                                                        )}
+                                                        {retryPolicy.backoffType === 'fixed' && (
+                                                            <><strong>FIXED:</strong> Delay remains constant for every attempt. <br/><em>Example: 5s → 5s → 5s Delay.</em></>
+                                                        )}
+                                                        {retryPolicy.backoffType === 'exponential' && (
+                                                            <><strong>EXPONENTIAL:</strong> Delay doubles after each failed attempt. <br/><em>Example: 5s → 10s → 20s → 40s Delay.</em></>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <MaterialInput 
+                                                label="Maximum Delay (Seconds)" 
+                                                type="number"
+                                                value={retryPolicy.maxDelaySeconds || 60} 
+                                                onChange={(val) => setRetryPolicy({ ...retryPolicy, maxDelaySeconds: parseInt(val) || 0 })}
+                                                disabled={retryPolicy.backoffType === 'none' || retryPolicy.backoffType === 'fixed'}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-blue-50/50 rounded-2xl p-6 border border-blue-100 flex items-start gap-4">
+                                        <div className="p-2 bg-white rounded-xl border border-blue-100 text-blue-500 shadow-sm">
+                                            <ShieldCheck size={20} />
+                                        </div>
+                                        <div>
+                                            <h5 className="text-[11px] font-black text-blue-900 uppercase tracking-tight mb-1">Retry Behavior Note</h5>
+                                            <p className="text-[10px] text-blue-800/70 font-medium leading-relaxed">
+                                                The zone will attempt to re-execute failing member nodes according to the strategy above. 
+                                                If all retry attempts are exhausted, the workflow will shift context to the attached <span className="font-bold underline">CATCH handler</span> if one exists.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {isCatchNode && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                                        <AlertTriangle size={18} className="text-red-500" />
+                                        <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                            ERROR HANDLING STRATEGY
+                                        </h4>
+                                    </div>
+
+                                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
+                                        <div className="flex items-center gap-4">
+                                            <div className="flex-1">
+                                                <h5 className="text-sm font-black text-slate-800 mb-1">Propagate Error to Parent</h5>
+                                                <p className="text-xs text-slate-500 font-medium">If enabled, the original error that triggered the catch will still mark the overall workflow as failed after the catch handler finishes.</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => setCatchConfig({ ...catchConfig, propagateError: !catchConfig.propagateError })}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${catchConfig.propagateError ? 'bg-red-500' : 'bg-slate-200'}`}
+                                            >
+                                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${catchConfig.propagateError ? 'translate-x-6' : 'translate-x-1'}`} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-red-50/50 rounded-2xl p-6 border border-red-100 flex items-start gap-4">
+                                        <div className="p-2 bg-white rounded-xl border border-red-100 text-red-500 shadow-sm">
+                                            <Zap size={20} />
+                                        </div>
+                                        <div>
+                                            <h5 className="text-[11px] font-black text-red-900 uppercase tracking-tight mb-1">Catch Handler Scope</h5>
+                                            <p className="text-[10px] text-red-800/70 font-medium leading-relaxed">
+                                                Nodes connected to this Catch handler will only execute if a failure occurs within the associated Try Zone. 
+                                                The error details will be available in the <span className="font-mono text-red-900">_error</span> variable.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {!isNestedWorkflow && !isIfNode && !isMcpNode && !isTryZone && !isCatchNode && (
                                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                     {/* Section 1: Target API */}
                                     <div className={`bg-white rounded-2xl border ${urlOverride || methodOverride ? 'border-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.05)]' : 'border-slate-200'} shadow-sm overflow-hidden transition-all duration-300`}>

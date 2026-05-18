@@ -18,6 +18,10 @@
 # Workflow Utilities 
 - IFN - If node - is a node that is used to evaluate a condition and return a value based on the condition
 - VMA - Variables Manipulation Activity - is a node that is used to manipulate variables in a workflow
-- 
+
+
+# Try Zone 
+TRZ - Try Zone 
+CTC - Catch Zone 
 
 

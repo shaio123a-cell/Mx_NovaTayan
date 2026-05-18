@@ -11,6 +11,7 @@ import {
 import { VariableManager } from './VariableManager';
 import { schedulingApi } from '../api/scheduling';
 import { ExecutionPredictor } from './ExecutionPredictor';
+import { VariableAwareInput } from './VariableAwareInput';
 import { WebhookTriggerManager } from './WebhookTriggerManager';
 import { TreeFolderPicker } from './TreeFolderPicker';
 

@@ -23,10 +23,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import { workflowsApi } from '../api/workflows'
 import { TaskEditShelf } from '../components/TaskEditShelf'
-import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil, Zap, Settings2, X, Box, GitBranch, LayoutDashboard, Clock, Bell, Info, Layers, Shield, ChevronRight, Folder } from 'lucide-react'
+import { Network, Check, Send, RefreshCw, Trash2, Terminal, Activity, Pencil, Zap, Settings2, X, Box, GitBranch, LayoutDashboard, Clock, Bell, Info, Layers, Shield, ChevronRight, Folder, Undo2, Redo2, ChevronDown, Sparkles, Maximize2, Minimize2 } from 'lucide-react'
 import { useDirtyState } from '../context/DirtyStateContext'
 import { useToast } from '../context/ToastContext'
 import { WorkflowAdminShelf } from '../components/WorkflowAdminShelf'
+import { TryZoneNode, CatchNode } from '../components/TryCatchNodes'
+import { ZoneDeleteModal } from '../components/ZoneDeleteModal'
 
 const initialNodes: Node[] = []
 const initialEdges: any[] = []
@@ -207,6 +209,7 @@ function N8nTaskNode({ data }: any) {
         const FallbackIcon = () => {
             if (isVariable) return <Zap size={18} className="text-yellow-400" fill="currentColor" />;
             if (data.taskType === 'WORKFLOW') return <Layers size={18} className="text-white" />;
+            if (data.taskType === 'MCP_CLIENT') return <Sparkles size={18} className="text-fuchsia-400" fill="currentColor" />;
             switch (method) {
                 case 'POST': return <Send size={14} className="text-blue-400" />;
                 case 'PUT': return <RefreshCw size={14} className="text-yellow-400" />;
@@ -232,10 +235,12 @@ function N8nTaskNode({ data }: any) {
 
     const isUtility = data.taskType === 'VARIABLE' || data.taskId === '00000000-0000-0000-0000-000000000001' || data.taskId === 'util-vars';
     const isWorkflow = data.taskType === 'WORKFLOW';
+    const isMcp = data.taskType === 'MCP_CLIENT';
+    const isCompact = data.isCompact !== false;
 
     return (
         <div style={{ 
-            minWidth: isUtility ? '180px' : '240px',
+            minWidth: isCompact && !isUtility ? '200px' : '240px',
             position: 'relative',
         }} className="hover:border-primary-500/50 transition-all group">
             
@@ -244,11 +249,13 @@ function N8nTaskNode({ data }: any) {
             <div style={{
                 position: 'absolute',
                 inset: 0,
-                background: isWorkflow ? '#32a895' : (isUtility ? '#ffcc00' : '#202226'),
-                clipPath: isUtility 
-                    ? 'none' 
-                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '12px'),
+                background: isMcp ? '#d946ef' : (isWorkflow ? '#32a895' : (isUtility ? '#ffcc00' : '#202226')),
+                clipPath: isMcp 
+                    ? 'polygon(15px 0%, 100% 0%, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0% 100%, 0% 15px)'
+                    : (isUtility 
+                        ? 'none' 
+                        : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none')),
+                borderRadius: isMcp ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '12px')),
                 zIndex: 0
             }} />
 
@@ -256,11 +263,13 @@ function N8nTaskNode({ data }: any) {
             <div style={{
                 position: 'absolute',
                 inset: '1.5px', // Border width
-                background: isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : '#111217'),
-                clipPath: isUtility 
-                    ? 'none' 
-                    : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none'),
-                borderRadius: isUtility ? '999px' : (isWorkflow ? '0' : '11px'),
+                background: isMcp ? 'linear-gradient(135deg, #4a044e 0%, #111217 100%)' : (isWorkflow ? 'linear-gradient(135deg, #032cfc 0%, #021a99 100%)' : (isUtility ? 'linear-gradient(135deg, #1e1b0a 0%, #111217 100%)' : '#111217')),
+                clipPath: isMcp 
+                    ? 'polygon(15px 0%, 100% 0%, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0% 100%, 0% 15px)'
+                    : (isUtility 
+                        ? 'none' 
+                        : (isWorkflow ? 'polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)' : 'none')),
+                borderRadius: isMcp ? '0' : (isUtility ? '999px' : (isWorkflow ? '0' : '11px')),
                 zIndex: 1
             }} />
 
@@ -304,8 +313,8 @@ function N8nTaskNode({ data }: any) {
                         {renderIcon()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: isWorkflow ? '#ffffff80' : '#464c54', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            {isWorkflow ? 'WORKFLOW' : (isUtility ? 'UTILITY' : data.method)}
+                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: isWorkflow ? '#ffffff80' : (isMcp ? '#d946ef' : '#464c54'), textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            {isWorkflow ? 'WORKFLOW' : (isUtility ? 'UTILITY' : (isMcp ? 'AI TOOL' : data.method))}
                         </div>
                         <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#f2f5f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.label}</div>
                     </div>
@@ -336,75 +345,91 @@ function N8nTaskNode({ data }: any) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {!isUtility ? (
                         <>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Target Tags</label>
-                                <input
-                                    style={{ 
-                                        background: '#0b0c10', 
-                                        border: '1px solid #202226', 
-                                        borderRadius: '6px', 
-                                        padding: '4px 8px', 
-                                        fontSize: '11px', 
-                                        color: '#f05a28',
-                                        outline: 'none',
-                                        width: '100%'
-                                    }}
-                                    className="focus:border-primary-500 shadow-inner"
-                                    defaultValue={data.targetTags?.join(', ') || ''}
-                                    onChange={(e) => data.onChangeTargetTags(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                    placeholder="e.g. gpu, high-mem"
-                                />
-                            </div>
+                            {!isCompact && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }} className="animate-in fade-in slide-in-from-top-1">
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Target Tags</label>
+                                        <input
+                                            style={{ 
+                                                background: '#0b0c10', 
+                                                border: '1px solid #202226', 
+                                                borderRadius: '6px', 
+                                                padding: '4px 8px', 
+                                                fontSize: '11px', 
+                                                color: '#f05a28',
+                                                outline: 'none',
+                                                width: '100%'
+                                            }}
+                                            className="focus:border-primary-500 shadow-inner"
+                                            defaultValue={data.targetTags?.join(', ') || ''}
+                                            onChange={(e) => data.onChangeTargetTags(e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            placeholder="e.g. gpu, high-mem"
+                                        />
+                                    </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Failure Strategy</label>
-                                <select
-                                    style={{ 
-                                        background: '#0b0c10', 
-                                        border: '1px solid #202226', 
-                                        borderRadius: '6px', 
-                                        padding: '4px 4px', 
-                                        fontSize: '10px', 
-                                        color: '#d8d9da',
-                                        outline: 'none',
-                                        width: '100%',
-                                        cursor: 'pointer'
-                                    }}
-                                    className="focus:border-primary-500"
-                                    value={data.failureStrategy || 'SUCCESS_REQUIRED'}
-                                    onChange={(e) => data.onChangeFailureStrategy(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <option value="SUCCESS_REQUIRED">Stop On Failure</option>
-                                    <option value="CONTINUE_ON_FAIL">Continue On Failure</option>
-                                </select>
-                            </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Failure Strategy</label>
+                                        <select
+                                            style={{ 
+                                                background: '#0b0c10', 
+                                                border: '1px solid #202226', 
+                                                borderRadius: '6px', 
+                                                padding: '4px 4px', 
+                                                fontSize: '10px', 
+                                                color: '#d8d9da',
+                                                outline: 'none',
+                                                width: '100%',
+                                                cursor: 'pointer'
+                                            }}
+                                            className="focus:border-primary-500"
+                                            value={data.failureStrategy || 'SUCCESS_REQUIRED'}
+                                            onChange={(e) => data.onChangeFailureStrategy(e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <option value="SUCCESS_REQUIRED">Stop On Failure</option>
+                                            <option value="CONTINUE_ON_FAIL">Continue On Failure</option>
+                                        </select>
+                                    </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Status Override</label>
-                                <select
-                                    style={{ 
-                                        background: '#0b0c10', 
-                                        border: '1px solid #202226', 
-                                        borderRadius: '6px', 
-                                        padding: '4px 4px', 
-                                        fontSize: '10px', 
-                                        color: '#d8d9da',
-                                        outline: 'none',
-                                        width: '100%',
-                                        cursor: 'pointer'
-                                    }}
-                                    className="focus:border-primary-500"
-                                    value={data.failureStatusOverride || 'FAILED'}
-                                    onChange={(e) => data.onChangeFailureStatusOverride(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <option value="FAILED">FAILED</option>
-                                    <option value="SKIPPED">SKIPPED</option>
-                                    <option value="SUCCESS">SUCCESS</option>
-                                </select>
-                            </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <label style={{ fontSize: '9px', color: '#464c54', fontWeight: 'bold', textTransform: 'uppercase' }}>Status Override</label>
+                                        <select
+                                            style={{ 
+                                                background: '#0b0c10', 
+                                                border: '1px solid #202226', 
+                                                borderRadius: '6px', 
+                                                padding: '4px 4px', 
+                                                fontSize: '10px', 
+                                                color: '#d8d9da',
+                                                outline: 'none',
+                                                width: '100%',
+                                                cursor: 'pointer'
+                                            }}
+                                            className="focus:border-primary-500"
+                                            value={data.failureStatusOverride || 'FAILED'}
+                                            onChange={(e) => data.onChangeFailureStatusOverride(e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <option value="FAILED">FAILED</option>
+                                            <option value="SKIPPED">SKIPPED</option>
+                                            <option value="SUCCESS">SUCCESS</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+                            {isCompact && (
+                                <div className="border-t border-[#202226] mt-2 pt-2 flex items-center justify-between">
+                                    <div className="text-[8px] font-black text-slate-500 uppercase tracking-tight">
+                                        {data.failureStrategy === 'CONTINUE_ON_FAIL' ? 'Continue mode' : 'Stop mode'}
+                                    </div>
+                                    <div className="flex gap-1">
+                                        {data.targetTags?.slice(0, 2).map((t: string) => (
+                                            <span key={t} className="text-[7px] bg-primary-900/30 text-primary-400 px-1 rounded border border-primary-900/50">{t}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </>
                     ) : (
                         <div style={{ marginTop: '4px', borderTop: '1px solid rgba(255, 204, 0, 0.2)', paddingTop: '10px' }}>
@@ -646,21 +671,29 @@ function CustomEdge({
     const isElse = condition === 'ON_ELSE';
     const isSuccess = condition === 'ON_SUCCESS';
     const isFailure = condition === 'ON_FAILURE';
+    const isError = condition === 'ON_ERROR';
 
     const label = condition === 'ALWAYS' ? 'Always' : 
                   isThen ? 'THEN' : 
                   isElse ? 'ELSE' : 
                   isSuccess ? 'On Success' : 
-                  isFailure ? 'On Failure' : condition.replace('ON_', '');
+                  isFailure ? 'On Failure' : 
+                  isError ? 'ON ERROR' : condition.replace('ON_', '');
 
     const color = (isThen || isSuccess) ? '#22c55e' : 
-                  (isElse || isFailure) ? '#ef4444' : '#94a3b8';
+                  (isElse || isFailure || isError) ? '#ef4444' : '#94a3b8';
 
     const onEdgeClick = (evt: any) => {
         evt.stopPropagation();
         // If coming from an IF node, cycle THEN -> ELSE -> ALWAYS
         // Otherwise cycle SUCCESS -> FAILURE -> ALWAYS
         const isFromIf = data?.sourceType === 'IF';
+        const isLocked = data?.isLocked;
+
+        if (isLocked) {
+            // Cannot toggle Try-to-Catch relationship
+            return;
+        }
         
         let nextCondition = 'ALWAYS';
         if (isFromIf) {
@@ -694,7 +727,7 @@ function CustomEdge({
         <>
             <path
                 id={id}
-                style={{ ...style, stroke: color, strokeWidth: 2 }}
+                style={{ ...style, stroke: color, strokeWidth: 2, strokeDasharray: isError ? '5,5' : undefined }}
                 className="react-flow__edge-path"
                 d={edgePath}
                 markerEnd={markerEnd}
@@ -763,6 +796,8 @@ const nodeTypes = {
     taskNode: N8nTaskNode,
     workflowNode: WorkflowNode,
     ifNode: IfNode,
+    tryZoneNode: TryZoneNode,
+    catchNode: CatchNode,
 }
 
 const edgeTypes = {
@@ -779,8 +814,20 @@ function ReactFlowCanvas({
     setEdges,
     setIsDirty,
     onNodeClick,
+    onNodeDragStart,
+    onNodeDragStop,
     reactFlowWrapper,
-    disableKeyboardActions
+    disableKeyboardActions,
+    isDeleteModalOpen,
+    setIsDeleteModalOpen,
+    deleteZoneAll,
+    deleteZoneOnly,
+    zoneToDelete,
+    onDeleteZoneRequest,
+    onEditNode,
+    queueHistory,
+    onZoneResizeEnd,
+    isCompact
 }: any) {
     const reactFlowInstance = useReactFlow();
     const projectRef = useRef<any>(null);
@@ -817,31 +864,56 @@ function ReactFlowCanvas({
             const isUtility = taskData.taskType === 'VARIABLE';
             const isWorkflow = taskData.itemType === 'WORKFLOW';
             const isIf = taskData.taskType === 'IF';
+            const isTry = taskData.taskType === 'TRY_ZONE';
+            const isCatch = taskData.taskType === 'CATCH';
             const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-            const label = isUtility ? `${taskData.name} ${randomSuffix}` : taskData.name;
- 
+            let label = isUtility ? `${taskData.name} ${randomSuffix}` : taskData.name;
+            if (isTry) {
+                const tryCount = nodes.filter(n => n.data?.taskType === 'TRY_ZONE').length;
+                label = `Try Zone ${tryCount + 1}`;
+            }
+
             const newNode: Node = {
                 id: newNodeId,
-                type: isIf ? 'ifNode' : (isWorkflow ? 'workflowNode' : 'taskNode'),
+                type: isIf ? 'ifNode' : (isWorkflow ? 'workflowNode' : (isTry ? 'tryZoneNode' : (isCatch ? 'catchNode' : 'taskNode'))),
                 position,
                 data: {
                     id: newNodeId,
                     label: label,
                     taskId: taskData.id,
-                    taskType: isWorkflow ? 'WORKFLOW' : (isIf ? 'IF' : (taskData.taskType || 'HTTP')),
-                    utility: isUtility || isIf,
+                    taskType: isWorkflow ? 'WORKFLOW' : (isIf ? 'IF' : (isTry ? 'TRY_ZONE' : (isCatch ? 'CATCH' : (taskData.taskType || 'HTTP')))),
+                    utility: isUtility || isIf || isTry || isCatch,
                     inputVarsCount: isWorkflow ? Object.keys(taskData.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
                     outputVarsCount: isWorkflow ? Object.keys(taskData.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
-                    method: isWorkflow ? 'WF' : (taskData.taskType === 'VARIABLE' ? 'VAR' : (isIf ? 'IF' : (taskData.command?.method || 'GET'))),
+                    method: isWorkflow ? 'WF' : (taskData.taskType === 'VARIABLE' ? 'VAR' : (isIf ? 'IF' : (isTry ? 'TRY' : (isCatch ? 'CATCH' : (taskData.command?.method || 'GET'))))),
                     targetTags: taskData.targetTags || [],
                     failureStrategy: 'SUCCESS_REQUIRED',
                     failureStatusOverride: 'FAILED',
                     variableExtraction: taskData.variableExtraction,
                     icon: taskData.icon,
+                    isCompact: isCompact,
+                    memberNodeIds: isTry ? [] : undefined,
+                    catchHandlerId: isTry ? null : undefined,
+                    catchOnStatuses: isTry ? ['FAILED', 'TIMEOUT'] : undefined,
+                    retryPolicy: isTry ? { maxAttempts: 0, backoffType: 'exponential', initialDelaySeconds: 5, maxDelaySeconds: 60, retryOnStatuses: ['FAILED', 'TIMEOUT'] } : undefined,
                     onDelete: (id: string) => {
-                        setNodes((nds: any) => nds.filter((node: any) => node.id !== id));
-                        setEdges((eds: any) => eds.filter((edge: any) => edge.source !== id && edge.target !== id));
-                        setIsDirty(true);
+                        if (isTry) {
+                            onDeleteZoneRequest(id);
+                        } else {
+                            setNodes((nds: any) => nds.filter((node: any) => node.id !== id));
+                            setEdges((eds: any) => eds.filter((edge: any) => edge.source !== id && edge.target !== id));
+                            setIsDirty(true);
+                        }
+                    },
+                    onEdit: (id: string) => {
+                        setNodes((nds: any) => {
+                            const node = nds.find((n: any) => n.id === id);
+                            if (node) onEditNode(node);
+                            return nds;
+                        });
+                    },
+                    onResizeEnd: (id: string, params: any, originalBounds: any) => {
+                        onZoneResizeEnd?.(id, params, originalBounds);
                     },
                     onChangeTargetTags: (val: string) => {
                         setNodes((nds: any) => nds.map((node: any) => node.id === newNodeId ? { ...node, data: { ...node.data, targetTags: val.split(',').map(t => t.trim()).filter(Boolean) } } : node))
@@ -856,14 +928,96 @@ function ReactFlowCanvas({
                         setIsDirty(true);
                     }
                 },
-                className: 'n8n-node-transparent',
-                style: { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }
+                className: isTry ? '' : 'n8n-node-transparent',
+                style: isTry 
+                    ? { width: 400, height: 250, pointerEvents: 'auto', zIndex: -1 } 
+                    : { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none', zIndex: 1000 },
             };
 
-            setNodes((nds: any) => nds.concat(newNode));
+            setNodes((nds: any) => {
+                // Check if NEW node is dropped inside any shelf/zone
+                const zones = nds.filter((n: any) => n.type === 'tryZoneNode');
+                let insideZone: any = null;
+                
+                for (const zone of zones) {
+                    const zoneX = zone.position.x;
+                    const zoneY = zone.position.y;
+                    const zoneW = parseInt((zone as any).width || zone.style?.width || 400);
+                    const zoneH = parseInt((zone as any).height || zone.style?.height || 250);
+                    
+                    if (position.x > zoneX && position.x < (zoneX + zoneW) && position.y > zoneY && position.y < (zoneY + zoneH)) {
+                        insideZone = zone;
+                        break;
+                    }
+                }
+
+                if (insideZone) {
+                    newNode.parentNode = insideZone.id;
+                    newNode.extent = 'parent';
+                    newNode.position = {
+                        x: position.x - insideZone.position.x,
+                        y: position.y - insideZone.position.y
+                    };
+                }
+
+                const nextNodes = nds.concat(newNode);
+                if (isTry) return nextNodes;
+
+                if (insideZone) {
+                    const PADDING = 40;
+                    const zoneX = insideZone.position.x;
+                    const zoneY = insideZone.position.y;
+                    const zoneW = parseInt((insideZone as any).width || (insideZone.style as any)?.width || 400);
+                    const zoneH = parseInt((insideZone as any).height || (insideZone.style as any)?.height || 250);
+                    
+                    const nodeW = 240; // Default task width
+                    const nodeH = 120; // Default task height
+                    
+                    let newW = zoneW;
+                    let newH = zoneH;
+                    
+                    if (position.x + nodeW + PADDING > zoneX + zoneW) {
+                        newW = (position.x - zoneX) + nodeW + PADDING;
+                    }
+                    if (position.y + nodeH + PADDING > zoneY + zoneH) {
+                        newH = (position.y - zoneY) + nodeH + PADDING;
+                    }
+
+                    const shiftX = newW - zoneW;
+                    const shiftY = newH - zoneH;
+
+                    return nextNodes.map((n: any) => {
+                        if (n.id === insideZone.id) {
+                            return { 
+                                ...n, 
+                                width: newW, 
+                                height: newH,
+                                style: { ...n.style, width: newW, height: newH },
+                                data: { ...n.data, memberNodeIds: [...(n.data.memberNodeIds || []), newNodeId] } 
+                            };
+                        }
+                        // Pushing Logic: Shift nodes that were to the right or bottom of the OLD zone bounds
+                        if (n.id !== newNodeId && !n.parentNode) {
+                            let updatedPos = { ...n.position };
+                            if (shiftX > 0 && n.position.x >= (zoneX + zoneW - PADDING)) {
+                                updatedPos.x += shiftX;
+                            }
+                            if (shiftY > 0 && n.position.y >= (zoneY + zoneH - PADDING)) {
+                                updatedPos.y += shiftY;
+                            }
+                            if (updatedPos.x !== n.position.x || updatedPos.y !== n.position.y) {
+                                return { ...n, position: updatedPos };
+                            }
+                        }
+                        return n;
+                    });
+                }
+                return nextNodes;
+            });
+            queueHistory('Added Item from Library');
             setIsDirty(true);
         },
-        [setNodes, setIsDirty, reactFlowWrapper]
+        [setNodes, setIsDirty, reactFlowWrapper, onDeleteZoneRequest, onEditNode, isCompact]
     );
 
     return (
@@ -874,6 +1028,8 @@ function ReactFlowCanvas({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                onNodeDragStart={onNodeDragStart}
+                onNodeDragStop={onNodeDragStop}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
                 onNodeClick={(_, node) => onNodeClick(node)}
@@ -881,12 +1037,20 @@ function ReactFlowCanvas({
                 edgeTypes={edgeTypes}
                 onEdgesDelete={(deletedEdges) => {
                     setEdges(eds => eds.filter(e => !deletedEdges.find(de => de.id === e.id)));
+                    queueHistory('Removed Connection');
                     setIsDirty(true);
                 }}
                 onNodesDelete={(deletedNodes) => {
                     const deletedIds = new Set(deletedNodes.map(dn => dn.id));
-                    setNodes(nds => nds.filter(n => !deletedIds.has(n.id)));
+                    setNodes(nds => nds.map(n => {
+                        if (n.type === 'tryZoneNode') {
+                            const newMembers = n.data.memberNodeIds?.filter((id: string) => !deletedIds.has(id)) || [];
+                            return { ...n, data: { ...n.data, memberNodeIds: newMembers } };
+                        }
+                        return n;
+                    }).filter(n => !deletedIds.has(n.id)));
                     setEdges(eds => eds.filter(e => !deletedIds.has(e.source) && !deletedIds.has(e.target)));
+                    queueHistory('Deleted Node');
                     setIsDirty(true);
                 }}
                 deleteKeyCode={disableKeyboardActions ? null : ['Backspace', 'Delete']}
@@ -902,6 +1066,15 @@ function ReactFlowCanvas({
                     maskColor="rgba(255, 255, 255, 0.7)"
                 />
             </ReactFlow>
+            {isDeleteModalOpen && (
+                <ZoneDeleteModal 
+                    isOpen={isDeleteModalOpen}
+                    onCancel={() => setIsDeleteModalOpen(false)}
+                    onDeleteAll={deleteZoneAll}
+                    onDeleteZoneOnly={deleteZoneOnly}
+                    memberCount={zoneToDelete?.data.memberNodeIds?.length || 0}
+                />
+            )}
         </div>
     );
 }
@@ -918,6 +1091,8 @@ function WorkflowDesignerContent() {
     const { showToast } = useToast();
     const [searchQuery, setSearchQuery] = useState('');
     const [editingNode, setEditingNode] = useState<any>(null);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [zoneToDelete, setZoneToDelete] = useState<any>(null);
     const [workflowMetadata, setWorkflowMetadata] = useState<any>({
         inputVariables: {},
         outputVariables: {},
@@ -927,9 +1102,81 @@ function WorkflowDesignerContent() {
     });
     const [isTopDrawerOpen, setIsTopDrawerOpen] = useState(false);
     const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+    const [isCompact, setIsCompact] = useState(true); // Default to collapsed view
     const queryClient = useQueryClient()
     const initializedRef = useRef<string | null>(null)
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
+
+    // History & Undo State Engine
+    const pendingHistoryActionRef = useRef<string | null>(null);
+    const historyRef = useRef<{ actionName: string; nodes: any[]; edges: any[] }[]>([]);
+    const historyIndexRef = useRef<number>(-1);
+    const isRestoringHistoryRef = useRef(false);
+    const [canUndo, setCanUndo] = useState(false);
+    const [canRedo, setCanRedo] = useState(false);
+    const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+    const nodeDragStartPosRef = useRef<{ x: number, y: number } | null>(null);
+
+    const queueHistory = useCallback((actionName: string) => {
+        pendingHistoryActionRef.current = actionName;
+    }, []);
+
+    const jumpToHistory = useCallback((targetIndex: number) => {
+        if (targetIndex < 0 || targetIndex >= historyRef.current.length) return;
+        isRestoringHistoryRef.current = true;
+        historyIndexRef.current = targetIndex;
+        const snapshot = historyRef.current[targetIndex];
+        
+        // Restore via shallow copy arrays to maintain references to static function handlers in data
+        setNodes([...snapshot.nodes]);
+        setEdges([...snapshot.edges]);
+        
+        setCanUndo(targetIndex > 0);
+        setCanRedo(targetIndex < historyRef.current.length - 1);
+        setIsDirty(true);
+        setTimeout(() => { isRestoringHistoryRef.current = false; }, 100);
+    }, [setNodes, setEdges, setIsDirty]);
+
+    const handleUndo = useCallback(() => {
+        if (historyIndexRef.current > 0) jumpToHistory(historyIndexRef.current - 1);
+    }, [jumpToHistory]);
+
+    const handleRedo = useCallback(() => {
+        if (historyIndexRef.current < historyRef.current.length - 1) jumpToHistory(historyIndexRef.current + 1);
+    }, [jumpToHistory]);
+
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                if (e.shiftKey) handleRedo();
+                else handleUndo();
+            } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+                handleRedo();
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [handleUndo, handleRedo]);
+
+    // Snapshot Processor
+    useEffect(() => {
+        if (pendingHistoryActionRef.current && !isRestoringHistoryRef.current) {
+            const action = pendingHistoryActionRef.current;
+            pendingHistoryActionRef.current = null;
+            
+            const currentHist = historyRef.current;
+            const currentIndex = historyIndexRef.current;
+            const slice = currentHist.slice(0, currentIndex + 1);
+            
+            slice.push({ actionName: action, nodes: [...nodes], edges: [...edges] });
+            if (slice.length > 20) slice.shift(); // Keep last 20 actions
+            
+            historyRef.current = slice;
+            historyIndexRef.current = slice.length - 1;
+            setCanUndo(historyIndexRef.current > 0);
+            setCanRedo(false);
+        }
+    }, [nodes, edges]);
 
     const { data: tasks, isLoading: isLoadingTasks } = useQuery<any[]>({
         queryKey: ['tasks'],
@@ -963,6 +1210,197 @@ function WorkflowDesignerContent() {
         queryFn: () => workflowsApi.getFolderTree()
     });
 
+    const handleZoneResizeEnd = useCallback((id: string, params: any, originalBounds: any) => {
+        setNodes((nds: any) => {
+            const z = nds.find((n: any) => n.id === id);
+            if (!z) return nds;
+            
+            const newX = params.x;
+            const newY = params.y;
+            const newW = params.width;
+            const newH = params.height;
+            
+            const oldX = originalBounds?.x ?? z.position.x;
+            const oldY = originalBounds?.y ?? z.position.y;
+            const oldW = parseInt(String(originalBounds?.width || z.width || z.style?.width || (z as any).data?.width || 400));
+            const oldH = parseInt(String(originalBounds?.height || z.height || z.style?.height || (z as any).data?.height || 250));
+            
+            const expandRight = (newX + newW) - (oldX + oldW);
+            const expandLeft = oldX - newX;
+            const expandBottom = (newY + newH) - (oldY + oldH);
+            const expandTop = oldY - newY;
+            
+            if (expandRight <= 0 && expandLeft <= 0 && expandBottom <= 0 && expandTop <= 0) {
+                 return nds.map((n: any) => {
+                     if (n.id === id) return { ...n, position: { x: newX, y: newY }, width: newW, height: newH, style: { ...n.style, width: newW, height: newH } };
+                     return n;
+                 });
+            }
+
+            const PADDING = 40;
+            const getNodeBounds = (node: any) => ({
+                x: node.position.x,
+                y: node.position.y,
+                w: parseInt(node.width || node.style?.width || 240),
+                h: parseInt(node.height || node.style?.height || 120)
+            });
+
+            const checkIntersection = (b1: any, b2: any) => {
+                return b1.x < b2.x + b2.w && b1.x + b1.w > b2.x &&
+                       b1.y < b2.y + b2.h && b1.y + b1.h > b2.y;
+            };
+
+            let updatedNodes = [...nds];
+            let shifts: Record<string, {x: number, y: number}> = {};
+            let movedInIteration = false;
+            
+            do {
+                movedInIteration = false;
+
+                for (const n of updatedNodes) {
+                    if (n.id === id || n.parentNode) continue;
+                    
+                    const bounds = getNodeBounds(n);
+                    const curShiftX = shifts[n.id]?.x || 0;
+                    const curShiftY = shifts[n.id]?.y || 0;
+                    const currentBounds = { ...bounds, x: bounds.x + curShiftX, y: bounds.y + curShiftY };
+                    
+                    let needsShiftX = 0;
+                    let needsShiftY = 0;
+                    
+                    if (expandRight > 0) {
+                        const rightSwath = { x: oldX + oldW - PADDING, y: oldY - PADDING, w: expandRight + PADDING*2, h: oldH + PADDING*2 };
+                        if (checkIntersection(currentBounds, rightSwath) && currentBounds.x >= oldX + oldW - PADDING) needsShiftX = Math.max(needsShiftX, expandRight);
+                    }
+                    if (expandBottom > 0) {
+                        const bottomSwath = { x: oldX - PADDING, y: oldY + oldH - PADDING, w: oldW + PADDING*2, h: expandBottom + PADDING*2 };
+                        if (checkIntersection(currentBounds, bottomSwath) && currentBounds.y >= oldY + oldH - PADDING) needsShiftY = Math.max(needsShiftY, expandBottom);
+                    }
+                    if (expandLeft > 0) {
+                        const leftSwath = { x: newX - PADDING, y: oldY - PADDING, w: expandLeft + PADDING*2, h: oldH + PADDING*2 };
+                        if (checkIntersection(currentBounds, leftSwath) && (currentBounds.x + currentBounds.w) <= oldX + PADDING) needsShiftX = Math.min(needsShiftX, -expandLeft);
+                    }
+                    if (expandTop > 0) {
+                        const topSwath = { x: oldX - PADDING, y: newY - PADDING, w: oldW + PADDING*2, h: expandTop + PADDING*2 };
+                        if (checkIntersection(currentBounds, topSwath) && (currentBounds.y + currentBounds.h) <= oldY + PADDING) needsShiftY = Math.min(needsShiftY, -expandTop);
+                    }
+
+                    for (const other of updatedNodes) {
+                        if (other.id === n.id || other.id === id || other.parentNode) continue;
+                        if (shifts[other.id] && (shifts[other.id].x !== 0 || shifts[other.id].y !== 0)) {
+                            const otherBounds = getNodeBounds(other);
+                            const otherNewBounds = { ...otherBounds, x: otherBounds.x + shifts[other.id].x, y: otherBounds.y + shifts[other.id].y };
+                            const otherPadded = { 
+                                x: otherNewBounds.x - PADDING, y: otherNewBounds.y - PADDING, 
+                                w: otherNewBounds.w + PADDING*2, h: otherNewBounds.h + PADDING*2 
+                            };
+                            if (checkIntersection(currentBounds, otherPadded)) {
+                                if (shifts[other.id].x > 0 && currentBounds.x >= otherBounds.x) needsShiftX = Math.max(needsShiftX, shifts[other.id].x);
+                                if (shifts[other.id].x < 0 && currentBounds.x + currentBounds.w <= otherBounds.x + otherBounds.w) needsShiftX = Math.min(needsShiftX, shifts[other.id].x);
+                                if (shifts[other.id].y > 0 && currentBounds.y >= otherBounds.y) needsShiftY = Math.max(needsShiftY, shifts[other.id].y);
+                                if (shifts[other.id].y < 0 && currentBounds.y + currentBounds.h <= otherBounds.y + otherBounds.h) needsShiftY = Math.min(needsShiftY, shifts[other.id].y);
+                            }
+                        }
+                    }
+                    
+                    if (Math.abs(needsShiftX) > Math.abs(curShiftX) || Math.abs(needsShiftY) > Math.abs(curShiftY)) {
+                        shifts[n.id] = { x: needsShiftX, y: needsShiftY };
+                        movedInIteration = true;
+                    }
+                }
+            } while (movedInIteration);
+
+            let anyMoved = false;
+            updatedNodes = updatedNodes.map((n: any) => {
+                if (n.id === id) {
+                    return { ...n, width: newW, height: newH, position: { x: newX, y: newY }, style: { ...n.style, width: newW, height: newH } };
+                }
+                if (shifts[n.id] && (shifts[n.id].x !== 0 || shifts[n.id].y !== 0)) {
+                    anyMoved = true;
+                    return { ...n, position: { x: n.position.x + shifts[n.id].x, y: n.position.y + shifts[n.id].y } };
+                }
+                return n;
+            });
+
+            if (anyMoved) setTimeout(() => queueHistory('Cascading Push Layout'), 50);
+            return updatedNodes;
+        });
+        queueHistory('Resized Zone');
+        setIsDirty(true);
+    }, [setNodes, queueHistory, setIsDirty]);
+
+    const handleDeleteZoneRequest = (id: string) => {
+        setNodes(nds => {
+            const zone = nds.find(n => n.id === id);
+            if (zone) {
+                setZoneToDelete(zone);
+                setIsDeleteModalOpen(true);
+            }
+            return nds;
+        });
+    };
+    const deleteZoneAll = () => {
+        if (!zoneToDelete) return;
+        const targetId = zoneToDelete.id;
+        setNodes(nds => {
+            const currentZone = nds.find(n => n.id === targetId);
+            const memberIds = new Set(currentZone?.data.memberNodeIds || []);
+            return nds.filter(n => n.id !== targetId && !memberIds.has(n.id));
+        });
+        setEdges(eds => eds.filter(e => e.source !== targetId && e.target !== targetId));
+        setIsDeleteModalOpen(false);
+        setZoneToDelete(null);
+        queueHistory('Deleted Try Zone and Nodes');
+        setIsDirty(true);
+    };
+
+    const deleteZoneOnly = () => {
+        if (!zoneToDelete) return;
+        const targetId = zoneToDelete.id;
+        
+        setNodes(nds => {
+            const currentZone = nds.find(n => n.id === targetId);
+            if (!currentZone) return nds;
+            const memberIds = new Set(currentZone.data.memberNodeIds || []);
+            
+            return nds.map(n => {
+                if (memberIds.has(n.id)) {
+                    // Determine absolute position before removing parent
+                    const parent = nds.find(p => p.id === n.parentNode);
+                    return { 
+                        ...n, 
+                        parentNode: undefined, 
+                        extent: undefined,
+                        position: { 
+                            x: n.position.x + (parent?.position.x || 0), 
+                            y: n.position.y + (parent?.position.y || 0) 
+                        }
+                    };
+                }
+                return n;
+            }).filter(n => n.id !== targetId);
+        });
+        
+        setEdges(eds => eds.filter(e => e.source !== targetId && e.target !== targetId));
+        setIsDeleteModalOpen(false);
+        setZoneToDelete(null);
+        queueHistory('Deleted Try Zone');
+        setIsDirty(true);
+    };
+
+    const handleManualNodeEdit = (nodeId: string | Node) => {
+        const id = typeof nodeId === 'string' ? nodeId : nodeId.id;
+        setNodes(nds => {
+            const node = nds.find(n => n.id === id);
+            if (node) setEditingNode(node);
+            return nds;
+        });
+    };
+
+    const onNodeClick = (node: Node) => {
+        handleManualNodeEdit(node);
+    };
+
     useEffect(() => {
         if (existingWorkflow && initializedRef.current !== workflowId) {
             // Only set state when the workflow ID changes or it's the first load
@@ -977,46 +1415,93 @@ function WorkflowDesignerContent() {
             })
             initializedRef.current = workflowId
             
-            setNodes(existingWorkflow.nodes.map((n: any) => ({
-                id: n.id,
-                type: (n.taskType === 'IF' || n.taskId === 'util-if') ? 'ifNode' : (n.taskType === 'WORKFLOW' ? 'workflowNode' : 'taskNode'),
-                position: n.position,
-                className: 'n8n-node-transparent',
-                style: { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' },
-                data: {
-                    ...n,
+            const initialNodes = existingWorkflow.nodes.map((n: any) => {
+                const isTry = n.taskType === 'TRY_ZONE';
+                const isCatch = n.taskType === 'CATCH';
+                const isIf = n.taskType === 'IF';
+                const isWf = n.taskType === 'WORKFLOW';
+
+                return {
                     id: n.id,
-                    label: n.taskType === 'WORKFLOW' ? (n.label || allWorkflows?.find((w: any) => w.id === n.taskId)?.name || 'Nested Workflow') : (tasks?.find((t: any) => t.id === n.taskId)?.name || n.label),
-                    taskId: n.taskId,
-                    taskType: n.taskType || (n.taskId === 'util-if' ? 'IF' : (n.taskId === 'util-vars' ? 'VARIABLE' : 'HTTP')),
-                    inputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
-                    outputVarsCount: n.taskType === 'WORKFLOW' ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
-                    method: n.taskType === 'VARIABLE' ? 'VAR' : (n.taskType === 'IF' ? 'IF' : (n.taskType === 'WORKFLOW' ? 'WF' : (n.method || tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'))),
-                    targetTags: n.targetTags || [],
-                    failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
-                    failureStatusOverride: n.failureStatusOverride || 'FAILED',
-                    variableExtraction: n.variableExtraction,
-                    icon: n.taskType === 'WORKFLOW' ? (n.icon || allWorkflows?.find((w: any) => w.id === n.taskId)?.icon) : (tasks?.find((t: any) => t.id === n.taskId)?.icon || n.icon),
-                    onDelete: (id: string) => {
-                        setNodes(nds => nds.filter(node => node.id !== id));
-                        setEdges(eds => eds.filter(edge => edge.source !== id && edge.target !== id));
-                        setIsDirty(true);
-                    },
-                    onChangeTargetTags: (val: string) => {
-                        const tags = val.split(',').map(t => t.trim()).filter(Boolean);
-                        setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, targetTags: tags } } : node))
-                        setIsDirty(true);
-                    },
-                    onChangeFailureStrategy: (val: string) => {
-                        setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
-                        setIsDirty(true);
-                    },
-                    onChangeFailureStatusOverride: (val: string) => {
-                        setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, failureStatusOverride: val } } : node))
-                        setIsDirty(true);
+                    type: isIf ? 'ifNode' : (isWf ? 'workflowNode' : (isTry ? 'tryZoneNode' : (isCatch ? 'catchNode' : 'taskNode'))),
+                    position: n.position,
+                    width: n.width ? parseInt(n.width) : undefined,
+                    height: n.height ? parseInt(n.height) : undefined,
+                    parentNode: n.parentNode,
+                    extent: n.extent,
+                    className: isTry ? '' : 'n8n-node-transparent',
+                    style: isTry 
+                        ? { width: n.width ? parseInt(n.width) : 400, height: n.height ? parseInt(n.height) : 250, pointerEvents: 'auto', zIndex: -1 } 
+                        : { background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none', zIndex: (isCatch ? 1000 : undefined) },
+                    data: {
+                        ...n,
+                        id: n.id,
+                        label: isWf ? (n.label || allWorkflows?.find((w: any) => w.id === n.taskId)?.name || 'Nested Workflow') : (tasks?.find((t: any) => t.id === n.taskId)?.name || n.label),
+                        taskId: n.taskId,
+                        taskType: n.taskType || (isIf ? 'IF' : (n.taskId === 'util-vars' ? 'VARIABLE' : 'HTTP')),
+                        inputVarsCount: isWf ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.inputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
+                        outputVarsCount: isWf ? Object.keys(allWorkflows?.find((w: any) => w.id === n.taskId)?.outputVariables || {}).filter(k => !k.startsWith('__')).length : 0,
+                        method: n.taskType === 'VARIABLE' ? 'VAR' : (isIf ? 'IF' : (isWf ? 'WF' : (n.method || tasks?.find((t: any) => t.id === n.taskId)?.command?.method || 'GET'))),
+                        targetTags: n.targetTags || [],
+                        failureStrategy: n.failureStrategy || 'SUCCESS_REQUIRED',
+                        failureStatusOverride: n.failureStatusOverride || 'FAILED',
+                        variableExtraction: n.variableExtraction,
+                        isCompact: isCompact,
+                        icon: isWf ? (n.icon || allWorkflows?.find((w: any) => w.id === n.taskId)?.icon) : (tasks?.find((t: any) => t.id === n.taskId)?.icon || n.icon),
+                        onDelete: (id: string) => {
+                            if (isTry) {
+                                handleDeleteZoneRequest(id);
+                            } else {
+                                setNodes(nds => nds.map(node => {
+                                    if (node.data?.memberNodeIds) {
+                                        return { 
+                                            ...node, 
+                                            data: { 
+                                                ...node.data, 
+                                                memberNodeIds: node.data.memberNodeIds.filter((mid: string) => mid !== id) 
+                                            } 
+                                        };
+                                    }
+                                    return node;
+                                }).filter(node => node.id !== id));
+                                setEdges(eds => eds.filter(edge => edge.source !== id && edge.target !== id));
+                                queueHistory('Deleted Node');
+                                setIsDirty(true);
+                            }
+                        },
+                        onEdit: (id: string) => {
+                            handleManualNodeEdit(id);
+                        },
+                        onResizeEnd: (id: string, params: any, originalBounds: any) => {
+                            handleZoneResizeEnd(id, params, originalBounds);
+                        },
+                        onChangeTargetTags: (val: string) => {
+                            const tags = val.split(',').map(t => t.trim()).filter(Boolean);
+                            setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, targetTags: tags } } : node))
+                            setIsDirty(true);
+                        },
+                        onChangeFailureStrategy: (val: string) => {
+                            setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, failureStrategy: val } } : node))
+                            setIsDirty(true);
+                        },
+                        onChangeFailureStatusOverride: (val: string) => {
+                            setNodes(nds => nds.map(node => node.id === n.id ? { ...node, data: { ...node.data, failureStatusOverride: val } } : node))
+                            setIsDirty(true);
+                        }
                     }
+                };
+            });
+
+            // Second pass: correctly populate memberNodeIds based on parentNode relationship
+            const fullyFormedNodes = initialNodes.map((node: any) => {
+                if (node.type === 'tryZoneNode') {
+                    const members = initialNodes.filter((n: any) => n.parentNode === node.id).map((n: any) => n.id);
+                    return { ...node, data: { ...node.data, memberNodeIds: members } };
                 }
-            })))
+                return node;
+            });
+
+            setNodes(fullyFormedNodes);
             setEdges(existingWorkflow.edges.map((e: any) => {
                 const condition = e.condition || 'ALWAYS';
                 const sourceType = e.sourceType || 'TASK';
@@ -1032,13 +1517,17 @@ function WorkflowDesignerContent() {
                     'ON_ELSE': 'IF FALSE (ELSE)'
                 };
 
+                const sourceNode = existingWorkflow.nodes.find((n: any) => n.id === e.source);
+                const targetNode = existingWorkflow.nodes.find((n: any) => n.id === e.target);
+                const isTryToCatch = (sourceNode as any)?.taskType === 'TRY_ZONE' && (targetNode as any)?.taskType === 'CATCH';
+
                 return {
                     id: e.id,
                     source: e.source,
                     target: e.target,
                     sourceHandle: e.sourceHandle || (sourceType === 'IF' ? (condition === 'ON_THEN' ? 'then' : 'else') : null),
                     type: 'custom',
-                    data: { condition, sourceType },
+                    data: { condition, sourceType, isLocked: isTryToCatch, onHistoryQueue: queueHistory },
                     animated: true,
                     label: condition === 'ALWAYS' ? '' : (labelMapping[condition] || condition.replace('ON_', '')),
                     style: { 
@@ -1047,9 +1536,16 @@ function WorkflowDesignerContent() {
                     },
                 };
             }))
-            setTimeout(() => setIsDirty(false), 50); // Small delay to prevent initial load marking as dirty
+            setTimeout(() => { queueHistory('Initial Load'); setIsDirty(false); }, 50); // Small delay to prevent initial load marking as dirty
         }
-    }, [existingWorkflow, tasks])
+
+        return () => {
+            // Cleanup: reset initializedRef when workflow changes or unmounts
+            if (!workflowId) {
+                initializedRef.current = null;
+            }
+        };
+    }, [existingWorkflow, tasks, workflowId])
 
     useEffect(() => {
         const handleSaveRequest = () => {
@@ -1073,6 +1569,7 @@ function WorkflowDesignerContent() {
     const onConnect = useCallback(
         (params: Connection) => {
             const sourceNode = nodes.find(n => n.id === params.source);
+            const targetNode = nodes.find(n => n.id === params.target);
             const isIfNode = sourceNode?.type === 'ifNode';
             
             let condition = 'ALWAYS';
@@ -1101,28 +1598,277 @@ function WorkflowDesignerContent() {
                 }
             }
 
+            if (sourceNode?.data.taskType === 'TRY_ZONE' && targetNode?.data.taskType === 'CATCH') {
+                condition = 'ON_FAILURE';
+                color = '#ef4444';
+                
+                // Update Try Zone data to link to this catch handler
+                setNodes((nds: any) => nds.map((n: any) => 
+                    n.id === params.source ? { ...n, data: { ...n.data, catchHandlerId: params.target } } : n
+                ));
+            }
+
             const labelMapping: Record<string, string> = {
                 'ON_SUCCESS': 'On Success',
-                'ON_FAILURE': 'On Failure',
+                'ON_FAILURE': 'ON ERROR', // User requested label
                 'ON_THEN': 'IF TRUE (THEN)',
-                'ON_ELSE': 'IF FALSE (ELSE)'
+                'ON_ELSE': 'IF FALSE (ELSE)',
             };
+
+            const isTryToCatch = sourceNode?.data.taskType === 'TRY_ZONE' && targetNode?.data.taskType === 'CATCH';
 
             setEdges((eds) => addEdge({ 
                 ...params, 
                 type: 'custom',
                 data: { 
                     condition,
-                    sourceType: sourceNode?.type === 'ifNode' ? 'IF' : 'TASK'
+                    sourceType: sourceNode?.type === 'ifNode' ? 'IF' : (sourceNode?.data.taskType || 'TASK'),
+                    isLocked: isTryToCatch
                 },
                 animated: true, 
                 label: condition === 'ALWAYS' ? '' : (labelMapping[condition] || condition.replace('ON_', '')),
-                style: { stroke: color, strokeWidth: 2 } 
+                style: { 
+                    stroke: color, 
+                    strokeWidth: 2,
+                    strokeDasharray: condition === 'ON_FAILURE' ? '5,5' : undefined
+                } 
             }, eds));
+            queueHistory('Connected Nodes');
             setIsDirty(true);
         },
-        [setEdges, nodes, edges],
+        [setEdges, nodes, edges, showToast, setIsDirty]
     )
+
+    const onNodeDragStart = useCallback((event: any, node: any) => {
+        nodeDragStartPosRef.current = { ...node.position };
+    }, []);
+
+    const onNodeDragStop = useCallback((event: any, draggedNode: any) => {
+        if (draggedNode.type === 'tryZoneNode') {
+            const z = nodes.find((n: any) => n.id === draggedNode.id);
+            if (!z) return;
+
+            const zoneX = draggedNode.position.x;
+            const zoneY = draggedNode.position.y;
+            const zoneW = parseInt(String(z.width || z.style?.width || 400));
+            const zoneH = parseInt(String(z.height || z.style?.height || 250));
+            const zoneBounds = { x: zoneX, y: zoneY, w: zoneW, h: zoneH };
+
+            setNodes((nds: any) => {
+                const updatedMembers: string[] = [];
+                const nextNodes = nds.map((n: any) => {
+                    if (n.id === draggedNode.id) return n;
+                    
+                    // Only consider nodes that are NOT currently in another zone or are in THIS zone
+                    if (n.parentNode && n.parentNode !== draggedNode.id) return n;
+
+                    const nodeX = n.parentNode ? (n.position.x + zoneX) : n.position.x;
+                    const nodeY = n.parentNode ? (n.position.y + zoneY) : n.position.y;
+                    const nodeW = parseInt(n.width || n.style?.width || 240);
+                    const nodeH = parseInt(n.height || n.style?.height || 120);
+
+                    const isInside = nodeX > zoneX && nodeX < (zoneX + zoneW) &&
+                                     nodeY > zoneY && nodeY < (zoneY + zoneH);
+
+                    if (isInside) {
+                        updatedMembers.push(n.id);
+                        return {
+                            ...n,
+                            parentNode: draggedNode.id,
+                            extent: 'parent',
+                            position: n.parentNode ? n.position : { x: n.position.x - zoneX, y: n.position.y - zoneY }
+                        };
+                    } else if (n.parentNode === draggedNode.id) {
+                        // Node was in the zone but is now outside
+                        return {
+                            ...n,
+                            parentNode: undefined,
+                            extent: undefined,
+                            position: { x: n.position.x + zoneX, y: n.position.y + zoneY }
+                        };
+                    }
+                    return n;
+                });
+
+                return nextNodes.map((n: any) => 
+                    n.id === draggedNode.id ? { ...n, data: { ...n.data, memberNodeIds: updatedMembers } } : n
+                );
+            });
+
+            queueHistory('Moved Zone (Scooped Nodes)');
+            setIsDirty(true);
+            return;
+        }
+
+        // 1. Determine if and which zone the node is inside
+        const zones = nodes.filter((n: any) => n.type === 'tryZoneNode');
+        let foundZone: any = null;
+        let expansionDetails: { shiftX: number, shiftY: number, zoneId: string, zoneX: number, zoneY: number, zoneW: number, zoneH: number } | null = null;
+        
+        const globalX = (draggedNode.parentNode ? (draggedNode.position.x + (nodes.find(p => p.id === draggedNode.parentNode)?.position.x || 0)) : draggedNode.position.x);
+        const globalY = (draggedNode.parentNode ? (draggedNode.position.y + (nodes.find(p => p.id === draggedNode.parentNode)?.position.y || 0)) : draggedNode.position.y);
+
+        for (const zone of zones) {
+            const zoneX = zone.position.x;
+            const zoneY = zone.position.y;
+            const zoneW = parseInt(String(zone.width || zone.style?.width || 400));
+            const zoneH = parseInt(String(zone.height || zone.style?.height || 250));
+            
+            const isInside = globalX > zoneX && globalX < (zoneX + zoneW) &&
+                             globalY > zoneY && globalY < (zoneY + zoneH);
+
+            if (isInside) {
+                foundZone = zone;
+                // Check for expansion
+                const PADDING = 40;
+                const nodeW = draggedNode.width || 240;
+                const nodeH = draggedNode.height || 120;
+                
+                let newW = zoneW;
+                let newH = zoneH;
+                
+                if (globalX + nodeW + PADDING > zoneX + zoneW) {
+                    newW = (globalX - zoneX) + nodeW + PADDING;
+                }
+                if (globalY + nodeH + PADDING > zoneY + zoneH) {
+                    newH = (globalY - zoneY) + nodeH + PADDING;
+                }
+
+                if (newW !== zoneW || newH !== zoneH) {
+                    expansionDetails = {
+                        shiftX: newW - zoneW,
+                        shiftY: newH - zoneH,
+                        zoneId: zone.id,
+                        zoneX, zoneY, zoneW, zoneH
+                    };
+                }
+                break;
+            }
+        }
+
+        const insideZoneId = foundZone?.id || null;
+
+        // 2. Perform Single Atomic Update
+        setNodes((nds: any) => {
+            let updatedNodes = nds.map((n: any) => {
+                let updated = { ...n };
+
+                // A. Update the dragged node (Reparenting)
+                if (n.id === draggedNode.id) {
+                    if (insideZoneId && insideZoneId !== n.parentNode) {
+                        const zone = nds.find((z: any) => z.id === insideZoneId);
+                        updated.parentNode = insideZoneId;
+                        updated.extent = 'parent';
+                        updated.position = { x: globalX - zone.position.x, y: globalY - zone.position.y };
+                    } else if (!insideZoneId && n.parentNode) {
+                        const parent = nds.find((p: any) => p.id === n.parentNode);
+                        updated.parentNode = undefined;
+                        updated.extent = undefined;
+                        updated.position = { x: n.position.x + (parent?.position.x || 0), y: n.position.y + (parent?.position.y || 0) };
+                    }
+                }
+
+                // B. Update Zone Membership Counts & Dimensions
+                if (n.type === 'tryZoneNode') {
+                    const memberIds = new Set(n.data.memberNodeIds || []);
+                    if (n.id === insideZoneId) memberIds.add(draggedNode.id);
+                    else memberIds.delete(draggedNode.id);
+                    updated.data = { ...updated.data, memberNodeIds: Array.from(memberIds) };
+
+                    // C. Zone Expansion
+                    if (expansionDetails && n.id === expansionDetails.zoneId) {
+                        const { shiftX, shiftY } = expansionDetails;
+                        updated.width = (updated.width || 400) + (shiftX > 0 ? shiftX : 0);
+                        updated.height = (updated.height || 250) + (shiftY > 0 ? shiftY : 0);
+                        updated.style = { ...updated.style, width: updated.width, height: updated.height };
+                    }
+                }
+                return updated;
+            });
+
+            // D. Node Pushing (Cascading Collision Sweep)
+            if (expansionDetails) {
+                const { shiftX, shiftY, zoneX, zoneY, zoneW, zoneH } = expansionDetails;
+                const PADDING = 40;
+                
+                const getNodeBounds = (node: any) => ({
+                    x: node.position.x,
+                    y: node.position.y,
+                    w: parseInt(node.width || node.style?.width || 240),
+                    h: parseInt(node.height || node.style?.height || 120)
+                });
+
+                const checkIntersection = (b1: any, b2: any) => {
+                    return b1.x < b2.x + b2.w && b1.x + b1.w > b2.x &&
+                           b1.y < b2.y + b2.h && b1.y + b1.h > b2.y;
+                };
+
+                let shifts: Record<string, {x: number, y: number}> = {};
+                let movedInIteration = false;
+                
+                do {
+                    movedInIteration = false;
+                    for (const n of updatedNodes) {
+                        if (n.id === draggedNode.id || n.id === expansionDetails.zoneId || n.parentNode) continue;
+                        
+                        const bounds = getNodeBounds(n);
+                        const curShiftX = shifts[n.id]?.x || 0;
+                        const curShiftY = shifts[n.id]?.y || 0;
+                        const currentBounds = { ...bounds, x: bounds.x + curShiftX, y: bounds.y + curShiftY };
+                        
+                        let needsShiftX = 0;
+                        let needsShiftY = 0;
+                        
+                        if (shiftX > 0) {
+                            const rightSwath = { x: zoneX + zoneW - PADDING, y: zoneY, w: shiftX + PADDING*2, h: zoneH };
+                            if (checkIntersection(currentBounds, rightSwath) && currentBounds.x >= zoneX + zoneW - PADDING) {
+                                needsShiftX = shiftX;
+                            }
+                        }
+                        if (shiftY > 0) {
+                            const bottomSwath = { x: zoneX, y: zoneY + zoneH - PADDING, w: zoneW, h: shiftY + PADDING*2 };
+                            if (checkIntersection(currentBounds, bottomSwath) && currentBounds.y >= zoneY + zoneH - PADDING) {
+                                needsShiftY = shiftY;
+                            }
+                        }
+
+                        // Check collision with ALL other shifting nodes
+                        for (const other of updatedNodes) {
+                            if (other.id === n.id || other.id === draggedNode.id || other.id === expansionDetails.zoneId || other.parentNode) continue;
+                            if (shifts[other.id] && (shifts[other.id].x > 0 || shifts[other.id].y > 0)) {
+                                const otherBounds = getNodeBounds(other);
+                                const otherNewBounds = { ...otherBounds, x: otherBounds.x + shifts[other.id].x, y: otherBounds.y + shifts[other.id].y };
+                                const otherPadded = { 
+                                    x: otherNewBounds.x - PADDING, y: otherNewBounds.y - PADDING, 
+                                    w: otherNewBounds.w + PADDING*2, h: otherNewBounds.h + PADDING*2 
+                                };
+                                if (checkIntersection(currentBounds, otherPadded)) {
+                                    if (shifts[other.id].x > 0 && currentBounds.x >= otherBounds.x) needsShiftX = Math.max(needsShiftX, shifts[other.id].x);
+                                    if (shifts[other.id].y > 0 && currentBounds.y >= otherBounds.y) needsShiftY = Math.max(needsShiftY, shifts[other.id].y);
+                                }
+                            }
+                        }
+
+                        if (needsShiftX > curShiftX || needsShiftY > curShiftY) {
+                            shifts[n.id] = { x: Math.max(curShiftX, needsShiftX), y: Math.max(curShiftY, needsShiftY) };
+                            movedInIteration = true;
+                        }
+                    }
+                } while (movedInIteration);
+
+                updatedNodes = updatedNodes.map((n: any) => {
+                    if (shifts[n.id] && (shifts[n.id].x > 0 || shifts[n.id].y > 0)) {
+                        return { ...n, position: { x: n.position.x + shifts[n.id].x, y: n.position.y + shifts[n.id].y } };
+                    }
+                    return n;
+                });
+            }
+
+            return updatedNodes;
+        });
+        queueHistory('Moved Node(s)');
+        setIsDirty(true);
+    }, [nodes, setNodes, setIsDirty]);
 
     const saveMutation = useMutation({
         mutationFn: (data: any) => workflowId
@@ -1130,7 +1876,8 @@ function WorkflowDesignerContent() {
             : workflowsApi.createWorkflow(data),
         onSuccess: (data: any) => {
             showToast('Workflow saved successfully!', 'success')
-            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] })
+            queryClient.invalidateQueries({ queryKey: ['workflows-all'] })
             setIsDirty(false);
             if (!workflowId && data?.id) {
                 // If this is a newly created workflow, update the URL to switch to edit mode
@@ -1154,11 +1901,15 @@ function WorkflowDesignerContent() {
                 name: workflowName,
                 tags: workflowTags,
                 nodes: nodes.map(n => {
-                    const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, position: stalePos, ...cleanData } = n.data;
+                    const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, onEdit, onResizeEnd, position: _p, id: _i, type: _t, parentNode: _pn, extent: _e, width: _w, height: _h, style: _s, ...cleanData } = n.data || {};
                     return {
+                        ...cleanData,
                         id: n.id,
                         position: n.position,
-                        ...cleanData
+                        width: parseInt(String(n.style?.width || (n as any).width || n.data?.width || 400)),
+                        height: parseInt(String(n.style?.height || (n as any).height || n.data?.height || 250)),
+                        parentNode: n.parentNode,
+                        extent: n.extent
                     };
                 }),
                 edges: edges.map(e => ({
@@ -1184,17 +1935,37 @@ function WorkflowDesignerContent() {
     }
 
     const handleSave = () => {
+        // Integrity Validation
+        const tryZones = nodes.filter(n => n.data.taskType === 'TRY_ZONE');
+        const catches = nodes.filter(n => n.data.taskType === 'CATCH');
+
+        for (const zone of tryZones) {
+            const hasCatch = edges.some(e => e.source === zone.id && e.data?.condition === 'ON_FAILURE');
+            if (!hasCatch) {
+                showToast(`Warning: Try Zone "${zone.data.label || zone.id}" has no Catch Handler connected. Node failures inside this zone will halt the workflow.`, 'warning');
+            }
+        }
+
+        for (const catchNode of catches) {
+            const hasOutgoing = edges.some(e => e.source === catchNode.id);
+            if (!hasOutgoing) {
+                showToast(`Warning: Catch Handler "${catchNode.data.label || catchNode.id}" has no outgoing connections. It acts as a dead end.`, 'warning');
+            }
+        }
+
         const workflowData = {
             name: workflowName,
             tags: workflowTags,
             nodes: nodes.map(n => {
-                // Remove UI-only functions and POSITIONAL metadata from data object before saving
-                // We must exclude 'position' from cleanData because it will overwrite the live n.position spread!
-                const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, position: stalePos, ...cleanData } = n.data;
+                const { onDelete, onChangeTargetTags, onChangeFailureStrategy, onChangeFailureStatusOverride, onEdit, onResizeEnd, position: _p, id: _i, type: _t, parentNode: _pn, extent: _e, width: _w, height: _h, style: _s, ...cleanData } = n.data || {};
                 return {
+                    ...cleanData,
                     id: n.id,
                     position: n.position,
-                    ...cleanData
+                    width: parseInt(String(n.style?.width || (n as any).width || n.data?.width || 400)),
+                    height: parseInt(String(n.style?.height || (n as any).height || n.data?.height || 250)),
+                    parentNode: n.parentNode,
+                    extent: n.extent
                 };
             }),
             edges: edges.map(e => ({
@@ -1330,12 +2101,73 @@ function WorkflowDesignerContent() {
                 </div>
                 
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <div style={{ position: 'relative' }}>
+                        <div style={{ display: 'flex', border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden', background: 'white' }}>
+                            <button onClick={handleUndo} disabled={!canUndo} style={{ padding: '8px 12px', background: canUndo ? 'white' : '#f9fafb', color: canUndo ? '#4b5563' : '#d1d5db', cursor: canUndo ? 'pointer' : 'not-allowed', border: 'none', borderRight: '1px solid #e5e7eb', display: 'flex', alignItems: 'center' }} title="Undo (Ctrl+Z)">
+                                <Undo2 size={16} />
+                            </button>
+                            <button onClick={() => setIsHistoryPanelOpen(!isHistoryPanelOpen)} style={{ padding: '8px 6px', background: 'white', color: '#4b5563', border: 'none', cursor: 'pointer', borderRight: '1px solid #e5e7eb' }}>
+                                <ChevronDown size={14} />
+                            </button>
+                            <button onClick={handleRedo} disabled={!canRedo} style={{ padding: '8px 12px', background: canRedo ? 'white' : '#f9fafb', color: canRedo ? '#4b5563' : '#d1d5db', cursor: canRedo ? 'pointer' : 'not-allowed', border: 'none', display: 'flex', alignItems: 'center' }} title="Redo (Ctrl+Y)">
+                                <Redo2 size={16} />
+                            </button>
+                        </div>
+                        {isHistoryPanelOpen && (
+                            <div style={{ position: 'absolute', top: '100%', right: '0', marginTop: '8px', background: 'white', border: '1px solid #eee', borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', width: '240px', zIndex: 1000, overflow: 'hidden' }}>
+                                <div style={{ padding: '12px', borderBottom: '1px solid #eee', fontSize: '11px', fontWeight: 'bold', color: '#999', textTransform: 'uppercase' }}>Action History ({historyRef.current.length})</div>
+                                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                                    {[...historyRef.current].reverse().map((snap, i) => {
+                                        const originalIndex = historyRef.current.length - 1 - i;
+                                        const isActive = originalIndex === historyIndexRef.current;
+                                        const isFuture = originalIndex > historyIndexRef.current;
+                                        return (
+                                            <div key={originalIndex} onClick={() => { jumpToHistory(originalIndex); setIsHistoryPanelOpen(false); }} style={{ padding: '10px 12px', fontSize: '12px', cursor: 'pointer', background: isActive ? '#eff6ff' : 'white', color: isFuture ? '#9ca3af' : isActive ? '#1d4ed8' : '#374151', borderLeft: isActive ? '3px solid #3b82f6' : '3px solid transparent', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                {isActive ? <Check size={12} style={{ color: '#3b82f6' }} /> : <div style={{ width: '12px' }} />}
+                                                {snap.actionName} {originalIndex === 0 && "(Initial)"}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                     {isDirty && (
                         <div style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginRight: '8px' }}>
                             <div className="animate-pulse" style={{ width: '8px', height: '8px', background: '#f59e0b', borderRadius: '50%' }} />
                             Unsaved Changes
                         </div>
                     )}
+                    <button 
+                        onClick={() => {
+                            const next = !isCompact;
+                            setIsCompact(next);
+                            // Also update existing nodes on canvas immediately for reactive UI
+                            setNodes((nds: any) => nds.map((n: any) => ({
+                                ...n,
+                                data: { ...n.data, isCompact: next }
+                            })));
+                        }}
+                        style={{
+                            padding: '8px 16px',
+                            background: isCompact ? '#f0f9ff' : '#f9fafb',
+                            color: isCompact ? '#0369a1' : '#4b5563',
+                            border: `1px solid ${isCompact ? '#bae6fd' : '#e5e7eb'}`,
+                            borderRadius: '10px',
+                            fontSize: '13px',
+                            fontWeight: 'bold',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            transition: 'all 0.2s',
+                            cursor: 'pointer'
+                        }}
+                        className="hover:shadow-sm"
+                    >
+                        {isCompact ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
+                        {isCompact ? 'Detailed Mode' : 'Compact Mode'}
+                    </button>
+
                     <button 
                         onClick={() => setIsTopDrawerOpen(!isTopDrawerOpen)}
                         style={{
@@ -1403,7 +2235,8 @@ function WorkflowDesignerContent() {
                 }}>
                     <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '12px' }}>Workflow Utilities</h4>
-                        <div style={{ display: 'flex', gap: '16px' }}>
+                        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                            {/* VMA */}
                             <div 
                                 draggable
                                 onDragStart={(e) => onDragStart(e, { id: 'util-vars', name: 'Variables Manipulation', taskType: 'VARIABLE' })}
@@ -1419,7 +2252,8 @@ function WorkflowDesignerContent() {
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '12px',
-                                    transition: 'all 0.2s'
+                                    transition: 'all 0.2s',
+                                    minWidth: '240px'
                                 }}
                                 className="hover:shadow-lg hover:border-solid hover:scale-105"
                             >
@@ -1430,6 +2264,7 @@ function WorkflowDesignerContent() {
                                 </div>
                             </div>
 
+                            {/* IF */}
                             <div 
                                 draggable
                                 onDragStart={(e) => onDragStart(e, { id: 'util-if', name: 'Branch Logic', taskType: 'IF' })}
@@ -1445,7 +2280,8 @@ function WorkflowDesignerContent() {
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '12px',
-                                    transition: 'all 0.2s'
+                                    transition: 'all 0.2s',
+                                    minWidth: '200px'
                                 }}
                                 className="hover:shadow-lg hover:border-solid hover:scale-105"
                             >
@@ -1453,6 +2289,97 @@ function WorkflowDesignerContent() {
                                 <div>
                                     <div style={{ fontSize: '14px' }}>IF / ELSE Branch</div>
                                     <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#999' }}>Conditional Logic</div>
+                                </div>
+                            </div>
+
+                            {/* TRY */}
+                            <div 
+                                draggable
+                                onDragStart={(e) => onDragStart(e, { id: 'util-try', name: 'Try Area', taskType: 'TRY_ZONE' })}
+                                style={{
+                                    padding: '16px 24px',
+                                    background: 'white',
+                                    border: '2px dashed #22c55e',
+                                    borderRadius: '12px',
+                                    cursor: 'grab',
+                                    fontSize: '14px',
+                                    color: '#166534',
+                                    fontWeight: 'bold',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    transition: 'all 0.2s',
+                                    minWidth: '200px'
+                                }}
+                                className="hover:shadow-lg hover:border-solid hover:scale-105"
+                            >
+                                <Zap size={20} fill="#22c55e" />
+                                <div>
+                                    <div style={{ fontSize: '14px' }}>Try Area</div>
+                                    <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#999' }}>Guard Execution</div>
+                                </div>
+                            </div>
+
+                            {/* CATCH */}
+                            <div 
+                                draggable
+                                onDragStart={(e) => onDragStart(e, { id: 'util-catch', name: 'Catch Handler', taskType: 'CATCH' })}
+                                style={{
+                                    padding: '16px 24px',
+                                    background: 'white',
+                                    border: '2px dashed #ef4444',
+                                    borderRadius: '12px',
+                                    cursor: 'grab',
+                                    fontSize: '14px',
+                                    color: '#991b1b',
+                                    fontWeight: 'bold',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    transition: 'all 0.2s',
+                                    minWidth: '200px'
+                                }}
+                                className="hover:shadow-lg hover:border-solid hover:scale-105"
+                            >
+                                <Shield size={20} fill="#ef4444" fillOpacity={0.6} />
+                                <div>
+                                    <div style={{ fontSize: '14px' }}>Catch Handler</div>
+                                    <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#999' }}>Error Handling</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ flex: 1, borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                        <h4 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '12px' }}>Agentic Intelligence</h4>
+                        <div style={{ display: 'flex', gap: '16px' }}>
+                            {/* MCP CLIENT */}
+                            <div 
+                                draggable
+                                onDragStart={(e) => onDragStart(e, { id: 'util-mcp', name: 'MCP Action', taskType: 'MCP_CLIENT' })}
+                                style={{
+                                    padding: '16px 24px',
+                                    background: 'white',
+                                    border: '2px dashed #d946ef',
+                                    borderRadius: '12px',
+                                    cursor: 'grab',
+                                    fontSize: '14px',
+                                    color: '#701a75',
+                                    fontWeight: 'bold',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    transition: 'all 0.2s',
+                                    minWidth: '240px'
+                                }}
+                                className="hover:shadow-lg hover:border-solid hover:scale-105 group"
+                            >
+                                <div className="w-10 h-10 rounded-xl bg-fuchsia-50 text-fuchsia-600 flex items-center justify-center transition-colors group-hover:bg-fuchsia-600 group-hover:text-white">
+                                    <Sparkles size={20} />
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '14px' }}>MCP Connector</div>
+                                    <div style={{ fontSize: '10px', fontWeight: 'normal', color: '#999' }}>Universal AI Tool Interface</div>
                                 </div>
                             </div>
                         </div>
@@ -1468,30 +2395,7 @@ function WorkflowDesignerContent() {
                 
                 {/* Palette */}
                 <div style={{ width: '320px', background: 'white', borderRadius: '16px', border: '1px solid #eee', display: 'flex', flexDirection: 'column', padding: '24px', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                    <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '12px' }}>Utility Actions</h3>
-                        <div 
-                            draggable
-                            onDragStart={(e) => onDragStart(e, { id: 'util-vars', name: 'Variables Manipulation', taskType: 'VARIABLE' })}
-                            style={{
-                                padding: '12px',
-                                background: '#fff9e6',
-                                border: '1px solid #ffcc00',
-                                borderRadius: '10px',
-                                cursor: 'grab',
-                                fontSize: '13px',
-                                color: '#856404',
-                                fontWeight: 'bold',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '10px',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                            }}
-                        >
-                            <Zap size={16} fill="currentColor" />
-                            <span>Variables Manipulation</span>
-                        </div>
-                    </div>
+
 
                     <div style={{ marginBottom: '20px' }}>
                         <h3 style={{ fontSize: '11px', fontWeight: 900, color: '#999', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>Library</h3>
@@ -1638,15 +2542,27 @@ function WorkflowDesignerContent() {
                 <ReactFlowCanvas
                     nodes={nodes}
                     edges={edges}
+                    isCompact={isCompact}
                     onNodesChange={(changes: any) => { onNodesChange(changes); setIsDirty(true); }}
                     onEdgesChange={(changes: any) => { onEdgesChange(changes); setIsDirty(true); }}
                     onConnect={onConnect}
-                    onNodeClick={(node: any) => setEditingNode(node)}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDragStop={onNodeDragStop}
+                    onNodeClick={onNodeClick}
                     setNodes={setNodes}
                     setEdges={setEdges}
                     setIsDirty={setIsDirty}
                     reactFlowWrapper={reactFlowWrapper}
                     disableKeyboardActions={!!editingNode || isAdminPanelOpen}
+                    isDeleteModalOpen={isDeleteModalOpen}
+                    setIsDeleteModalOpen={setIsDeleteModalOpen}
+                    deleteZoneAll={deleteZoneAll}
+                    deleteZoneOnly={deleteZoneOnly}
+                    zoneToDelete={zoneToDelete}
+                    onDeleteZoneRequest={handleDeleteZoneRequest}
+                    onEditNode={handleManualNodeEdit}
+                    queueHistory={queueHistory}
+                    onZoneResizeEnd={handleZoneResizeEnd}
                 />
             </div>
 
@@ -1715,6 +2631,7 @@ function WorkflowDesignerContent() {
                         onClose={() => setEditingNode(null)}
                         onSaveNode={(data) => {
                             setNodes(nds => nds.map(n => n.id === editingNode.id ? { ...n, data: { ...n.data, ...data } } : n))
+                            queueHistory('Updated Task Settings');
                             setIsDirty(true)
                         }}
                     />

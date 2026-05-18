@@ -185,16 +185,24 @@ export class WorkerService {
 
             // 2. Resolve Input variables provided by initial metadata (for triggered workflows)
             const taskExecData = execution.taskExecutions as any;
-            if (taskExecData && taskExecData.initialVariables) {
-                const engine = new VariableEngine({
-                    global: {}, // Will be resolved if needed recursively
-                    workflow: workflowVars,
-                    macros: {}
-                });
-                Object.entries(taskExecData.initialVariables).forEach(([k, v]: [string, any]) => {
-                    workflowVars[k] = engine.resolveValue(v, k);
-                });
-                this.logger.log(`[Context] Overlaid and resolved ${Object.keys(taskExecData.initialVariables).length} variables from initial execution metadata`);
+            if (taskExecData) {
+                if (taskExecData.initialVariables) {
+                    const engine = new VariableEngine({
+                        global: {}, // Will be resolved if needed recursively
+                        workflow: workflowVars,
+                        macros: {}
+                    });
+                    Object.entries(taskExecData.initialVariables).forEach(([k, v]: [string, any]) => {
+                        workflowVars[k] = engine.resolveValue(v, k);
+                    });
+                    this.logger.log(`[Context] Overlaid and resolved ${Object.keys(taskExecData.initialVariables).length} variables from initial execution metadata`);
+                }
+                
+                // Try/Catch: Extract _error context if present
+                if (taskExecData._error) {
+                    workflowVars['_error'] = taskExecData._error;
+                    this.logger.debug(`[Context] Injected _error context into variables from execution metadata`);
+                }
             }
 
             // 3. Resolve Input variables provided by parent if this is a sub-workflow
@@ -421,7 +429,12 @@ export class WorkerService {
                     sanityResults: sanityResults || []
                 },
                 error: status === 'SUCCESS' ? null : (reason || error || null),
-                ...(input ? { input } : {}),
+                ...(input ? { 
+                    input: {
+                        ...(typeof execution.input === 'string' ? JSON.parse(execution.input) : (execution.input || {})),
+                        ...(typeof input === 'string' ? JSON.parse(input) : (input || {}))
+                    }
+                } : {}),
                 completedAt: new Date(),
                 duration,
             },
@@ -508,7 +521,11 @@ export class WorkerService {
         if (typeof edges === 'string') edges = JSON.parse(edges);
         if (!Array.isArray(nodes)) nodes = Object.values(nodes || {});
 
-        const targetNodeIds = new Set(edges.map((e: any) => e.target));
+        const targetNodeIds = new Set(
+            edges
+                .filter((e: any) => nodes.some((n: any) => n.id === e.source))
+                .map((e: any) => e.target)
+        );
         const startNodes = nodes.filter((n: any) => !targetNodeIds.has(n.id));
 
         // Pre-gather sub-workflow start context (baseline + resolved inputs)
@@ -516,6 +533,7 @@ export class WorkerService {
 
         for (const node of startNodes) {
             const isUtility = (node as any).taskType === 'VARIABLE' || 
+                              (node as any).taskType === 'CATCH' ||
                               (node as any).taskId === '00000000-0000-0000-0000-000000000001' || 
                               (node as any).taskId === 'util-vars';
             const isNested = (node as any).taskType === 'WORKFLOW';
@@ -702,6 +720,145 @@ export class WorkerService {
             where: { workflowExecutionId }
         });
 
+        // --- TRY / CATCH / RETRY ORCHESTRATION ---
+        const nodesArr = Array.isArray(nodes) ? nodes : Object.values(nodes || {});
+        const zone = this.findEnclosingTryZone(nodeId, nodesArr);
+        
+        if (zone) {
+            const catchOnStatuses = zone.catchOnStatuses || ['FAILED', 'TIMEOUT'];
+            
+            if (catchOnStatuses.includes(status)) {
+                this.logger.log(`[Orchestration] Node ${nodeId} status ${status} triggered TRY_ZONE catch: ${zone.id}`);
+                
+                // 1. Check Retry Policy
+                const retryPolicy = zone.retryPolicy || {};
+                const maxAttempts = parseInt(String(retryPolicy.maxAttempts || 0));
+                
+                // Robustly get current attempt - might be string or object
+                const taskInput = typeof completedTask.input === 'string' ? JSON.parse(completedTask.input) : completedTask.input;
+                const currentAttempt = (taskInput as any)?.retryAttempt || 0;
+                
+                const retryOnStatuses = retryPolicy.retryOnStatuses || ['FAILED', 'TIMEOUT'];
+
+                if (currentAttempt < maxAttempts && retryOnStatuses.includes(status)) {
+                    const attempt = currentAttempt + 1;
+                    let delay = parseInt(String(retryPolicy.initialDelaySeconds || 5));
+                    if (retryPolicy.backoffType === 'exponential') {
+                        delay = delay * Math.pow(2, attempt - 1);
+                    }
+                    const maxDelay = parseInt(String(retryPolicy.maxDelaySeconds || 60));
+                    if (delay > maxDelay) delay = maxDelay;
+
+                    this.logger.log(`[Orchestration] Node ${nodeId} in TRY_ZONE ${zone.id} will retry (Attempt ${attempt}/${maxAttempts}). Current retryAttempt in input: ${currentAttempt}. Delay: ${delay}s`);
+                    await this.scheduleRetry(completedTask, delay, attempt);
+                    return; // Exit orchestration for now, it will resume after retry
+                }
+
+                this.logger.warn(`[Orchestration] Node ${nodeId} in TRY_ZONE ${zone.id} EXHAUSTED retries (${currentAttempt}/${maxAttempts}) or status ${status} not in retry policy.`);
+
+                // 2. Max Retries Exhausted or No Policy -> Route to CATCH
+                const catchHandlerId = zone.catchHandlerId;
+                if (catchHandlerId) {
+                    this.logger.log(`[Orchestration] Routing error from ${nodeId} to CATCH handler ${catchHandlerId}`);
+                    
+                    // Create error context
+                    const errorContext = {
+                        failedNodeId: nodeId,
+                        failedNodeLabel: (nodesArr.find((n: any) => n.id === nodeId) as any)?.label || nodeId,
+                        status: status,
+                        errorMessage: completedTask.error || 'Execution failed',
+                        httpStatus: (completedTask.result as any)?.status,
+                        attempts: currentAttempt + 1,
+                        tryZoneId: zone.id,
+                        tryZoneLabel: zone.label,
+                        failedAt: new Date().toISOString()
+                    };
+
+                    // Store error context in workflow execution metadata
+                    const currentMeta = typeof workflowExecution.taskExecutions === 'string' ? JSON.parse(workflowExecution.taskExecutions) : workflowExecution.taskExecutions;
+                    await this.prisma.workflowExecution.update({
+                        where: { id: workflowExecutionId },
+                        data: {
+                            taskExecutions: {
+                                ...(currentMeta || {}),
+                                _error: errorContext
+                            }
+                        }
+                    });
+
+                    // Mark remaining member nodes as BYPASSED to satisfy fan-in for FINALLY patterns
+                    const remainingMembers = (zone.memberNodeIds || []).filter((id: string) => id !== nodeId);
+                    for (const memberId of remainingMembers) {
+                        const existingExec = taskRecords.find(r => r.nodeId === memberId);
+                        if (!existingExec) {
+                            await this.prisma.taskExecution.create({
+                                data: {
+                                    nodeId: memberId,
+                                    workflowExecutionId,
+                                    status: 'BYPASSED',
+                                    startedAt: new Date(),
+                                    completedAt: new Date(),
+                                    error: 'Skipped - TRY zone caught error'
+                                }
+                            });
+                        }
+                    }
+
+                    // Trigger the CATCH node
+                    const catchNode = nodesArr.find((n: any) => n.id === catchHandlerId) as any;
+                    if (catchNode) {
+                        const { workflowVars, macros } = await this.gatherWorkflowContext(workflowExecutionId);
+                        await this.prisma.taskExecution.create({
+                            data: {
+                                taskId: null,
+                                nodeId: catchHandlerId,
+                                workflowExecutionId,
+                                status: (catchNode.taskType === 'IF' || catchNode.taskType === 'WORKFLOW' || catchNode.taskType === 'VARIABLE' || catchNode.taskType === 'CATCH') ? 'RUNNING' : 'PENDING',
+                                startedAt: new Date(),
+                                input: {
+                                    utility: catchNode.taskType === 'VARIABLE' || catchNode.taskType === 'CATCH',
+                                    taskType: catchNode.taskType || 'CATCH',
+                                    workflowVars,
+                                    macros
+                                }
+                            }
+                        }).then(async (newExec) => {
+                             // If catch node is server-side, trigger it
+                             if (catchNode.taskType === 'VARIABLE' || catchNode.taskType === 'CATCH') await this.executeUtilityNode(newExec);
+                             else if (catchNode.taskType === 'WORKFLOW') await this.triggerSubWorkflow(newExec);
+                        });
+                        return; // Done orchestrating this failure branch
+                    }
+                } else if (zone.onMissingCatch === 'CONTINUE') {
+                    this.logger.log(`[Orchestration] TRY_ZONE ${zone.id} caught failure. Policy is CONTINUE. Marking task ${nodeId} as suppressed.`);
+                    await this.prisma.taskExecution.update({
+                        where: { id: (completedTask as any).id },
+                        data: {
+                            result: {
+                                ...(typeof (completedTask as any).result === 'string' ? JSON.parse((completedTask as any).result || '{}') : (completedTask as any).result || {}),
+                                __suppressedFailure: true,
+                                __caughtByZone: zone.id
+                            }
+                        }
+                    });
+                } else if (zone.onMissingCatch === 'FAIL_WORKFLOW' || zone.onMissingCatch === undefined) {
+                     this.logger.error(`[Orchestration] TRY_ZONE ${zone.id} has no CATCH handler. Failing workflow.`);
+                     await this.prisma.workflowExecution.update({
+                         where: { id: workflowExecutionId },
+                         data: { 
+                             status: 'FAILED', 
+                             completedAt: new Date(),
+                             taskExecutions: {
+                                 ...(typeof workflowExecution.taskExecutions === 'string' ? JSON.parse(workflowExecution.taskExecutions) : workflowExecution.taskExecutions || {}),
+                                 conclusion: `Try Zone ${zone.label || zone.id} caught failure but no Catch Handler was found.`
+                             }
+                         }
+                     });
+                     return;
+                }
+            }
+        }
+
         // 2. Find ALL next candidate nodes (downstream from the completed task)
         const outgoingEdges = edges.filter(edge => edge.source === nodeId);
         
@@ -710,17 +867,20 @@ export class WorkerService {
             this.logger.debug(`[Orchestration] Checking candidate node: ${nextNodeId}`);
 
             // 3. Fan-in logic: Check if ALL predecessors for 'nextNode' are finished
+            // Resilience: Only count predecessors that actually exist in the current nodes list
             const incomingEdges = edges.filter(e => e.target === nextNodeId);
-            const predecessorNodeIds = incomingEdges.map(e => e.source);
+            const predecessorNodeIds = incomingEdges
+                .map(e => e.source)
+                .filter(srcId => nodes.some(n => n.id === srcId));
             
-            this.logger.debug(`[Orchestration] Node ${nextNodeId} has predecessors: ${predecessorNodeIds.join(', ')}`);
+            this.logger.debug(`[Orchestration] Node ${nextNodeId} has valid predecessors: ${predecessorNodeIds.join(', ')}`);
 
             const predecessorRecords = taskRecords.filter(r => predecessorNodeIds.includes(r.nodeId));
             
             // Check if all predecessors have an execution record and are finished
             const allFinished = predecessorNodeIds.every(pid => {
                 const record = taskRecords.find(r => r.nodeId === pid);
-                const finished = record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'BRANCHED'].includes(record.status);
+                const finished = record && ['SUCCESS', 'FAILED', 'TIMEOUT', 'NO_WORKER_FOUND', 'MAJOR', 'MINOR', 'WARNING', 'INFORMATION', 'BRANCHED', 'BYPASSED'].includes(record.status);
                 if (!finished) {
                     this.logger.debug(`[Orchestration] Node ${nextNodeId} waiting for predecessor ${pid} (Current Status: ${record?.status || 'NOT_STARTED'})`);
                 }
@@ -812,6 +972,7 @@ export class WorkerService {
 
             // Determine node type for server-side processing
             const isUtility = (nextNode as any).taskType === 'VARIABLE' || 
+                              (nextNode as any).taskType === 'CATCH' ||
                               (nextNode as any).taskId === '00000000-0000-0000-0000-000000000001' || 
                               (nextNode as any).taskId === 'util-vars';
             const isNested = (nextNode as any).taskType === 'WORKFLOW';
@@ -825,14 +986,24 @@ export class WorkerService {
             // Pre-gather workflow context to store in the task input. 
             const { workflowVars, macros: orchestrationMacros } = await this.gatherWorkflowContext(workflowExecutionId);
 
+            let mcpUrl = undefined;
+            let mcpServerName = 'Unknown Server';
+            if (nextNode.taskType === 'MCP_CLIENT' && nextNode.mcpServerId) {
+                const setting = await this.prisma.systemSetting.findUnique({ where: { key: 'MCP_SERVERS_CONFIG' } });
+                const servers = setting?.value ? JSON.parse(setting.value) : [];
+                const server = servers.find((s: any) => s.id === nextNode.mcpServerId);
+                mcpUrl = server?.url;
+                mcpServerName = server?.name || 'Unknown Server';
+            }
+
             if (!nextTaskExec) {
                 this.logger.log(`[Orchestration] Creating new record for node ${nextNode.id} (Type: ${nextNode.taskType || (isUtility ? 'VARIABLE' : (isNested ? 'WORKFLOW' : (isIfNode ? 'IF' : 'HTTP')))})`);
                 nextTaskExec = await this.prisma.taskExecution.create({
                     data: {
-                        taskId: (isUtility || isNested || isIfNode) ? null : nextNode.taskId,
+                        taskId: (isUtility || isNested || isIfNode || nextNode.taskType === 'MCP_CLIENT') ? null : nextNode.taskId,
                         nodeId: nextNode.id,
                         workflowExecutionId,
-                        status: (isNested || isIfNode) ? 'RUNNING' : initialStatus,
+                        status: (isNested || isIfNode || (nextNode as any).taskType === 'CATCH') ? 'RUNNING' : initialStatus,
                         targetWorkerId,
                         targetTags,
                         startedAt: new Date(),
@@ -847,7 +1018,12 @@ export class WorkerService {
                             variableExtraction: nextNode.variableExtraction || { vars: {} },
                             sanityChecks: nextNode.sanityChecks || [],
                             authorization: nextNode.authorization,
-                            inputMapping: nextNode.inputMapping 
+                            inputMapping: nextNode.inputMapping,
+                            mcpServerId: nextNode.mcpServerId,
+                            mcpToolName: nextNode.mcpToolName,
+                            mcpParameters: nextNode.mcpParameters,
+                            mcpUrl: mcpUrl,
+                            mcpServerName: mcpServerName
                         }
                     },
                 });
@@ -922,9 +1098,30 @@ export class WorkerService {
         // Priority-based status: FAILED > MAJOR > MINOR > TIMEOUT > WARNING > INFORMATION > NO_WORKER_FOUND > RUNNING > PENDING > SUCCESS
         let finalStatus = 'SUCCESS';
         
-        const hasFailed = tasks.some(t => t.status === 'FAILED');
-        const hasMajor = tasks.some(t => t.status === 'MAJOR');
-        const hasMinor = tasks.some(t => t.status === 'MINOR');
+        const hasFailed = tasks.some(t => {
+            if (t.status !== 'FAILED') return false;
+            let res = t.result as any;
+            if (typeof res === 'string') {
+                try { res = JSON.parse(res); } catch(e) { res = {}; }
+            }
+            return !res?.__suppressedFailure;
+        });
+        const hasMajor = tasks.some(t => {
+            if (t.status !== 'MAJOR') return false;
+            let res = t.result as any;
+            if (typeof res === 'string') {
+                try { res = JSON.parse(res); } catch(e) { res = {}; }
+            }
+            return !res?.__suppressedFailure;
+        });
+        const hasMinor = tasks.some(t => {
+            if (t.status !== 'MINOR') return false;
+            let res = t.result as any;
+            if (typeof res === 'string') {
+                try { res = JSON.parse(res); } catch(e) { res = {}; }
+            }
+            return !res?.__suppressedFailure;
+        });
         const hasTimeout = tasks.some(t => t.status === 'TIMEOUT');
         const hasWarning = tasks.some(t => t.status === 'WARNING');
         const hasInformation = tasks.some(t => t.status === 'INFORMATION');
@@ -932,15 +1129,15 @@ export class WorkerService {
         const hasRunning = tasks.some(t => t.status === 'RUNNING');
         const hasPending = tasks.some(t => t.status === 'PENDING');
 
-        if (hasFailed) finalStatus = 'FAILED';
+        if (hasRunning) finalStatus = 'RUNNING';
+        else if (hasPending) finalStatus = 'PENDING';
+        else if (hasFailed) finalStatus = 'FAILED';
         else if (hasMajor) finalStatus = 'MAJOR';
         else if (hasMinor) finalStatus = 'MINOR';
         else if (hasTimeout) finalStatus = 'TIMEOUT';
         else if (hasWarning) finalStatus = 'WARNING';
         else if (hasInformation) finalStatus = 'INFORMATION';
         else if (hasNoWorker) finalStatus = 'NO_WORKER_FOUND';
-        else if (hasRunning) finalStatus = 'RUNNING';
-        else if (hasPending) finalStatus = 'PENDING';
 
         const isFullyDone = !hasRunning && !hasPending;
         const now = new Date();
@@ -1222,6 +1419,69 @@ export class WorkerService {
                     error: err.message
                 }
             });
+            // Try/Catch logic will be handled inside handleWorkflowOrchestration which is called by completeExecution 
+            // but for utility nodes we call it here too
+            const failedExec = await this.prisma.taskExecution.findUnique({ where: { id: taskExec.id } });
+            await this.handleWorkflowOrchestration(failedExec);
         }
+    }
+
+    private findEnclosingTryZone(nodeId: string, nodes: any[]): any | null {
+        // Find TRY_ZONE nodes that contain this nodeId in their memberNodeIds
+        const zones = nodes.filter(n => n.taskType === 'TRY_ZONE' && Array.isArray(n.memberNodeIds) && n.memberNodeIds.includes(nodeId));
+        if (zones.length === 0) return null;
+        
+        // If nested, return the innermost one (the one with the fewest total members or just pick the one specifically containing it if there's hierarchy? 
+        // Simple heuristic: innermost is usually defined last or we can check hierarchy)
+        // For now, simpler: just return the first one found or we could calculate areas
+        return zones[0]; 
+    }
+
+    private async scheduleRetry(taskExec: any, delaySeconds: number, attempt: number) {
+        this.logger.log(`[Orchestration] Scheduling RETRY for node ${taskExec.nodeId} in ${delaySeconds}s (Attempt ${attempt})`);
+        
+        // Status remains PENDING/RUNNING? No, we should probably mark it as RETRYING or keep it PENDING
+        // The orchestrator will pick it up after the delay
+        setTimeout(async () => {
+            try {
+                // Determine node type for re-triggering
+                const isUtility = taskExec.input?.utility;
+                const isNested = taskExec.input?.nested;
+                
+                // We create a NEW record for the retry to keep history
+                const { workflowVars, macros } = await this.gatherWorkflowContext(taskExec.workflowExecutionId);
+                
+                // Robustly parse existing input
+                const existingInput = typeof taskExec.input === 'string' ? JSON.parse(taskExec.input) : (taskExec.input || {});
+
+                const retryExec = await this.prisma.taskExecution.create({
+                    data: {
+                        taskId: taskExec.taskId,
+                        nodeId: taskExec.nodeId,
+                        workflowExecutionId: taskExec.workflowExecutionId,
+                        status: 'PENDING',
+                        targetWorkerId: taskExec.targetWorkerId,
+                        targetTags: taskExec.targetTags,
+                        startedAt: new Date(),
+                        input: {
+                            ...(existingInput as any),
+                            workflowVars,
+                            macros,
+                            retryAttempt: attempt
+                        }
+                    }
+                });
+
+                if (isUtility) {
+                    await this.executeUtilityNode(retryExec);
+                } else if (isNested) {
+                    await this.triggerSubWorkflow(retryExec);
+                } else {
+                    // Standard task, worker will pick it up from PENDING
+                }
+            } catch (err) {
+                this.logger.error(`[Orchestration] Failed to execute retry: ${err.message}`);
+            }
+        }, delaySeconds * 1000);
     }
 }

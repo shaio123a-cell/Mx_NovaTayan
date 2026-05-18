@@ -25,8 +25,9 @@ export default function AdminSettings() {
 
     if (isLoading) return <div className="p-8 text-center text-gray-400 animate-pulse">Loading system configuration...</div>
 
-    const globalSettings = settings?.filter((s: any) => s.key !== 'AI_LLM_PROVIDERS') || [];
+    const globalSettings = settings?.filter((s: any) => s.key !== 'AI_LLM_PROVIDERS' && s.key !== 'MCP_SERVERS_CONFIG') || [];
     const aiSettingStr = settings?.find((s: any) => s.key === 'AI_LLM_PROVIDERS')?.value || '[]';
+    const mcpSettingStr = settings?.find((s: any) => s.key === 'MCP_SERVERS_CONFIG')?.value || '[]';
     
     return (
         <div className="max-w-4xl mx-auto p-8">
@@ -56,6 +57,25 @@ export default function AdminSettings() {
                         <AIProviderManager 
                              baseJsonStr={aiSettingStr} 
                              onSaveConfigs={(newJsonStr) => handleSave('AI_LLM_PROVIDERS', newJsonStr)} 
+                        />
+                    </div>
+                </div>
+
+                {/* MCP Integration Hub Section */}
+                <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                    <div className="p-8 border-b border-gray-50 bg-gradient-to-r from-blue-50/50 to-white">
+                        <h3 className="font-bold text-gray-900 flex items-center gap-3">
+                            <span className="text-lg"><Activity className="text-blue-500 w-5 h-5"/></span> MCP Integration Hub (Agentic Bus)
+                        </h3>
+                        <p className="text-sm font-medium text-gray-500 mt-2 tracking-wide">
+                            Register external Model Context Protocol (MCP) servers to instantly unlock hundreds of tools and resources across all your workflows.
+                        </p>
+                    </div>
+                    
+                    <div className="p-8 space-y-4">
+                        <MCPServerManager 
+                             baseJsonStr={mcpSettingStr} 
+                             onSaveConfigs={(newJsonStr) => handleSave('MCP_SERVERS_CONFIG', newJsonStr)} 
                         />
                     </div>
                 </div>
@@ -264,3 +284,121 @@ function AIProviderManager({ baseJsonStr, onSaveConfigs }: { baseJsonStr: string
     )
 }
 
+function MCPServerManager({ baseJsonStr, onSaveConfigs }: { baseJsonStr: string, onSaveConfigs: (str: string) => void }) {
+    const [servers, setServers] = useState<any[]>(() => {
+        try { return JSON.parse(baseJsonStr); } catch { return []; }
+    });
+    const [pings, setPings] = useState<Record<string, 'loading' | 'online' | 'offline' | null>>({});
+
+    const updateServer = (idx: number, updates: any) => {
+        const newServers = [...servers];
+        newServers[idx] = { ...newServers[idx], ...updates };
+        setServers(newServers);
+    };
+
+    const addServer = () => {
+        setServers([...servers, { id: crypto.randomUUID(), name: '', url: '', auth: '', enabled: true }]);
+    };
+
+    const removeServer = (idx: number) => {
+        const newServers = [...servers];
+        newServers.splice(idx, 1);
+        setServers(newServers);
+        onSaveConfigs(JSON.stringify(newServers));
+    };
+
+    const testConnection = async (id: string, url: string) => {
+        if (!url) return;
+        setPings(prev => ({ ...prev, [id]: 'loading' }));
+        try {
+            const res = await fetch(`/api/mcp/ping?url=${encodeURIComponent(url)}`);
+            setPings(prev => ({ ...prev, [id]: res.ok ? 'online' : 'offline' }));
+        } catch {
+            setPings(prev => ({ ...prev, [id]: 'offline' }));
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            {servers.length === 0 && (
+                <div className="text-center p-8 bg-blue-50/30 text-slate-400 rounded-2xl border border-dashed border-blue-100">
+                    <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">No MCP Servers Connected</p>
+                    <p className="text-[11px] font-medium">Link your first external capability bus to begin.</p>
+                </div>
+            )}
+
+            {servers.map((srv, idx) => (
+                <div key={srv.id} className={`flex items-center gap-4 p-4 border rounded-xl transition-all ${srv.enabled ? 'bg-white border-blue-100 shadow-sm' : 'bg-gray-50 border-gray-100 opacity-60'}`}>
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-inner">
+                        <Activity className="w-5 h-5" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 flex-1">
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Friendly Name</label>
+                            <input 
+                                type="text" 
+                                value={srv.name} 
+                                onChange={(e) => updateServer(idx, { name: e.target.value })}
+                                placeholder="e.g. Salesforce Production"
+                                className="w-full bg-slate-50/50 border border-slate-100 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-blue-400"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Connection URL (TCP/SSE/stdio)</label>
+                            <div className="relative">
+                                <input 
+                                    type="text" 
+                                    value={srv.url} 
+                                    onChange={(e) => updateServer(idx, { url: e.target.value })}
+                                    placeholder="http://mcp-server:3000"
+                                    className="w-full bg-slate-50/50 border border-slate-100 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400"
+                                />
+                                <button 
+                                    onClick={() => testConnection(srv.id, srv.url)}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-600 p-1"
+                                    title="Test Connection"
+                                >
+                                    {pings[srv.id] === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-1 border-l pl-4 border-gray-100 min-w-[80px]">
+                        {pings[srv.id] === 'online' && <span className="text-[9px] font-black text-green-600 uppercase flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> Online</span>}
+                        {pings[srv.id] === 'offline' && <span className="text-[9px] font-black text-red-500 uppercase flex items-center gap-1">Offline</span>}
+                        
+                        <div className="flex items-center gap-3 mt-1">
+                            <input 
+                                type="checkbox" 
+                                checked={srv.enabled} 
+                                onChange={(e) => updateServer(idx, { enabled: e.target.checked })}
+                                className="w-4 h-4 text-blue-600 rounded cursor-pointer"
+                            />
+                            <button onClick={() => removeServer(idx)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors">
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ))}
+
+            <div className="flex justify-between items-center pt-4">
+                <button 
+                    onClick={addServer} 
+                    className="flex items-center gap-2 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors border border-blue-100"
+                >
+                    <Plus className="w-4 h-4" /> Register New Server
+                </button>
+                
+                <button 
+                    onClick={() => onSaveConfigs(JSON.stringify(servers))} 
+                    className="flex items-center gap-2 text-sm font-bold text-white bg-[#1976D2] hover:bg-blue-700 px-6 py-2 rounded-lg transition-all shadow-md active:scale-95"
+                >
+                    <Save className="w-4 h-4" /> Save MCP Registry
+                </button>
+            </div>
+        </div>
+    )
+}

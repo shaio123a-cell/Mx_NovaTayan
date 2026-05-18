@@ -27,7 +27,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
     const showToast = useCallback((message: string, type: ToastType, duration?: number) => {
         const id = Math.random().toString(36).substring(7);
-        setToasts(prev => [...prev, { id, message, type, duration }]);
+        // Success/Info messages stay for 3s (slightly longer for readability), 
+        // Warnings/Errors stay for 10s as requested.
+        const defaultDuration = (type === 'success' || type === 'info') ? 3000 : 10000;
+        setToasts(prev => [...prev, { id, message, type, duration: duration || defaultDuration }]);
     }, []);
 
     const removeToast = useCallback((id: string) => {

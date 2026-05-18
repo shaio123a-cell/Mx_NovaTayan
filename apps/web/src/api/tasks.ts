@@ -128,3 +128,10 @@ export const tasksApi = {
         }
     }
 };
+
+export const mcpApi = {
+    listMcpTools: async (serverUrl: string): Promise<{ tools: any[] }> => {
+        const response = await fetch(`${API_BASE_URL}/mcp/tools?url=${encodeURIComponent(serverUrl)}`);
+        return handleResponse(response);
+    }
+};

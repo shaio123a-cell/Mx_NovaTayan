@@ -96,7 +96,7 @@ A Restmon Task generation response MUST have the following JSON structure:
            "method": "GET|POST|PUT|DELETE|PATCH",
            "url": "https://api.example.com/item/{{input_id}}",
            "headers": { "Authorization": "Bearer {{api_key}}", "Content-Type": "application/json" },
-           "body": "Optional request payload as stringified JSON. Use {{var}} syntax for insertions. You can use modifiers (e.g., {{var | trim | upper}}). Context actions include: String (trim, upper, lower, mask: 4, countMatches: 'foo'), Math (sum, avg, round, floor, ceil, abs, math: '* 1.5'), Arrays (length, first, last, join: ', '), Converters (base64Encode, md5). Available global generators: {{now}}, {{epoch}}, {{now-5m}}, {{uuid}}, {{random_hex}}. NEVER put actual values."
+           "body": "Optional request payload as stringified JSON. Use {{var}} syntax for insertions."
        },
        "variableExtraction": [
             { 
@@ -106,11 +106,27 @@ A Restmon Task generation response MUST have the following JSON structure:
             }
        ]
    },
+   "mcp_config": {
+       "serverId": "UUID of the selected server",
+       "toolName": "name_of_the_tool",
+       "parameters": { "key": "{{variable}}" }
+   },
    "explanation": "A friendly conversational message to the user explaining what you updated or generated. Use a helpful, confident tone.",
    "sources": [
        { "title": "ServiceNow Auth Docs", "url": "https://developer.servicenow.com/..." }
    ]
 }
+
+AGENTIC MCP GUIDELINES:
+1. When 'availableMcpContext' is present in the prompt below, you MUST populate 'mcp_config' — NO HTTP task should be generated for an MCP node.
+2. The context follows this structure:
+   registeredServers: [{ id, name, url, availableTools: [{name, description, inputSchema}] }]
+   currentServerId: "uuid" or "auto-select"
+3. If currentServerId === 'auto-select', pick the BEST matching server from registeredServers based on the user's intent and the server's name/tools.
+4. Pick the tool whose name/description best matches the user's request. Set 'mcp_config.toolName' to EXACTLY that tool's name.
+5. Set 'mcp_config.serverId' to the selected server's id (UUID string).
+6. Populate 'mcp_config.parameters' as a JSON object using the tool's inputSchema as a guide. Map any user-mentioned variable references using {{variable_name}} syntax.
+7. leave 'task.command' empty (null/omitted) for MCP nodes.
 
 CRITICAL RULES FOR OUTPUT VARIABLE EXTRACTION:
 1. Based on the documentation or your absolute knowledge of this API endpoint's standard response schema, aggressively infer the exact JSON response structure.
@@ -120,117 +136,33 @@ CRITICAL RULES FOR OUTPUT VARIABLE EXTRACTION:
    - Use 'regex' for text searching or header parsing.
    - Use 'advanced' ONLY for complex structural mutations, mapping, string interpolation, or conditional manipulation.
 4. If using 'advanced', you MUST write a valid Restmon Advanced YAML specification inside 'spec' using this strict schema:
-Overview
-A declarative YAML spec that tells the engine how to transform input data (JSON, XML, HTML) into CSV/JSON/XML/Text. Execution is deterministic and sandboxed. Expressions use JMESPath (JSON), XPath (XML), and CSS selectors with text ops (HTML). Runtime variables are supported via {{var}}.
-Top-level keys
 
-version (int, required): must be 1.
-name (string, required): unique transform name.
-input (object, required)
+OVERVIEW:
+A declarative YAML spec that tells the engine how to transform input data (JSON, XML, HTML) into CSV/JSON/XML/Text. Expressions use JMESPath (JSON), XPath (XML), and CSS selectors with text ops (HTML).
 
-type: json | xml | html
-root: selector for rows
+TOP-LEVEL KEYS:
+- version (int, required): must be 1.
+- name (string, required): unique transform name.
+- input (object, required): { type: json | xml | html, root: selector for rows }
+- output (object, required): { type: csv | json | xml | text, options: { header: bool, delimiter: char } }
+- mappings (array, required): [{ name: string, expr: path, type: string }]
+- filters (array, optional): [{ expr: expression }]
+- parameters (array, optional): [{ name: string, type: string, default: any }]
 
-JSON → JMESPath (e.g., $.employees[]) must resolve to an array.
-XML → XPath (e.g., //employee) returns a node set.
-HTML → CSS selector (e.g., table#emp > tr:not(:first-child)).
-
-
-output (object, required)
-
-type: csv | json | xml | text
-options (object, optional)
-
-header (bool) — CSV header row (default: true)
-delimiter (string, length=1) — CSV delimiter (default: ,)
-
-
-
-
-mappings (array, required): fields/columns to emit
-
-Each mapping:
-
-name (string): output field/column name
-expr (string): expression evaluated per row
-
-JSON: JMESPath relative to the row object
-XML: XPath relative to the current node
-HTML: constrained path like "td:nth-child(2)/text()" from the current element
-
-
-type (optional): string | number | boolean | date | any (coercion if supported)
-
-
-
-
-filters (array, optional): keep rows only if all filter expressions evaluate truthy
-
-expr (string): same expression language as mappings, relative to row.
-
-
-defaults (object, optional):
-
-on_missing: null | skip_row | error
-
-
-parameters (array, optional): declare runtime variables
-
-name (string): ^[A-Za-z_][A-Za-z0-9_]*$
-type (optional): string | number | boolean | any
-required (optional, bool)
-default (optional, any)
-
-
-
-Variables ({{var}})
-
+VARIABLES ({{var}}):
 Use in expr (mappings & filters): city == {{target_city}}, age >= {{min_age}}.
-Unquoted placeholders are recommended; the engine inserts typed literals:
+Strings → "value" (JMESPath), quoted literal in XPath.
+Numbers/Booleans → typed literals.
 
-strings → "value" (JMESPath), quoted literal in XPath (or concat() if needed)
-numbers → 42
-booleans → true/false (JMESPath) or true()/false() (XPath)
+BEST PRACTICES:
+- Keep root array‑resolving.
+- Use variables for filters.
+- Prefer unquoted {{var}} placeholders for type‑safe insertion.
+- Validate & preview before saving.
+- For nested arrays in JSON, use a [] path in root (e.g., $.orders[].lines[]). 
+- if root is a simple json - use $ not the word json
 
-
-Quoted placeholders also work: city == '{{target_city}}' → raw string is inserted (escaped).
-Missing required variables cause an error unless parameters[].default is provided.
-
-Expression Notes
-
-JMESPath (JSON): field access (id, city), filters ([?age >= 30]), array ops.
-XPath (XML): attributes (@id), text (name/text()), numeric conversion number(...).
-HTML/CSS: select nodes with CSS; within expr, use relative paths like td:nth-child(2)/text() for cell text.
-
-Output types
-
-CSV: columns from mappings[].name, values from expr. RFC4180 escaping; header and delimiter configurable.
-JSON: array of objects { [mapping.name]: value }.
-Text: single mapping allowed. Values joined with \n.
-XML: (if enabled) wrapper with rows and child elements per mapping.name.
-
-Error handling
-
-Invalid schema → validation error shown with line/key info.
-JSON root not array → helpful error.
-Missing mapping value:
-
-null → empty cell/null
-skip_row → entire row dropped
-error → transformation fails with row+field context.
-
-Best practices
-
-Keep root array‑resolving.
-Use variables for filters you expect to change at runtime.
-Prefer unquoted {{var}} placeholders for type‑safe insertion.
-Validate & preview before saving.
-For nested arrays in JSON, use a [] path in root (e.g., $.orders[].lines[]). 
-if root is a simple json - use $ not the word json
-
-5. ALWAYS provide accurate 'sources' array containing URLs to the real official API documentation you used as reference to build this task so the user can verify.
-
-Return ONLY a strictly valid JSON object matching the above schema exactly. Do not use Markdown wrappers (\`\`\`json).`;
+Return ONLY a strictly valid JSON object matching the above schema exactly. Do not use Markdown wrappers.`;
 
             const userPrompt = `
 ${currentState && Object.keys(currentState).length > 0 ? `=== CURRENT DRAFT STATUS ===\n${JSON.stringify(currentState, null, 2)}\n\n` : ''}
@@ -240,6 +172,8 @@ ${currentState && Object.keys(currentState).length > 0 ? 'Modify the existing dr
 ---
 ${docs}
 ---
+
+${currentState?.mcpMetadata ? `=== availableMcpContext ===\n${JSON.stringify(currentState.mcpMetadata, null, 2)}\n\n` : ''}
 `;
 
             const modelName = config.model || 'gemini-1.5-flash';
